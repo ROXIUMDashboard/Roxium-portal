@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROXIUM · Client Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <div class="mark big">ROX<b>I</b>UM</div>
+    <div class="eyebrow">Practice Growth Portal</div>
+    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed.</p>
+    <input id="loginEmail" type="email" placeholder="you@practice.com">
+    <button class="btn" id="btnLogin">Send sign-in link</button>
+    <p class="note" id="loginMsg"></p>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <header><div class="wrap bar">
+    <div class="mark">ROX<b>I</b>UM</div>
+    <div class="right">
+      <select id="practicePicker" class="picker hidden"></select>
+      <span class="practice" id="whoami"></span>
+      <button class="btn ghost sm" id="btnLogout">Sign out</button>
+    </div>
+  </div></header>
+
+  <div class="wrap">
+    <div class="hero">
+      <div class="eyebrow">Live Performance & Delivery</div>
+      <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
+      <div class="updated" id="updated"></div>
+      <div class="stats" id="heroStats"></div>
+    </div>
+
+    <!-- Milestone timeline -->
+    <section>
+      <h2>Your <em>roadmap</em></h2>
+      <div class="sub">Every milestone, where you stand today, and what happens next.</div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <!-- Deliverables: promised vs delivered -->
+    <section>
+      <h2>What we promised — and <em>delivered</em></h2>
+      <div class="sub" id="delivSub"></div>
+      <div class="progressbar"><div id="delivBar"></div></div>
+      <div class="tablebox"><table id="delivTable"></table></div>
+    </section>
+
+    <!-- Video pipeline -->
+    <section>
+      <h2>Video production <em>pipeline</em></h2>
+      <div class="sub">Every asset and its exact stage. Items waiting on the practice are flagged gold.</div>
+      <div class="pipeline" id="pipeline"></div>
+    </section>
+
+    <!-- KPI dashboard -->
+    <section>
+      <h2>Performance <em>metrics</em></h2>
+      <div class="sub" id="kpiSub">Latest month against target.</div>
+      <div class="cards" id="kpiCards"></div>
+      <div class="status" id="statusBoard" style="margin-top:16px"></div>
+    </section>
+
+    <!-- Activity feed -->
+    <section>
+      <h2>Latest <em>updates</em></h2>
+      <div class="sub">Posted by your ROXIUM team as work ships.</div>
+      <div id="feed"></div>
+    </section>
+
+    <!-- TEAM-ONLY -->
+    <section id="teamPanel" class="teamonly hidden">
+      <h2>Team · <em>controls</em></h2>
+      <div class="sub">Only ROXIUM staff can see this. Everything you save updates the client view instantly.</div>
+
+      <h3>Monthly KPIs</h3>
+      <div class="entry" id="kpiMeta">
+        <div class="f"><label>Month</label><select id="inMonth"></select></div>
+      </div>
+      <div class="entry" id="entryFields"></div>
+      <div class="actions">
+        <button class="btn" id="btnSaveKpi">Save month</button>
+        <label class="btn ghost" for="xlsxFile" style="cursor:pointer">Import KPI workbook (.xlsx)</label>
+        <input type="file" id="xlsxFile" accept=".xlsx" class="hidden">
+        <span id="saveMsg"></span>
+      </div>
+
+      <h3>Deliverable status</h3>
+      <div class="entry">
+        <div class="f"><label>Deliverable</label><select id="delivPick"></select></div>
+        <div class="f"><label>Status</label><select id="delivStatus">
+          <option value="promised">Promised</option>
+          <option value="in_progress">In progress</option>
+          <option value="delivered">Delivered</option>
+        </select></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnDeliv">Update</button></div>
+      </div>
+
+      <h3>Video pipeline</h3>
+      <div class="entry">
+        <div class="f"><label>Item</label><select id="vidPick"></select></div>
+        <div class="f"><label>Stage</label><select id="vidStage">
+          <option value="scheduled">Scheduled</option><option value="pre_production">Pre-production</option>
+          <option value="shot">Shot</option><option value="editing">Editing</option>
+          <option value="delivered">Delivered</option><option value="posted">Posted</option>
+        </select></div>
+        <div class="f"><label>Blocked reason (blank = not blocked)</label><input id="vidBlocked" placeholder="e.g. Awaiting surgeon approval"></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnVid">Update</button></div>
+      </div>
+
+      <h3>Post an update</h3>
+      <div class="entry">
+        <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
+        <div class="f"><button class="btn" id="btnPost">Post update</button></div>
+      </div>
+    </section>
+
+    <footer>
+      <span>ROXIUM · Practice Growth Systems</span>
+      <span>portal v1 · Netlify + Supabase</span>
+    </footer>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
