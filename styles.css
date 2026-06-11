@@ -97,8 +97,17 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .teamonly{background:var(--surface)}
 .entry{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;margin-top:14px}
 .f label{display:block;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
-.f input,.f select{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);padding:9px 10px;font-family:'Jost';font-size:14px}
-.f input:focus,.f select:focus{outline:1px solid var(--gold)}
+.f input,.f select{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);padding:11px 12px;font-family:'Jost';font-size:14px;transition:border-color .18s ease, box-shadow .18s ease}
+.f select,.picker{
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23C9A84C' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;background-size:11px;
+  padding-right:38px;
+}
+.f select:hover,.picker:hover{border-color:var(--gold)}
+.f input:hover{border-color:var(--gold-dim)}
+.f input:focus,.f select:focus,.picker:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+select option{background:var(--surface2);color:var(--cream)}
 .actions{display:flex;flex-wrap:wrap;gap:14px;margin-top:20px;align-items:center}
 .btn{background:var(--gold);color:#171410;border:none;font-family:'Jost';font-weight:500;font-size:11px;letter-spacing:.22em;text-transform:uppercase;padding:12px 22px;cursor:pointer}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--cream)}

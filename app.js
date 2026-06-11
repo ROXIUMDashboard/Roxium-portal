@@ -116,10 +116,10 @@ function render(){
   // hero stats
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
   const heroes = [
-    {v: d? fmt$(d.cpl):'—', l:'Cost per lead', cls: statusCPL(d? d.cpl:0), note:'anchor ~$180'},
+    {v: d? fmt$(d.cpl):'—', l:'Cost per lead', cls: statusCPL(d? d.cpl:0), note: latest? 'this month':'awaiting data'},
     {v: latest? (+latest.cons||0).toLocaleString():'—', l:'Consults this month', cls: latest?'g':'i', note: d? fmt$(d.rev)+' est. revenue':'awaiting data'},
     {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'promised vs delivered'},
-    {v: latest&&latest.price? (+latest.price).toFixed(2)+'×':'—', l:'Pricing index', cls: latest&&+latest.price>=1.5?'g':'i', note:'target 1.5–3.0×'},
+    {v: latest&&latest.price? (+latest.price).toFixed(2)+'×':'—', l:'Pricing index', cls: latest&&+latest.price>=1.5?'g':'i', note: latest? 'vs. starting baseline':'awaiting data'},
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
@@ -149,7 +149,7 @@ function render(){
   // KPI cards + status board
   const cards = [
     {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
-    {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'target 4–8%'},
+    {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
     {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
     {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
   ];
