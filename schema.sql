@@ -188,16 +188,16 @@ begin
 
   -- ---- Standard video pipeline ----
   insert into video_pipeline (practice_id, item, stage) values
-    (pid,'Video Sales Letter (VSL)','scheduled'),
-    (pid,'Recovery Masterclass (gated webinar)','scheduled'),
-    (pid,'SEO video — facelift recovery','scheduled'),
-    (pid,'SEO video — rhinoplasty healing','scheduled'),
-    (pid,'SEO video — blepharoplasty','scheduled'),
-    (pid,'SEO video — body contouring','scheduled'),
-    (pid,'Patient testimonial #1','scheduled'),
-    (pid,'Patient testimonial #2','scheduled'),
-    (pid,'Patient testimonial #3','scheduled'),
-    (pid,'Office walkthrough B-roll package','scheduled');
+    (pid,'Video Sales Letter (VSL)','planned'),
+    (pid,'Recovery Masterclass (gated webinar)','planned'),
+    (pid,'SEO video — facelift recovery','planned'),
+    (pid,'SEO video — rhinoplasty healing','planned'),
+    (pid,'SEO video — blepharoplasty','planned'),
+    (pid,'SEO video — body contouring','planned'),
+    (pid,'Patient testimonial #1','planned'),
+    (pid,'Patient testimonial #2','planned'),
+    (pid,'Patient testimonial #3','planned'),
+    (pid,'Office walkthrough B-roll package','planned');
 
   return pid;
 end $$;

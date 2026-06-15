@@ -173,12 +173,12 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 .mlabel{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-top:12px}
 .mfield{font-size:14px}
 .mstage{color:var(--cream);font-size:14px;padding:6px 0}
-.mdates{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.mdates{display:flex;flex-direction:column;gap:10px}
 .mdates .mlabel{margin-top:0}
+.mdates>div{display:flex;flex-direction:column;gap:4px}
 .histbox{border:1px solid var(--line);border-radius:3px;padding:4px 0;margin-top:4px}
 .histrow{display:flex;justify-content:space-between;padding:7px 14px;font-size:12.5px;border-bottom:1px solid rgba(201,168,76,.08)}
 .histrow:last-child{border-bottom:none}
 .hstage{color:var(--cream)}
 .hdate{color:var(--muted);font-variant-numeric:tabular-nums}
 .modalfoot{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:16px 22px;border-top:1px solid var(--line)}
-@media(max-width:640px){.mdates{grid-template-columns:1fr}}
