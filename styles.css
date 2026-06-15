@@ -111,7 +111,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .actions{display:flex;flex-wrap:wrap;gap:14px;margin-top:20px;align-items:center}
 .btn{background:var(--gold);color:#171410;border:none;font-family:'Jost';font-weight:500;font-size:11px;letter-spacing:.22em;text-transform:uppercase;padding:12px 22px;cursor:pointer}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--cream)}
-.btn.sm{padding:8px 14px;font-size:10px}
+.btn.ghost.previewing{background:var(--gold);color:#171410}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
 #saveMsg,#loginMsg{font-size:12px;color:var(--green);letter-spacing:.06em}
 footer{padding:34px 0 50px;color:var(--muted);font-size:11px;letter-spacing:.2em;text-transform:uppercase;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}

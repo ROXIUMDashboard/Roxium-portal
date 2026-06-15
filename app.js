@@ -27,7 +27,11 @@ const STALE_DAYS = 14; // a card sitting this long in one stage flags red (team 
 
 let me = null;            // profile row
 let practiceId = null;    // active practice
+let previewMode = false;  // team viewing the client-side version
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], practice: null };
+
+// True only when the real user is team AND not previewing the client view.
+function isTeamView(){ return me && me.role === 'team' && !previewMode; }
 
 /* ---------------- auth ---------------- */
 const $ = id => document.getElementById(id);
@@ -61,12 +65,20 @@ async function afterLogin(){
 
   if(me.role === 'team'){
     $('teamPanel').classList.remove('hidden');
+    $('btnPreview').classList.remove('hidden');
     const { data: prax } = await sb.from('practices').select('*').order('name');
     const pick = $('practicePicker');
     pick.classList.remove('hidden');
     pick.innerHTML = (prax||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
     pick.onchange = ()=>{ practiceId = pick.value; loadAll(); };
     practiceId = prax && prax.length ? prax[0].id : null;
+    $('btnPreview').onclick = ()=>{
+      previewMode = !previewMode;
+      $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
+      $('btnPreview').classList.toggle('previewing', previewMode);
+      $('whoami').textContent = (me.full_name||'') + ' · ' + (previewMode ? 'client preview' : me.role);
+      render();
+    };
   } else {
     practiceId = me.practice_id;
   }
@@ -127,10 +139,10 @@ function render(){
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
   // timeline
-  renderTimeline(me.role==='team');
+  const isTeam = isTeamView();
+  renderTimeline(isTeam);
 
   // deliverables
-  const isTeam = me.role==='team';
   const pct = data.deliv.length? Math.round(100*delivered/data.deliv.length):0;
   $('delivSub').textContent = data.deliv.length? `${delivered} of ${data.deliv.length} deliverables shipped (${pct}%).` : 'Deliverables will be loaded at kickoff.';
   $('delivBar').style.width = pct+'%';
@@ -163,7 +175,9 @@ function render(){
     `<div class="fitem">${f.message}<div class="meta">${f.author||'ROXIUM'} · ${new Date(f.created_at).toLocaleDateString()} · ${f.source}</div></div>`).join('')
     : '<p class="note">No updates yet.</p>';
 
-  if(me.role==='team') renderTeam(latest);
+  // team panel + controls only when team AND not previewing as client
+  $('teamPanel').classList.toggle('hidden', !isTeamView());
+  if(isTeamView()) renderTeam(latest);
 }
 
 /* ---------------- team controls ---------------- */
