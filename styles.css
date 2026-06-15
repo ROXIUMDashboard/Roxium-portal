@@ -70,7 +70,7 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .chip.promised{color:var(--muted)}
 
 /* pipeline */
-.pipeline{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.pipeline{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:12px;overflow-x:auto}
 .col{background:var(--surface);border:1px solid var(--line);padding:12px}
 .col .h{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
 .vitem{font-size:12.5px;padding:8px 10px;background:var(--ink);border:1px solid var(--line);margin-bottom:8px;line-height:1.4}

@@ -276,10 +276,10 @@ function videoTooltip(v){
   const lines = [];
   if(v.description) lines.push(v.description);
   const dates = [];
-  if(v.planned_shoot_date) dates.push('Planned shoot: '+fmtDate(v.planned_shoot_date));
-  if(v.shot_date)   dates.push('Shot: '+fmtDate(v.shot_date));
-  if(v.posted_date) dates.push('Posted: '+fmtDate(v.posted_date));
-  if(dates.length) lines.push(dates.join('\n'));
+  if(v.planned_shoot_date) dates.push('Planned shoot:\n'+fmtDate(v.planned_shoot_date));
+  if(v.shot_date)   dates.push('Shot:\n'+fmtDate(v.shot_date));
+  if(v.posted_date) dates.push('Posted:\n'+fmtDate(v.posted_date));
+  if(dates.length) lines.push(dates.join('\n\n'));
   const hist = data.vhist.filter(h=>h.video_id===v.id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
   if(hist.length){
     lines.push('History:\n'+hist.map(h=>'• '+stageLabelOf(h.stage)+' — '+new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})).join('\n'));
@@ -293,19 +293,15 @@ function renderPipeline(isTeam){
     const items = data.video.filter(v=>v.stage===key);
     const cards = items.map(v=>{
       const stale = isTeam && key!=='posted' && daysIn(v.stage_since) >= STALE_DAYS;
-      // clean, separate lines per date
-      const dlines = [];
-      if(v.planned_shoot_date && (key==='planned'||key==='scheduled')) dlines.push('Planned shoot · '+fmtDate(v.planned_shoot_date));
-      if(v.shot_date)   dlines.push('Shot · '+fmtDate(v.shot_date));
-      if(v.posted_date) dlines.push('Posted · '+fmtDate(v.posted_date));
-      const dateBlock = dlines.length? `<span class="vdate">${dlines.join('<br>')}</span>` : '';
+      const enteredStr = v.stage_since ? fmtDate(v.stage_since) : '';
       const days = daysIn(v.stage_since);
-      const inStage = isTeam? `<span class="vdays ${stale?'stale':''}">${days} day${days===1?'':'s'} in this stage</span>` : '';
+      const daysLine = isTeam? `<span class="vdays ${stale?'stale':''}">${days} day${days===1?'':'s'} in this stage</span>` : '';
+      const stageDateLine = (isTeam && enteredStr)? `<span class="vdate">${stageLabelOf(key)} · ${enteredStr}</span>` : '';
       return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
         ${isTeam?`<button class="vdel" data-del="${v.id}" title="Delete">✕</button>`:''}
         <span class="vtitle">${esc(v.item)}</span>
         ${v.video_url && key==='posted'?`<a class="vlink" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ watch</a>`:''}
-        ${dateBlock}${inStage}
+        ${daysLine}${stageDateLine}
         ${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`;
     }).join('');
     const addBtn = isTeam? `<button class="vadd" data-addstage="${key}">+ Add video</button>` : '';
@@ -315,32 +311,33 @@ function renderPipeline(isTeam){
 }
 
 function wirePipeline(wrap){
-  let dragId = null;
   wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
-    card.addEventListener('dragstart', e=>{ dragId = card.dataset.vid; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
-    card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); });
+    card.addEventListener('dragstart', e=>{
+      e.dataTransfer.setData('text/plain', card.dataset.vid);  // reliable: travels with the drag
+      e.dataTransfer.effectAllowed='move';
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
     card.addEventListener('dblclick', ()=> openVideoDetail(card.dataset.vid));
   });
-  // delete buttons (stop the drag/dblclick)
   wrap.querySelectorAll('.vdel').forEach(b=>{
     b.addEventListener('click', e=>{ e.stopPropagation(); deleteRow('video_pipeline', b.dataset.del, 'Delete this video asset and its history?'); });
   });
-  // add buttons
   wrap.querySelectorAll('.vadd').forEach(b=>{
-    b.addEventListener('click', ()=> addVideoTo(b.dataset.addstage));
+    b.addEventListener('click', e=>{ e.stopPropagation(); addVideoTo(b.dataset.addstage); });
   });
-  // EVERY column is a drop target (fixes "can't drag to Planned")
+  // EVERY column is a drop target — including empty ones and Planned
   wrap.querySelectorAll('.col').forEach(col=>{
-    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('over'); });
+    col.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; col.classList.add('over'); });
     col.addEventListener('dragleave', e=>{ if(!col.contains(e.relatedTarget)) col.classList.remove('over'); });
     col.addEventListener('drop', async e=>{
       e.preventDefault(); col.classList.remove('over');
+      const id = e.dataTransfer.getData('text/plain');   // read from the drag itself
+      if(!id) return;
       const newStage = col.dataset.stage;
-      if(!dragId) return;
-      const v = data.video.find(x=>x.id===dragId);
-      const moveId = dragId; dragId = null;
+      const v = data.video.find(x=>x.id===id);
       if(v && v.stage!==newStage){
-        await updateRow('video_pipeline', moveId, { stage:newStage }); // trigger stamps dates + history
+        await updateRow('video_pipeline', id, { stage:newStage }); // trigger stamps stage_since + history
       }
     });
   });
@@ -348,10 +345,18 @@ function wirePipeline(wrap){
 
 async function addVideoTo(stage){
   const item = prompt('Name of the new video asset:');
-  if(!item || !item.trim()) return;
-  const sort = (Math.max(0,...data.video.map(v=>v.sort||0)))+1;
-  const { error } = await sb.from('video_pipeline').insert({ practice_id:practiceId, item:item.trim(), stage, sort });
-  flash(error? error.message : 'Video added.'); if(!error) loadAll();
+  if(item===null) return;            // cancelled
+  if(!item.trim()){ flash('Enter a name.'); return; }
+  try{
+    const { error } = await sb.from('video_pipeline')
+      .insert({ practice_id: practiceId, item: item.trim(), stage })
+      .select();
+    if(error){ flash('Add failed: '+error.message); alert('Add failed: '+error.message); return; }
+    flash('Video added.');
+    await loadAll();
+  }catch(e){
+    flash('Add failed: '+e.message); alert('Add failed: '+e.message);
+  }
 }
 
 /* ---- Video detail modal: history, rename, dates, post + email ---- */
