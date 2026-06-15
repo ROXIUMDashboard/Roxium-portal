@@ -267,9 +267,25 @@ async function addDeliverable(){
   flash(error? error.message : 'Deliverable added.'); if(!error) loadAll();
 }
 
-/* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, double-click detail ---- */
-const fmtDate = d => d ? new Date(d+ (d.length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : '';
-function daysIn(stage_since){ if(!stage_since) return 0; return Math.floor((Date.now()-new Date(stage_since))/86400000); }
+/* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, double-click panel ---- */
+const fmtDate = d => d ? new Date(d+ (String(d).length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+function daysIn(stage_since){ if(!stage_since) return 0; return Math.max(0,Math.floor((Date.now()-new Date(stage_since))/86400000)); }
+function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
+
+function videoTooltip(v){
+  const lines = [];
+  if(v.description) lines.push(v.description);
+  const dates = [];
+  if(v.planned_shoot_date) dates.push('Planned shoot: '+fmtDate(v.planned_shoot_date));
+  if(v.shot_date)   dates.push('Shot: '+fmtDate(v.shot_date));
+  if(v.posted_date) dates.push('Posted: '+fmtDate(v.posted_date));
+  if(dates.length) lines.push(dates.join('\n'));
+  const hist = data.vhist.filter(h=>h.video_id===v.id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
+  if(hist.length){
+    lines.push('History:\n'+hist.map(h=>'• '+stageLabelOf(h.stage)+' — '+new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})).join('\n'));
+  }
+  return lines.join('\n\n') || 'No details yet — double-click to add.';
+}
 
 function renderPipeline(isTeam){
   const wrap = $('pipeline');
@@ -277,47 +293,65 @@ function renderPipeline(isTeam){
     const items = data.video.filter(v=>v.stage===key);
     const cards = items.map(v=>{
       const stale = isTeam && key!=='posted' && daysIn(v.stage_since) >= STALE_DAYS;
-      // date line shown on the card
-      const bits = [];
-      if(v.planned_shoot_date && (key==='planned'||key==='scheduled')) bits.push('Shoot '+fmtDate(v.planned_shoot_date));
-      if(v.shot_date)   bits.push('Shot '+fmtDate(v.shot_date));
-      if(v.posted_date) bits.push('Posted '+fmtDate(v.posted_date));
-      const dateLine = bits.length? `<span class="vdate">${bits.join(' · ')}</span>` : '';
-      const inStage = isTeam? `<span class="vdays ${stale?'stale':''}">${daysIn(v.stage_since)}d in stage</span>` : '';
-      return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true" data-id="${v.id}"`:''} data-vid="${v.id}">
+      // clean, separate lines per date
+      const dlines = [];
+      if(v.planned_shoot_date && (key==='planned'||key==='scheduled')) dlines.push('Planned shoot · '+fmtDate(v.planned_shoot_date));
+      if(v.shot_date)   dlines.push('Shot · '+fmtDate(v.shot_date));
+      if(v.posted_date) dlines.push('Posted · '+fmtDate(v.posted_date));
+      const dateBlock = dlines.length? `<span class="vdate">${dlines.join('<br>')}</span>` : '';
+      const days = daysIn(v.stage_since);
+      const inStage = isTeam? `<span class="vdays ${stale?'stale':''}">${days} day${days===1?'':'s'} in this stage</span>` : '';
+      return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
+        ${isTeam?`<button class="vdel" data-del="${v.id}" title="Delete">✕</button>`:''}
         <span class="vtitle">${esc(v.item)}</span>
         ${v.video_url && key==='posted'?`<a class="vlink" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ watch</a>`:''}
-        ${dateLine}${inStage}
+        ${dateBlock}${inStage}
         ${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`;
     }).join('');
-    return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div></div>`;
+    const addBtn = isTeam? `<button class="vadd" data-addstage="${key}">+ Add video</button>` : '';
+    return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div>${addBtn}</div>`;
   }).join('');
   if(isTeam) wirePipeline(wrap);
 }
 
 function wirePipeline(wrap){
-  let dragId = null, clickTimer = null;
+  let dragId = null;
   wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
-    card.addEventListener('dragstart', e=>{ dragId = card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
-    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
-    // double-click opens detail; single click left free (drag is the primary action)
-    card.addEventListener('dblclick', ()=>{ openVideoDetail(card.dataset.vid); });
+    card.addEventListener('dragstart', e=>{ dragId = card.dataset.vid; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); });
+    card.addEventListener('dblclick', ()=> openVideoDetail(card.dataset.vid));
   });
-  wrap.querySelectorAll('.dropcol').forEach(col=>{
+  // delete buttons (stop the drag/dblclick)
+  wrap.querySelectorAll('.vdel').forEach(b=>{
+    b.addEventListener('click', e=>{ e.stopPropagation(); deleteRow('video_pipeline', b.dataset.del, 'Delete this video asset and its history?'); });
+  });
+  // add buttons
+  wrap.querySelectorAll('.vadd').forEach(b=>{
+    b.addEventListener('click', ()=> addVideoTo(b.dataset.addstage));
+  });
+  // EVERY column is a drop target (fixes "can't drag to Planned")
+  wrap.querySelectorAll('.col').forEach(col=>{
     col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('over'); });
-    col.addEventListener('dragleave', ()=> col.classList.remove('over'));
+    col.addEventListener('dragleave', e=>{ if(!col.contains(e.relatedTarget)) col.classList.remove('over'); });
     col.addEventListener('drop', async e=>{
       e.preventDefault(); col.classList.remove('over');
       const newStage = col.dataset.stage;
       if(!dragId) return;
       const v = data.video.find(x=>x.id===dragId);
+      const moveId = dragId; dragId = null;
       if(v && v.stage!==newStage){
-        // the DB trigger stamps stage_since, shot_date/posted_date, and writes history automatically
-        await updateRow('video_pipeline', dragId, { stage:newStage });
+        await updateRow('video_pipeline', moveId, { stage:newStage }); // trigger stamps dates + history
       }
-      dragId = null;
     });
   });
+}
+
+async function addVideoTo(stage){
+  const item = prompt('Name of the new video asset:');
+  if(!item || !item.trim()) return;
+  const sort = (Math.max(0,...data.video.map(v=>v.sort||0)))+1;
+  const { error } = await sb.from('video_pipeline').insert({ practice_id:practiceId, item:item.trim(), stage, sort });
+  flash(error? error.message : 'Video added.'); if(!error) loadAll();
 }
 
 /* ---- Video detail modal: history, rename, dates, post + email ---- */
@@ -335,6 +369,9 @@ function openVideoDetail(id){
     <div class="modalbody">
       <label class="mlabel">Asset name</label>
       <input class="cellinput mfield" id="mName" value="${esc(v.item)}">
+
+      <label class="mlabel">Description (what this asset is — shown on hover)</label>
+      <textarea class="cellinput mfield mtextarea" id="mDesc" rows="2" placeholder="e.g. 3-min educational video on facelift recovery timeline">${esc(v.description||'')}</textarea>
 
       <label class="mlabel">Current stage</label>
       <div class="mstage">${stageLabel(v.stage)} · ${daysIn(v.stage_since)} days in stage</div>
@@ -367,6 +404,7 @@ function openVideoDetail(id){
   $('mSave').onclick = async ()=>{
     const patch = {
       item: $('mName').value.trim()||v.item,
+      description: $('mDesc').value.trim()||null,
       planned_shoot_date: $('mPlanned').value||null,
       shot_date: $('mShot').value||null,
       posted_date: $('mPosted').value||null,
