@@ -28,6 +28,7 @@ const STALE_DAYS = 14; // a card sitting this long in one stage flags red (team 
 let me = null;            // profile row
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
+let metricsMonth = null;  // null = latest reported month; or a specific month number to view past data
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], practice: null };
 
 // True only when the real user is team AND not previewing the client view.
@@ -120,11 +121,17 @@ const statusGen = (v,t)=> v===0?'i': v>=t?'g': v>=t*0.8?'a':'r';
 /* ---------------- render ---------------- */
 function render(){
   $('heroTitle').innerHTML = (data.practice? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
-  const latest = [...data.kpi].sort((a,b)=>b.month-a.month)[0] || null;
+  const reported = [...data.kpi].sort((a,b)=>b.month-a.month);
+  const latestMonth = reported.length? reported[0].month : null;
+  // metricsMonth null = follow latest; otherwise show the chosen past month
+  const viewMonth = (metricsMonth!=null && data.kpi.some(x=>x.month===metricsMonth)) ? metricsMonth : latestMonth;
+  const latest = viewMonth!=null ? data.kpi.find(x=>x.month===viewMonth) : null;
   const d = derive(latest);
   $('updated').textContent = latest
-    ? `Reporting through Month ${latest.month} · KPI data live from Supabase`
+    ? `Showing Month ${latest.month}${viewMonth===latestMonth?' (latest)':''} · KPI data live from Supabase`
     : 'KPI data will appear here after the first month is reported.';
+  // build the month selector (latest + any reported months)
+  buildMetricsPicker(reported, viewMonth, latestMonth);
   $('kpiSub').textContent = latest? `Month ${latest.month} against target.` : 'Latest month against target.';
 
   // hero stats
@@ -178,6 +185,20 @@ function render(){
   // team panel + controls only when team AND not previewing as client
   $('teamPanel').classList.toggle('hidden', !isTeamView());
   if(isTeamView()) renderTeam(latest);
+}
+
+/* Month selector for performance metrics: 'Latest' + each reported month */
+function buildMetricsPicker(reported, viewMonth, latestMonth){
+  const sel = $('metricsPicker');
+  if(!sel) return;
+  if(!reported.length){ sel.style.display='none'; return; }
+  sel.style.display='';
+  const opts = ['<option value="">Latest month</option>']
+    .concat(reported.slice().sort((a,b)=>a.month-b.month).map(r=>
+      `<option value="${r.month}">Month ${r.month}${r.month===latestMonth?' (latest)':''}</option>`));
+  sel.innerHTML = opts.join('');
+  sel.value = (metricsMonth!=null) ? String(metricsMonth) : '';
+  sel.onchange = ()=>{ metricsMonth = sel.value===''? null : +sel.value; render(); };
 }
 
 /* ---------------- team controls ---------------- */
@@ -294,11 +315,7 @@ function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
 function videoTooltip(v){
   const lines = [];
   if(v.description) lines.push(v.description);
-  const dates = [];
-  if(v.planned_shoot_date) dates.push('Planned shoot:\n'+fmtDate(v.planned_shoot_date));
-  if(v.shot_date)   dates.push('Shot:\n'+fmtDate(v.shot_date));
-  if(v.posted_date) dates.push('Posted:\n'+fmtDate(v.posted_date));
-  if(dates.length) lines.push(dates.join('\n\n'));
+  if(v.stage_since) lines.push('In '+stageLabelOf(v.stage)+' since:\n'+fmtDate(v.stage_since));
   const hist = data.vhist.filter(h=>h.video_id===v.id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
   if(hist.length){
     lines.push('History:\n'+hist.map(h=>'• '+stageLabelOf(h.stage)+' — '+new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})).join('\n'));
@@ -400,11 +417,8 @@ function openVideoDetail(id){
       <label class="mlabel">Current stage</label>
       <div class="mstage">${stageLabel(v.stage)} · ${daysIn(v.stage_since)} days in stage</div>
 
-      <div class="mdates">
-        <div><label class="mlabel">Planned shoot</label><input type="date" class="dateedit mfield" id="mPlanned" value="${v.planned_shoot_date||''}"></div>
-        <div><label class="mlabel">Shot</label><input type="date" class="dateedit mfield" id="mShot" value="${v.shot_date||''}"></div>
-        <div><label class="mlabel">Posted</label><input type="date" class="dateedit mfield" id="mPosted" value="${v.posted_date||''}"></div>
-      </div>
+      <label class="mlabel">Date entered ${stageLabel(v.stage)} (auto-set on move — edit to schedule ahead or correct)</label>
+      <input type="date" class="dateedit mfield" id="mStageDate" value="${(v.stage_since||'').slice(0,10)}">
 
       <label class="mlabel">Blocked reason (blank = not blocked)</label>
       <input class="cellinput mfield" id="mBlock" value="${esc(v.blocked_reason||'')}" placeholder="e.g. Awaiting surgeon approval">
@@ -426,12 +440,11 @@ function openVideoDetail(id){
   m.onclick = e=>{ if(e.target===m) closeModal(); };
 
   $('mSave').onclick = async ()=>{
+    const stageDate = $('mStageDate').value; // yyyy-mm-dd or ''
     const patch = {
       item: $('mName').value.trim()||v.item,
       description: $('mDesc').value.trim()||null,
-      planned_shoot_date: $('mPlanned').value||null,
-      shot_date: $('mShot').value||null,
-      posted_date: $('mPosted').value||null,
+      stage_since: stageDate ? new Date(stageDate+'T12:00:00').toISOString() : v.stage_since,
       blocked_reason: $('mBlock').value.trim()||null,
       blocked: !!$('mBlock').value.trim(),
       video_url: $('mUrl').value.trim()||null,
