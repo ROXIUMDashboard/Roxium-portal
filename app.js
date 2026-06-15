@@ -22,11 +22,12 @@ const XL_MAP = {
   'Video view rate (enter as %)':'vid','Qualified followers added':'foll',
   'Social rankings index (baseline = 1.0x)':'rank','Cadence posts published':'posts',
 };
-const STAGES = [['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
+const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
+const STALE_DAYS = 14; // a card sitting this long in one stage flags red (team only)
 
 let me = null;            // profile row
 let practiceId = null;    // active practice
-let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], practice: null };
+let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], practice: null };
 
 /* ---------------- auth ---------------- */
 const $ = id => document.getElementById(id);
@@ -74,15 +75,16 @@ async function afterLogin(){
 
 /* ---------------- data ---------------- */
 async function loadAll(){
-  const [p,k,d,m,v,f] = await Promise.all([
+  const [p,k,d,m,v,f,vh] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
     sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('month'),
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('milestones').select('*').eq('practice_id', practiceId).order('sort'),
-    sb.from('video_pipeline').select('*').eq('practice_id', practiceId),
+    sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('activity').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(12),
+    sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
   ]);
-  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[] };
+  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[] };
   render();
 }
 
@@ -265,25 +267,41 @@ async function addDeliverable(){
   flash(error? error.message : 'Deliverable added.'); if(!error) loadAll();
 }
 
-/* ---- VIDEO PIPELINE: original column board; team can drag cards between stages + click to edit ---- */
+/* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, double-click detail ---- */
+const fmtDate = d => d ? new Date(d+ (d.length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : '';
+function daysIn(stage_since){ if(!stage_since) return 0; return Math.floor((Date.now()-new Date(stage_since))/86400000); }
+
 function renderPipeline(isTeam){
   const wrap = $('pipeline');
   wrap.innerHTML = STAGES.map(([key,label])=>{
     const items = data.video.filter(v=>v.stage===key);
-    const cards = items.map(v=>
-      `<div class="vitem ${v.blocked?'blocked':''}" ${isTeam?`draggable="true" data-id="${v.id}"`:''}>${esc(v.item)}${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`).join('');
+    const cards = items.map(v=>{
+      const stale = isTeam && key!=='posted' && daysIn(v.stage_since) >= STALE_DAYS;
+      // date line shown on the card
+      const bits = [];
+      if(v.planned_shoot_date && (key==='planned'||key==='scheduled')) bits.push('Shoot '+fmtDate(v.planned_shoot_date));
+      if(v.shot_date)   bits.push('Shot '+fmtDate(v.shot_date));
+      if(v.posted_date) bits.push('Posted '+fmtDate(v.posted_date));
+      const dateLine = bits.length? `<span class="vdate">${bits.join(' · ')}</span>` : '';
+      const inStage = isTeam? `<span class="vdays ${stale?'stale':''}">${daysIn(v.stage_since)}d in stage</span>` : '';
+      return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true" data-id="${v.id}"`:''} data-vid="${v.id}">
+        <span class="vtitle">${esc(v.item)}</span>
+        ${v.video_url && key==='posted'?`<a class="vlink" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ watch</a>`:''}
+        ${dateLine}${inStage}
+        ${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`;
+    }).join('');
     return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div></div>`;
   }).join('');
   if(isTeam) wirePipeline(wrap);
 }
+
 function wirePipeline(wrap){
-  let dragId = null;
-  // drag between columns
+  let dragId = null, clickTimer = null;
   wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
     card.addEventListener('dragstart', e=>{ dragId = card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
     card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
-    // click a card (not while dragging) to edit it
-    card.addEventListener('click', ()=> editVideoCard(card.dataset.id));
+    // double-click opens detail; single click left free (drag is the primary action)
+    card.addEventListener('dblclick', ()=>{ openVideoDetail(card.dataset.vid); });
   });
   wrap.querySelectorAll('.dropcol').forEach(col=>{
     col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('over'); });
@@ -294,25 +312,98 @@ function wirePipeline(wrap){
       if(!dragId) return;
       const v = data.video.find(x=>x.id===dragId);
       if(v && v.stage!==newStage){
-        await updateRow('video_pipeline', dragId, { stage:newStage, updated_at:new Date().toISOString() });
+        // the DB trigger stamps stage_since, shot_date/posted_date, and writes history automatically
+        await updateRow('video_pipeline', dragId, { stage:newStage });
       }
       dragId = null;
     });
   });
 }
-function editVideoCard(id){
+
+/* ---- Video detail modal: history, rename, dates, post + email ---- */
+function openVideoDetail(id){
   const v = data.video.find(x=>x.id===id); if(!v) return;
-  const name = prompt('Rename this video asset:', v.item);
-  if(name===null) return; // cancelled
-  const blockedReason = prompt('Blocked reason? (leave blank if not blocked / waiting on practice)', v.blocked_reason||'');
-  if(blockedReason===null) {
-    // user cancelled the second prompt — still apply the rename
-    if(name.trim() && name.trim()!==v.item) updateRow('video_pipeline', id, { item:name.trim() });
-    return;
-  }
-  const r = blockedReason.trim();
-  updateRow('video_pipeline', id, { item: name.trim()||v.item, blocked_reason: r||null, blocked: !!r });
+  const hist = data.vhist.filter(h=>h.video_id===id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
+  const stageLabel = k => (STAGES.find(s=>s[0]===k)||[k,k])[1];
+  const histRows = hist.length? hist.map(h=>
+    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span></div>`).join('')
+    : '<div class="note">No history yet.</div>';
+
+  const m = $('modal');
+  m.innerHTML = `<div class="modalcard">
+    <div class="modalhead"><h3 style="margin:0">${esc(v.item)}</h3><button class="modalx" id="mClose">✕</button></div>
+    <div class="modalbody">
+      <label class="mlabel">Asset name</label>
+      <input class="cellinput mfield" id="mName" value="${esc(v.item)}">
+
+      <label class="mlabel">Current stage</label>
+      <div class="mstage">${stageLabel(v.stage)} · ${daysIn(v.stage_since)} days in stage</div>
+
+      <div class="mdates">
+        <div><label class="mlabel">Planned shoot</label><input type="date" class="dateedit mfield" id="mPlanned" value="${v.planned_shoot_date||''}"></div>
+        <div><label class="mlabel">Shot</label><input type="date" class="dateedit mfield" id="mShot" value="${v.shot_date||''}"></div>
+        <div><label class="mlabel">Posted</label><input type="date" class="dateedit mfield" id="mPosted" value="${v.posted_date||''}"></div>
+      </div>
+
+      <label class="mlabel">Blocked reason (blank = not blocked)</label>
+      <input class="cellinput mfield" id="mBlock" value="${esc(v.blocked_reason||'')}" placeholder="e.g. Awaiting surgeon approval">
+
+      <label class="mlabel">Finished video link (shown to client when posted)</label>
+      <input class="cellinput mfield" id="mUrl" value="${esc(v.video_url||'')}" placeholder="https://…">
+
+      <label class="mlabel">Stage history</label>
+      <div class="histbox">${histRows}</div>
+    </div>
+    <div class="modalfoot">
+      <button class="btn" id="mSave">Save changes</button>
+      <button class="btn" id="mPost">Post video &amp; email client</button>
+      <span id="mMsg" class="note"></span>
+    </div></div>`;
+  m.classList.add('open');
+
+  $('mClose').onclick = closeModal;
+  m.onclick = e=>{ if(e.target===m) closeModal(); };
+
+  $('mSave').onclick = async ()=>{
+    const patch = {
+      item: $('mName').value.trim()||v.item,
+      planned_shoot_date: $('mPlanned').value||null,
+      shot_date: $('mShot').value||null,
+      posted_date: $('mPosted').value||null,
+      blocked_reason: $('mBlock').value.trim()||null,
+      blocked: !!$('mBlock').value.trim(),
+      video_url: $('mUrl').value.trim()||null,
+    };
+    const { error } = await sb.from('video_pipeline').update(patch).eq('id', id);
+    if(error){ $('mMsg').textContent = error.message; } else { $('mMsg').textContent='Saved.'; await loadAll(); closeModal(); }
+  };
+
+  $('mPost').onclick = async ()=>{
+    const url = $('mUrl').value.trim();
+    if(!url){ $('mMsg').textContent = 'Add the finished video link first.'; return; }
+    $('mMsg').textContent = 'Posting & emailing…';
+    // move to posted + save url; trigger stamps posted_date + history
+    const { error: upErr } = await sb.from('video_pipeline').update({ stage:'posted', video_url:url }).eq('id', id);
+    if(upErr){ $('mMsg').textContent = upErr.message; return; }
+    // call the edge function to email the client
+    try{
+      const { data: sess } = await sb.auth.getSession();
+      const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/notify-video-ready`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sess.session.access_token}` },
+        body: JSON.stringify({ video_id: id }),
+      });
+      const out = await res.json();
+      if(!out.ok) throw new Error(out.error||'email failed');
+      $('mMsg').textContent = `Posted & emailed ${out.emailed} client(s).`;
+    }catch(e){
+      $('mMsg').textContent = 'Posted to portal, but email failed: '+e.message;
+    }
+    await loadAll();
+    setTimeout(closeModal, 1400);
+  };
 }
+function closeModal(){ const m=$('modal'); m.classList.remove('open'); m.innerHTML=''; }
 
 /* ---- MILESTONES: original display; team can edit only the date (dates auto-seeded per surgeon) ---- */
 function renderTimeline(isTeam){
