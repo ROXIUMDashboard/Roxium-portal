@@ -134,7 +134,9 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 /* video pipeline drag-and-drop (team) */
 .col.dropcol{transition:border-color .15s, background .15s}
 .col.dropcol.over{border-color:var(--gold);background:rgba(201,168,76,.06)}
-.coldrop{min-height:40px}
+.coldrop{min-height:80px}
+.col.dropcol{display:flex;flex-direction:column}
+.col.dropcol .coldrop{flex:1}
 .vitem[draggable]{cursor:grab}
 .vitem[draggable]:hover{border-color:var(--gold)}
 .vitem.dragging{opacity:.4;cursor:grabbing}

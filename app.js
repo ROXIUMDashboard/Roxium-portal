@@ -331,13 +331,13 @@ function wirePipeline(wrap){
     col.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; col.classList.add('over'); });
     col.addEventListener('dragleave', e=>{ if(!col.contains(e.relatedTarget)) col.classList.remove('over'); });
     col.addEventListener('drop', async e=>{
-      e.preventDefault(); col.classList.remove('over');
-      const id = e.dataTransfer.getData('text/plain');   // read from the drag itself
+      e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
+      const id = e.dataTransfer.getData('text/plain');
       if(!id) return;
-      const newStage = col.dataset.stage;
+      const newStage = e.currentTarget.dataset.stage;   // the column this handler is bound to
       const v = data.video.find(x=>x.id===id);
       if(v && v.stage!==newStage){
-        await updateRow('video_pipeline', id, { stage:newStage }); // trigger stamps stage_since + history
+        await updateRow('video_pipeline', id, { stage:newStage });
       }
     });
   });
