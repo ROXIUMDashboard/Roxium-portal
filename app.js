@@ -181,21 +181,26 @@ function render(){
 }
 
 /* ---------------- team controls ---------------- */
+let entryMonth = 1;  // remembers which month the team is editing, survives re-renders
 function renderTeam(){
   const sel = $('inMonth');
-  sel.innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">Month ${i+1}</option>`).join('');
-  sel.onchange = fillKpiForm;
+  // build options once; preserve the current selection on every later render
+  if(sel.options.length !== 12){
+    sel.innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">Month ${i+1}</option>`).join('');
+    sel.onchange = ()=>{ entryMonth = +sel.value; fillKpiForm(); };
+  }
+  sel.value = entryMonth;       // restore the month the team was on
   fillKpiForm();
 }
 function fillKpiForm(){
-  const m = data.kpi.find(x=>x.month===+$('inMonth').value) || {};
+  const m = data.kpi.find(x=>x.month===entryMonth) || {};
   $('entryFields').innerHTML = FIELDS.map(f=>
     `<div class="f"><label>${f.l}</label><input data-k="${f.k}" type="number" step="any" value="${m[f.k]??''}" placeholder="0"></div>`).join('');
 }
 const flash = t=>{ $('saveMsg').textContent=t; setTimeout(()=>$('saveMsg').textContent='',3500); };
 
 $('btnSaveKpi').onclick = async ()=>{
-  const row = { practice_id: practiceId, month: +$('inMonth').value, updated_at: new Date().toISOString() };
+  const row = { practice_id: practiceId, month: entryMonth, updated_at: new Date().toISOString() };
   document.querySelectorAll('#entryFields input').forEach(i=>{ row[i.dataset.k] = i.value===''? null : +i.value; });
   const { error } = await sb.from('kpi_monthly').upsert(row, { onConflict:'practice_id,month' });
   flash(error? error.message : 'Saved.'); if(!error) loadAll();
@@ -310,7 +315,7 @@ function renderPipeline(isTeam){
       const enteredStr = v.stage_since ? fmtDate(v.stage_since) : '';
       const days = daysIn(v.stage_since);
       const daysLine = isTeam? `<span class="vdays ${stale?'stale':''}">${days} day${days===1?'':'s'} in this stage</span>` : '';
-      const stageDateLine = (isTeam && enteredStr)? `<span class="vdate">${stageLabelOf(key)} · ${enteredStr}</span>` : '';
+      const stageDateLine = enteredStr? `<span class="vdate">${stageLabelOf(key)} · ${enteredStr}</span>` : '';
       return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
         ${isTeam?`<button class="vdel" data-del="${v.id}" title="Delete">✕</button>`:''}
         <span class="vtitle">${esc(v.item)}</span>
