@@ -265,82 +265,74 @@ async function addDeliverable(){
   flash(error? error.message : 'Deliverable added.'); if(!error) loadAll();
 }
 
-/* ---- VIDEO PIPELINE ---- */
+/* ---- VIDEO PIPELINE: original column board; team can drag cards between stages + click to edit ---- */
 function renderPipeline(isTeam){
   const wrap = $('pipeline');
-  if(isTeam){
-    const rows = data.video.map(v=>`<div class="vrow ${v.blocked?'blocked':''}" data-id="${v.id}">
-      <input class="cellinput vname" data-f="item" value="${esc(v.item)}">
-      ${stageSelect(v.stage)}
-      <input class="cellinput vblock" data-f="blocked_reason" value="${esc(v.blocked_reason||'')}" placeholder="Blocked reason (blank = not blocked)">
-      <button class="rowdel" title="Delete">✕</button></div>`).join('');
-    const addRow = `<div class="vrow addrow"><input id="nvItem" class="cellinput vname" placeholder="New video item…">
-      <span class="vaddspacer"></span><button class="btn sm" id="nvAdd">+ Add</button></div>`;
-    wrap.innerHTML = `<div class="vlist">${rows}${addRow}</div>`;
-    wrap.querySelectorAll('.vrow[data-id]').forEach(row=>{
-      const id = row.dataset.id;
-      row.querySelector('.vname').onchange = e=> updateRow('video_pipeline', id, { item: e.target.value.trim() });
-      row.querySelector('select').onchange = e=> updateRow('video_pipeline', id, { stage: e.target.value, updated_at:new Date().toISOString() });
-      row.querySelector('.vblock').onchange = e=>{ const r=e.target.value.trim(); updateRow('video_pipeline', id, { blocked_reason:r||null, blocked:!!r }); };
-      row.querySelector('.rowdel').onclick = ()=> deleteRow('video_pipeline', id, 'Delete this video item?');
+  wrap.innerHTML = STAGES.map(([key,label])=>{
+    const items = data.video.filter(v=>v.stage===key);
+    const cards = items.map(v=>
+      `<div class="vitem ${v.blocked?'blocked':''}" ${isTeam?`draggable="true" data-id="${v.id}"`:''}>${esc(v.item)}${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`).join('');
+    return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div></div>`;
+  }).join('');
+  if(isTeam) wirePipeline(wrap);
+}
+function wirePipeline(wrap){
+  let dragId = null;
+  // drag between columns
+  wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
+    card.addEventListener('dragstart', e=>{ dragId = card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
+    // click a card (not while dragging) to edit it
+    card.addEventListener('click', ()=> editVideoCard(card.dataset.id));
+  });
+  wrap.querySelectorAll('.dropcol').forEach(col=>{
+    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('over'); });
+    col.addEventListener('dragleave', ()=> col.classList.remove('over'));
+    col.addEventListener('drop', async e=>{
+      e.preventDefault(); col.classList.remove('over');
+      const newStage = col.dataset.stage;
+      if(!dragId) return;
+      const v = data.video.find(x=>x.id===dragId);
+      if(v && v.stage!==newStage){
+        await updateRow('video_pipeline', dragId, { stage:newStage, updated_at:new Date().toISOString() });
+      }
+      dragId = null;
     });
-    $('nvAdd').onclick = addVideo;
-  } else {
-    // client: the column board, read-only
-    wrap.innerHTML = STAGES.map(([key,label])=>{
-      const items = data.video.filter(v=>v.stage===key);
-      return `<div class="col"><div class="h">${label} · ${items.length}</div>`+
-        items.map(v=>`<div class="vitem ${v.blocked?'blocked':''}">${esc(v.item)}${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`).join('')+`</div>`;
-    }).join('');
+  });
+}
+function editVideoCard(id){
+  const v = data.video.find(x=>x.id===id); if(!v) return;
+  const name = prompt('Rename this video asset:', v.item);
+  if(name===null) return; // cancelled
+  const blockedReason = prompt('Blocked reason? (leave blank if not blocked / waiting on practice)', v.blocked_reason||'');
+  if(blockedReason===null) {
+    // user cancelled the second prompt — still apply the rename
+    if(name.trim() && name.trim()!==v.item) updateRow('video_pipeline', id, { item:name.trim() });
+    return;
   }
-}
-function stageSelect(cur){
-  return `<select class="stagesel">`+STAGES.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
-}
-async function addVideo(){
-  const item = $('nvItem').value.trim();
-  if(!item){ flash('Enter a video item name.'); return; }
-  const { error } = await sb.from('video_pipeline').insert({ practice_id:practiceId, item, stage:'scheduled' });
-  flash(error? error.message : 'Video item added.'); if(!error) loadAll();
+  const r = blockedReason.trim();
+  updateRow('video_pipeline', id, { item: name.trim()||v.item, blocked_reason: r||null, blocked: !!r });
 }
 
-/* ---- MILESTONES ---- */
+/* ---- MILESTONES: original display; team can edit only the date (dates auto-seeded per surgeon) ---- */
 function renderTimeline(isTeam){
   const wrap = $('timeline');
   if(!data.miles.length){ wrap.innerHTML = '<p class="note">Roadmap milestones will appear here at kickoff.</p>'; return; }
-  if(isTeam){
-    wrap.innerHTML = `<div class="mlist">`+ data.miles.map(m=>`<div class="mrow ${m.status}" data-id="${m.id}">
-      <span class="dot"></span>
-      <input class="cellinput mname" data-f="name" value="${esc(m.name)}">
-      <input class="cellinput mdetail" data-f="detail" value="${esc(m.detail||'')}" placeholder="Detail shown to client…">
-      ${mileSelect(m.status)}
-      <button class="rowdel" title="Delete">✕</button></div>`).join('') + `
-      <div class="mrow addrow"><span class="dot"></span><input id="nmName" class="cellinput mname" placeholder="New milestone…">
-      <input id="nmDetail" class="cellinput mdetail" placeholder="Detail…"><span></span><button class="btn sm" id="nmAdd">+ Add</button></div></div>`;
-    wrap.querySelectorAll('.mrow[data-id]').forEach(row=>{
-      const id = row.dataset.id;
-      row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=> updateRow('milestones', id, { [inp.dataset.f]: inp.value.trim()||null }));
-      row.querySelector('select').onchange = e=> updateRow('milestones', id, { status: e.target.value });
-      row.querySelector('.rowdel').onclick = ()=> deleteRow('milestones', id, 'Delete this milestone?');
-    });
-    $('nmAdd').onclick = addMilestone;
-  } else {
-    wrap.innerHTML = data.miles.map(m=>
-      `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
+  wrap.innerHTML = data.miles.map(m=>{
+    const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
+    const dateBit = m.target_date? ' · '+m.target_date : '';
+    const dateEl = isTeam
+      ? `<div class="tldate"><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}"></div>`
+      : '';
+    return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>
-       <span class="tag">${m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next'}${m.target_date? ' · '+m.target_date:''}</span></div>`).join('');
+       <span class="tag">${tagLabel}${isTeam?'':dateBit}</span>${dateEl}</div>`;
+  }).join('');
+  if(isTeam){
+    wrap.querySelectorAll('.dateedit').forEach(inp=>{
+      inp.onchange = ()=> updateRow('milestones', inp.dataset.id, { target_date: inp.value||null });
+    });
   }
-}
-function mileSelect(cur){
-  return `<select class="milesel">`+MILE_OPTS.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
-}
-async function addMilestone(){
-  const name = $('nmName').value.trim();
-  if(!name){ flash('Enter a milestone name.'); return; }
-  const detail = $('nmDetail').value.trim()||null;
-  const sort = (Math.max(0,...data.miles.map(m=>m.sort||0)))+1;
-  const { error } = await sb.from('milestones').insert({ practice_id:practiceId, name, detail, status:'upcoming', sort });
-  flash(error? error.message : 'Milestone added.'); if(!error) loadAll();
 }
 
 /* ---- shared write helpers ---- */

@@ -131,14 +131,18 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 .addrow .cellinput{border-color:var(--line)}
 .btn.sm{padding:7px 14px;font-size:10px}
 
-/* video pipeline edit list */
-.vlist,.mlist{display:flex;flex-direction:column;gap:8px}
-.vrow{display:grid;grid-template-columns:1.4fr 150px 1.6fr 32px;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);padding:8px 10px}
-.vrow.blocked{border-color:var(--gold)}
-.vrow.addrow{background:rgba(201,168,76,.04)}
-.vaddspacer{grid-column:span 2}
-.mrow{display:grid;grid-template-columns:14px 1.1fr 1.8fr 150px 32px;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);padding:8px 10px}
-.mrow .dot{width:10px;height:10px;border-radius:50%;border:1px solid var(--gold);background:var(--ink)}
-.mrow.done .dot{background:var(--gold)}
-.mrow.current .dot{background:var(--cream);border-color:var(--cream)}
-@media(max-width:640px){.vrow,.mrow{grid-template-columns:1fr;gap:6px}}
+/* video pipeline drag-and-drop (team) */
+.col.dropcol{transition:border-color .15s, background .15s}
+.col.dropcol.over{border-color:var(--gold);background:rgba(201,168,76,.06)}
+.coldrop{min-height:40px}
+.vitem[draggable]{cursor:grab}
+.vitem[draggable]:hover{border-color:var(--gold)}
+.vitem.dragging{opacity:.4;cursor:grabbing}
+.col .cnt{color:var(--muted)}
+
+/* milestone date edit (team) — original roadmap look, just an editable date */
+.tldate{margin-top:8px}
+.dateedit{background:var(--ink);border:1px solid var(--line);color:var(--gold);font-family:'Jost';font-size:11px;letter-spacing:.08em;padding:5px 8px;border-radius:2px;cursor:pointer}
+.dateedit:hover{border-color:var(--gold)}
+.dateedit:focus{outline:none;border-color:var(--gold)}
+.dateedit::-webkit-calendar-picker-indicator{filter:invert(70%) sepia(40%) saturate(500%) hue-rotate(5deg)}
