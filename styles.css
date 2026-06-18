@@ -69,6 +69,33 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .chip.in_progress{color:var(--amber);border-color:var(--amber)}
 .chip.promised{color:var(--muted)}
 
+/* ===== deliverable phase cards ===== */
+.phasewrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.phasecard{background:var(--surface);border:1px solid var(--line);border-radius:4px;overflow:hidden;display:flex;flex-direction:column}
+.phasecard[draggable]{cursor:default}
+.phasecard.dragging{opacity:.4}
+.phasecard.over{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.phasehead{display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--surface2);border-bottom:1px solid var(--line)}
+.grip{color:var(--muted);cursor:grab;font-size:12px;letter-spacing:-2px;user-select:none}
+.phasehead:hover .grip{color:var(--gold)}
+.phasename{flex:1;font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;color:var(--gold);background:transparent;border:1px solid transparent;padding:3px 6px;border-radius:2px}
+.phasename:hover{border-color:var(--line)}
+.phasename:focus{outline:none;border-color:var(--gold);background:var(--ink)}
+.phasenameC{flex:1;font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;color:var(--gold)}
+.phasecount{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:.05em;white-space:nowrap}
+.phaserows{padding:8px;display:flex;flex-direction:column;gap:6px;flex:1}
+.drow{display:grid;grid-template-columns:1fr 64px 120px 26px;gap:8px;align-items:center;padding:4px;border-radius:2px}
+.drow:hover{background:rgba(201,168,76,.04)}
+.drow.client{grid-template-columns:1fr auto;padding:7px 6px;border-bottom:1px solid rgba(201,168,76,.07)}
+.drow.client:last-child{border-bottom:none}
+.dname{font-size:13px}
+.dnameC{font-size:13px;color:var(--cream)}
+.drow .owner{max-width:64px;text-transform:uppercase;letter-spacing:.08em;color:var(--gold);font-size:11px;text-align:center}
+.adddeliv{margin-top:4px;background:none;border:1px dashed var(--line);color:var(--muted);font-family:'Jost';font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:7px;cursor:pointer;border-radius:2px}
+.adddeliv:hover{border-color:var(--gold);color:var(--gold)}
+.newphase{display:flex;gap:10px;margin-top:14px;align-items:center}
+.newphase input{flex:0 1 260px}
+
 /* pipeline */
 .pipeline{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:12px;overflow-x:auto}
 .col{background:var(--surface);border:1px solid var(--line);padding:12px}
@@ -188,8 +215,10 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 .mdates .mlabel{margin-top:0}
 .mdates>div{display:flex;flex-direction:column;gap:4px}
 .histbox{border:1px solid var(--line);border-radius:3px;padding:4px 0;margin-top:4px}
-.histrow{display:flex;justify-content:space-between;padding:7px 14px;font-size:12.5px;border-bottom:1px solid rgba(201,168,76,.08)}
+.histrow{display:flex;align-items:center;gap:10px;padding:7px 14px;font-size:12.5px;border-bottom:1px solid rgba(201,168,76,.08)}
 .histrow:last-child{border-bottom:none}
-.hstage{color:var(--cream)}
+.hstage{color:var(--cream);flex:1}
 .hdate{color:var(--muted);font-variant-numeric:tabular-nums}
+.histdel{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 2px;opacity:.5}
+.histdel:hover{color:var(--red);opacity:1}
 .modalfoot{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:16px 22px;border-top:1px solid var(--line)}
