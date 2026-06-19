@@ -179,10 +179,22 @@ function render(){
   $('statusBoard').innerHTML = rows.map(r=>
     `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
 
-  // feed
+  // feed (team can edit/delete each posted update)
+  const teamFeed = isTeamView();
   $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-    `<div class="fitem">${f.message}<div class="meta">${f.author||'ROXIUM'} · ${new Date(f.created_at).toLocaleDateString()} · ${f.source}</div></div>`).join('')
+    `<div class="fitem" data-fid="${f.id}">
+       <span class="fmsg">${esc(f.message)}</span>
+       ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
+       <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
     : '<p class="note">No updates yet.</p>';
+  if(teamFeed){
+    $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
+    $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
+      if(!confirm('Delete this update?')) return;
+      const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
+      if(error) alert('Delete failed: '+error.message); else loadAll();
+    });
+  }
 
   // team panel + controls only when team AND not previewing as client
   $('teamPanel').classList.toggle('hidden', !isTeamView());
@@ -284,10 +296,11 @@ function renderDeliverables(isTeam){
       rows += `<tr class="phaserow" draggable="true" data-phase="${esc(g.phase)}">
         <td colspan="4"><span class="grip">⋮⋮</span>
           <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
-          <span class="phasecount">${done}/${g.items.length}</span></td></tr>`;
+          <span class="phasecount">${done}/${g.items.length}</span>
+          <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete this phase">✕</button></td></tr>`;
       g.items.forEach(x=>{
-        rows += `<tr data-id="${x.id}">
-          <td><input class="cellinput dname" data-f="name" value="${esc(x.name)}"></td>
+        rows += `<tr class="taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
+          <td><span class="taskgrip">⋮⋮</span><input class="cellinput dname" data-f="name" value="${esc(x.name)}"></td>
           <td><input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—"></td>
           <td>${statusSelect('deliv', x.status)}</td>
           <td class="actcol"><button class="rowdel" title="Delete">✕</button></td></tr>`;
@@ -331,22 +344,69 @@ function wireDeliverables(){
       loadAll();
     };
   });
+  // delete a whole phase + its deliverables
+  wrap.querySelectorAll('.phasedel').forEach(b=>{
+    b.onclick = async (e)=>{
+      e.stopPropagation();
+      const phase = b.dataset.phase;
+      if(!confirm(`Delete the entire "${phase}" phase and all its deliverables?`)) return;
+      const { error } = await sb.from('deliverables').delete().eq('practice_id',practiceId).eq('phase',phase);
+      if(error){ alert('Delete failed: '+error.message); return; }
+      loadAll();
+    };
+  });
   // add deliverable within a phase
   wrap.querySelectorAll('.adddeliv').forEach(b=> b.onclick = ()=> addDeliverableTo(b.dataset.phase));
   $('ndAddPhase').onclick = addPhase;
-  // drag phase header rows to reorder
+
+  // drag phase header rows to reorder phases
   wrap.querySelectorAll('.phaserow[draggable]').forEach(row=>{
-    row.addEventListener('dragstart', e=>{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', row.dataset.phase); row.classList.add('dragging'); });
+    row.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'phase:'+row.dataset.phase); row.classList.add('dragging'); });
     row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
     row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('over'); });
     row.addEventListener('dragleave', ()=> row.classList.remove('over'));
     row.addEventListener('drop', async e=>{
       e.preventDefault(); row.classList.remove('over');
-      const from = e.dataTransfer.getData('text/plain'); const to = row.dataset.phase;
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('phase:')) return;
+      const from = payload.slice(6), to = row.dataset.phase;
       if(!from || from===to) return;
       await reorderPhases(from, to);
     });
   });
+
+  // drag task rows to reorder WITHIN their phase
+  wrap.querySelectorAll('.taskrow[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'task:'+row.dataset.id); row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('taskover'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('taskover'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); e.stopPropagation(); row.classList.remove('taskover');
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('task:')) return;
+      const fromId = payload.slice(5), toId = row.dataset.id;
+      if(fromId===toId) return;
+      await reorderTaskWithinPhase(fromId, toId, row.dataset.phase);
+    });
+  });
+}
+
+async function reorderTaskWithinPhase(fromId, toId, phase){
+  // only reorder if both are in the same phase
+  const fromD = data.deliv.find(d=>d.id===fromId);
+  const toD = data.deliv.find(d=>d.id===toId);
+  if(!fromD || !toD || fromD.phase!==toD.phase) return;  // same-phase only
+  const items = data.deliv.filter(d=>d.phase===phase).sort((a,b)=>(a.sort||0)-(b.sort||0));
+  const ids = items.map(i=>i.id);
+  const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+  if(fi<0||ti<0) return;
+  ids.splice(ti,0,ids.splice(fi,1)[0]);
+  // rewrite sort within this phase
+  for(let i=0;i<ids.length;i++){
+    await sb.from('deliverables').update({ sort:i }).eq('id', ids[i]);
+  }
+  loadAll();
 }
 
 async function reorderPhases(fromPhase, toPhase){
@@ -615,9 +675,9 @@ function renderTimeline(isTeam){
   wrap.innerHTML = data.miles.map(m=>{
     const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
     const dateBit = m.target_date? ' · '+m.target_date : '';
+    // status is auto-advanced by deliverable %; team can still edit only the target date
     const teamCtl = isTeam
-      ? `<div class="tldate"><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}">
-         <select class="milesel" data-id="${m.id}">${MILE_OPTS.map(([v,l])=>`<option value="${v}" ${v===m.status?'selected':''}>${l}</option>`).join('')}</select></div>`
+      ? `<div class="tldate"><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}"></div>`
       : '';
     return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>
@@ -626,9 +686,6 @@ function renderTimeline(isTeam){
   if(isTeam){
     wrap.querySelectorAll('.dateedit').forEach(inp=>{
       inp.onchange = ()=> updateRow('milestones', inp.dataset.id, { target_date: inp.value||null });
-    });
-    wrap.querySelectorAll('.milesel').forEach(sel=>{
-      sel.onchange = ()=> updateMilestoneStatus(sel.dataset.id, sel.value);
     });
   }
 }
@@ -689,6 +746,15 @@ function renderBanner(){
     const fresh = await sb.from('notifications').select('*').eq('practice_id',practiceId).order('created_at',{ascending:false}).limit(10);
     data.notif = fresh.data||[];
   };
+}
+
+async function editFeedItem(id){
+  const f = data.feed.find(x=>x.id===id); if(!f) return;
+  const msg = prompt('Edit this update:', f.message);
+  if(msg===null) return;
+  if(!msg.trim()){ alert('Message cannot be empty.'); return; }
+  const { error } = await sb.from('activity').update({ message: msg.trim() }).eq('id', id);
+  if(error) alert('Edit failed: '+error.message); else loadAll();
 }
 
 $('btnPost').onclick = async ()=>{
