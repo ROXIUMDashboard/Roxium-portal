@@ -363,7 +363,39 @@ async function updateDeliverableStatus(id, status){
   if(status==='delivered' && prev && prev.status!=='delivered'){
     await notifyClient('deliverable', `Deliverable completed: ${prev.name}.`);
   }
+  await autoAdvanceMilestones();
   loadAll();
+}
+
+/* Auto-advance the roadmap based on overall deliverable completion %.
+   Each milestone gets a threshold; the highest threshold passed becomes "current",
+   everything below it "done", everything above "upcoming". Tweak THRESHOLDS freely. */
+async function autoAdvanceMilestones(){
+  const total = data.deliv.length;
+  if(!total || !data.miles.length) return;
+  // recompute delivered count from the freshest data we have
+  const fresh = await sb.from('deliverables').select('status').eq('practice_id', practiceId);
+  const list = fresh.data || [];
+  const pct = list.length ? Math.round(100 * list.filter(d=>d.status==='delivered').length / list.length) : 0;
+
+  // milestones in display order
+  const miles = [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0));
+  const n = miles.length;
+  // even thresholds: e.g. 4 milestones -> [0, 25, 50, 75]; first is always reachable
+  const THRESHOLDS = miles.map((_,i)=> Math.round((i/n)*100));
+  // highest threshold index that pct has reached
+  let currentIdx = 0;
+  for(let i=0;i<n;i++){ if(pct >= THRESHOLDS[i]) currentIdx = i; }
+
+  // apply: below current = done, current = current, above = upcoming
+  for(let i=0;i<n;i++){
+    const want = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'upcoming';
+    if(miles[i].status !== want){
+      await sb.from('milestones').update({ status: want }).eq('id', miles[i].id);
+      if(want==='current') await notifyClient('milestone', `You've reached: ${miles[i].name}.`);
+      if(want==='done')    await notifyClient('milestone', `Completed: ${miles[i].name}.`);
+    }
+  }
 }
 function statusSelect(kind, cur){
   return `<select class="statussel">`+STATUS_OPTS.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
@@ -477,7 +509,7 @@ function openVideoDetail(id){
   const hist = data.vhist.filter(h=>h.video_id===id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
   const stageLabel = k => (STAGES.find(s=>s[0]===k)||[k,k])[1];
   const histRows = hist.length? hist.map(h=>
-    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span></div>`).join('')
+    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
 
   const m = $('modal');
@@ -514,6 +546,17 @@ function openVideoDetail(id){
 
   $('mClose').onclick = closeModal;
   m.onclick = e=>{ if(e.target===m) closeModal(); };
+
+  // delete individual stage-history rows
+  m.querySelectorAll('.histdel').forEach(b=>{
+    b.onclick = async (e)=>{
+      e.stopPropagation();
+      if(!confirm('Delete this history entry?')) return;
+      const { error } = await sb.from('video_history').delete().eq('id', b.dataset.hid);
+      if(error){ $('mMsg').textContent = error.message; }
+      else { await loadAll(); openVideoDetail(id); }  // refresh + reopen so the panel updates
+    };
+  });
 
   $('mSave').onclick = async ()=>{
     const stageDate = $('mStageDate').value; // yyyy-mm-dd or ''
