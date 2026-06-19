@@ -290,45 +290,43 @@ function renderDeliverables(isTeam){
   const t = $('delivTable');
   const groups = phaseGroups();
   if(isTeam){
-    let rows = '';
-    groups.forEach(g=>{
+    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
       const done = g.items.filter(i=>i.status==='delivered').length;
-      rows += `<tr class="phaserow" draggable="true" data-phase="${esc(g.phase)}">
-        <td colspan="4"><span class="grip">⋮⋮</span>
+      const rows = g.items.map(x=>`<div class="drow taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
+        <span class="taskgrip">⋮⋮</span>
+        <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
+        <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
+        ${statusSelect('deliv', x.status)}
+        <button class="rowdel" title="Delete">✕</button></div>`).join('');
+      return `<div class="phasecard" draggable="true" data-phase="${esc(g.phase)}">
+        <div class="phasehead">
+          <span class="grip">⋮⋮</span>
           <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
           <span class="phasecount">${done}/${g.items.length}</span>
-          <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete this phase">✕</button></td></tr>`;
-      g.items.forEach(x=>{
-        rows += `<tr class="taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
-          <td><span class="taskgrip">⋮⋮</span><input class="cellinput dname" data-f="name" value="${esc(x.name)}"></td>
-          <td><input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—"></td>
-          <td>${statusSelect('deliv', x.status)}</td>
-          <td class="actcol"><button class="rowdel" title="Delete">✕</button></td></tr>`;
-      });
-      rows += `<tr class="addrow"><td colspan="4"><button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button></td></tr>`;
-    });
-    t.innerHTML = `<table class="delivtbl" id="phaseWrap">
-      <tr><th>Deliverable</th><th>Owner</th><th>Status</th><th></th></tr>${rows}</table>
+          <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete phase">✕</button>
+        </div>
+        <div class="phaserows">${rows}
+          <button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button>
+        </div></div>`;
+    }).join('') + `</div>
       <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
     wireDeliverables();
   } else {
-    // client: clean grouped table, no owner, no editing
-    let rows = '';
-    groups.forEach(g=>{
+    // client: clean phase blocks, no owner, no editing
+    t.innerHTML = `<div class="phasewrap">` + groups.map(g=>{
       const done = g.items.filter(i=>i.status==='delivered').length;
-      rows += `<tr class="phaserow"><td colspan="2"><span class="phasenameC">${esc(g.phase)}</span><span class="phasecount">${done}/${g.items.length}</span></td></tr>`;
-      g.items.forEach(x=>{
-        rows += `<tr><td>${esc(x.name)}</td><td class="statuscol"><span class="chip ${x.status}">${x.status.replace('_',' ')}</span></td></tr>`;
-      });
-    });
-    t.innerHTML = `<table class="delivtbl"><tr><th>Deliverable</th><th>Status</th></tr>${rows}</table>`;
+      const rows = g.items.map(x=>`<div class="drow client"><span class="dnameC">${esc(x.name)}</span>
+        <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
+      return `<div class="phasecard"><div class="phasehead"><span class="phasenameC">${esc(g.phase)}</span>
+        <span class="phasecount">${done}/${g.items.length}</span></div>
+        <div class="phaserows">${rows}</div></div>`;
+    }).join('') + `</div>`;
   }
 }
-
 function wireDeliverables(){
   const wrap = $('phaseWrap');
   // inline edits on each deliverable row
-  wrap.querySelectorAll('tr[data-id]').forEach(row=>{
+  wrap.querySelectorAll('.taskrow[data-id]').forEach(row=>{
     const id = row.dataset.id;
     row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=> updateRow('deliverables', id, { [inp.dataset.f]: inp.value.trim()||null }));
     const ssel = row.querySelector('select');
@@ -359,17 +357,17 @@ function wireDeliverables(){
   wrap.querySelectorAll('.adddeliv').forEach(b=> b.onclick = ()=> addDeliverableTo(b.dataset.phase));
   $('ndAddPhase').onclick = addPhase;
 
-  // drag phase header rows to reorder phases
-  wrap.querySelectorAll('.phaserow[draggable]').forEach(row=>{
-    row.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'phase:'+row.dataset.phase); row.classList.add('dragging'); });
-    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
-    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('over'); });
-    row.addEventListener('dragleave', ()=> row.classList.remove('over'));
-    row.addEventListener('drop', async e=>{
-      e.preventDefault(); row.classList.remove('over');
+  // drag phase CARDS to reorder phases
+  wrap.querySelectorAll('.phasecard[draggable]').forEach(card=>{
+    card.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'phase:'+card.dataset.phase); card.classList.add('dragging'); });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
+    card.addEventListener('dragover', e=>{ e.preventDefault(); card.classList.add('over'); });
+    card.addEventListener('dragleave', ()=> card.classList.remove('over'));
+    card.addEventListener('drop', async e=>{
+      e.preventDefault(); card.classList.remove('over');
       const payload = e.dataTransfer.getData('text/plain');
       if(!payload.startsWith('phase:')) return;
-      const from = payload.slice(6), to = row.dataset.phase;
+      const from = payload.slice(6), to = card.dataset.phase;
       if(!from || from===to) return;
       await reorderPhases(from, to);
     });
