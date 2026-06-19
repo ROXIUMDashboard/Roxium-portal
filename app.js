@@ -278,39 +278,44 @@ function renderDeliverables(isTeam){
   const t = $('delivTable');
   const groups = phaseGroups();
   if(isTeam){
-    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
-      const rows = g.items.map(x=>`<div class="drow" data-id="${x.id}">
-        <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
-        <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
-        ${statusSelect('deliv', x.status)}
-        <button class="rowdel" title="Delete">✕</button></div>`).join('');
+    let rows = '';
+    groups.forEach(g=>{
       const done = g.items.filter(i=>i.status==='delivered').length;
-      return `<div class="phasecard" draggable="true" data-phase="${esc(g.phase)}">
-        <div class="phasehead"><span class="grip">⋮⋮</span>
+      rows += `<tr class="phaserow" draggable="true" data-phase="${esc(g.phase)}">
+        <td colspan="4"><span class="grip">⋮⋮</span>
           <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
-          <span class="phasecount">${done}/${g.items.length}</span></div>
-        <div class="phaserows">${rows}
-          <button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button>
-        </div></div>`;
-    }).join('') + `</div>
+          <span class="phasecount">${done}/${g.items.length}</span></td></tr>`;
+      g.items.forEach(x=>{
+        rows += `<tr data-id="${x.id}">
+          <td><input class="cellinput dname" data-f="name" value="${esc(x.name)}"></td>
+          <td><input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—"></td>
+          <td>${statusSelect('deliv', x.status)}</td>
+          <td class="actcol"><button class="rowdel" title="Delete">✕</button></td></tr>`;
+      });
+      rows += `<tr class="addrow"><td colspan="4"><button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button></td></tr>`;
+    });
+    t.innerHTML = `<table class="delivtbl" id="phaseWrap">
+      <tr><th>Deliverable</th><th>Owner</th><th>Status</th><th></th></tr>${rows}</table>
       <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
     wireDeliverables();
   } else {
-    // client: clean phase blocks, no owner, no editing
-    t.innerHTML = `<div class="phasewrap">` + groups.map(g=>{
-      const rows = g.items.map(x=>`<div class="drow client"><span class="dnameC">${esc(x.name)}</span>
-        <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
+    // client: clean grouped table, no owner, no editing
+    let rows = '';
+    groups.forEach(g=>{
       const done = g.items.filter(i=>i.status==='delivered').length;
-      return `<div class="phasecard"><div class="phasehead"><span class="phasenameC">${esc(g.phase)}</span>
-        <span class="phasecount">${done}/${g.items.length}</span></div><div class="phaserows">${rows}</div></div>`;
-    }).join('') + `</div>`;
+      rows += `<tr class="phaserow"><td colspan="2"><span class="phasenameC">${esc(g.phase)}</span><span class="phasecount">${done}/${g.items.length}</span></td></tr>`;
+      g.items.forEach(x=>{
+        rows += `<tr><td>${esc(x.name)}</td><td class="statuscol"><span class="chip ${x.status}">${x.status.replace('_',' ')}</span></td></tr>`;
+      });
+    });
+    t.innerHTML = `<table class="delivtbl"><tr><th>Deliverable</th><th>Status</th></tr>${rows}</table>`;
   }
 }
 
 function wireDeliverables(){
   const wrap = $('phaseWrap');
   // inline edits on each deliverable row
-  wrap.querySelectorAll('.drow[data-id]').forEach(row=>{
+  wrap.querySelectorAll('tr[data-id]').forEach(row=>{
     const id = row.dataset.id;
     row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=> updateRow('deliverables', id, { [inp.dataset.f]: inp.value.trim()||null }));
     const ssel = row.querySelector('select');
@@ -329,16 +334,15 @@ function wireDeliverables(){
   // add deliverable within a phase
   wrap.querySelectorAll('.adddeliv').forEach(b=> b.onclick = ()=> addDeliverableTo(b.dataset.phase));
   $('ndAddPhase').onclick = addPhase;
-  // drag phases to reorder
-  let dragPhase = null;
-  wrap.querySelectorAll('.phasecard[draggable]').forEach(card=>{
-    card.addEventListener('dragstart', e=>{ dragPhase = card.dataset.phase; e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', card.dataset.phase); card.classList.add('dragging'); });
-    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
-    card.addEventListener('dragover', e=>{ e.preventDefault(); card.classList.add('over'); });
-    card.addEventListener('dragleave', ()=> card.classList.remove('over'));
-    card.addEventListener('drop', async e=>{
-      e.preventDefault(); card.classList.remove('over');
-      const from = e.dataTransfer.getData('text/plain'); const to = card.dataset.phase;
+  // drag phase header rows to reorder
+  wrap.querySelectorAll('.phaserow[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', row.dataset.phase); row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('over'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('over'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); row.classList.remove('over');
+      const from = e.dataTransfer.getData('text/plain'); const to = row.dataset.phase;
       if(!from || from===to) return;
       await reorderPhases(from, to);
     });
@@ -550,11 +554,13 @@ function openVideoDetail(id){
   // delete individual stage-history rows
   m.querySelectorAll('.histdel').forEach(b=>{
     b.onclick = async (e)=>{
-      e.stopPropagation();
+      e.stopPropagation(); e.preventDefault();
       if(!confirm('Delete this history entry?')) return;
-      const { error } = await sb.from('video_history').delete().eq('id', b.dataset.hid);
-      if(error){ $('mMsg').textContent = error.message; }
-      else { await loadAll(); openVideoDetail(id); }  // refresh + reopen so the panel updates
+      const { data: del, error } = await sb.from('video_history').delete().eq('id', b.dataset.hid).select();
+      if(error){ alert('Delete failed: '+error.message); return; }
+      if(!del || !del.length){ alert('Delete failed: no permission (row-level security). Run the latest migration.'); return; }
+      await loadAll();
+      openVideoDetail(id);  // reopen so the history list refreshes
     };
   });
 
