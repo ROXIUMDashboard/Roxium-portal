@@ -111,6 +111,21 @@ function buildSwitcher(list){
   document.addEventListener('click', e=>{ if(!$('practiceSwitcher').contains(e.target)) results.classList.add('hidden'); });
 }
 
+// Team: (re)load every practice and refresh the switcher + the invite dropdown.
+async function loadTeamPractices(){
+  const { data: prax } = await sb.from('practices').select('*').order('name');
+  const list = prax || [];
+  buildSwitcher(list);
+  const sel = $('inviteePractice');
+  if(sel){
+    const keep = sel.value;
+    sel.innerHTML = list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if(list.some(p=>p.id===keep)) sel.value = keep;
+    else if(practiceId && list.some(p=>p.id===practiceId)) sel.value = practiceId;
+  }
+  return list;
+}
+
 // Single-shot boot so the initial getSession AND the onAuthStateChange event
 // (which Supabase fires on load) can't both kick off afterLogin concurrently.
 let booted = false;
@@ -133,8 +148,16 @@ sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
   if(!email) return;
-  const { error } = await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.origin } });
-  $('loginMsg').textContent = error ? error.message : 'Check your email for the sign-in link.';
+  // Invite-only: shouldCreateUser:false means a magic link is only sent to users
+  // who already exist (i.e. were invited by the team). Random emails get nothing.
+  const { error } = await sb.auth.signInWithOtp({
+    email, options:{ emailRedirectTo: location.origin, shouldCreateUser: false }
+  });
+  $('loginMsg').textContent = error
+    ? (/not.*found|signups?.*disabled|user/i.test(error.message)
+        ? "We couldn't find an invite for that email. Ask your ROXIUM lead to add you."
+        : error.message)
+    : 'Check your email for the sign-in link.';
 };
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 
@@ -151,9 +174,8 @@ async function afterLogin(){
   $('whoami').textContent = (me.full_name||'') + ' · ' + me.role;
 
   if(me.role === 'team'){
-    const { data: prax } = await sb.from('practices').select('*').order('name');
+    const prax = await loadTeamPractices();
     practiceId = prax && prax.length ? prax[0].id : null;
-    buildSwitcher(prax||[]);
     $('btnPreview').onclick = ()=>{
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
@@ -175,7 +197,10 @@ async function afterLogin(){
 async function loadAll(){
   const [p,k,d,m,v,f,vh,nt] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
-    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).eq('source', KPI_SOURCE).order('period'),
+    // Read EVERY source (marketing / coefficient / asana …), not just one — the
+    // Coefficient sync may land rows under 'coefficient'. mergeKpiByPeriod() folds
+    // all sources for a month into one effective snapshot so the data always shows.
+    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('period'),
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('milestones').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
@@ -183,8 +208,26 @@ async function loadAll(){
     sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
     sb.from('notifications').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(10),
   ]);
-  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
+  data = { practice:p.data, kpi:mergeKpiByPeriod(k.data||[]), deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   render();
+}
+
+// Collapse multiple source rows for the same month into one effective snapshot.
+// Non-null fields win; if two sources set the same field, the more recently
+// updated row wins. Keeps the period model intact (one row per period downstream).
+function mergeKpiByPeriod(rows){
+  const byPeriod = new Map();
+  const ordered = [...rows].sort((a,b)=> new Date(a.updated_at||0) - new Date(b.updated_at||0));
+  for(const r of ordered){
+    const cur = byPeriod.get(r.period) || { practice_id:r.practice_id, period:r.period };
+    for(const key of Object.keys(r)){
+      if(key==='id' || key==='source') continue;
+      const val = r[key];
+      if(val!==null && val!==undefined && val!=='') cur[key] = val;
+    }
+    byPeriod.set(r.period, cur);
+  }
+  return [...byPeriod.values()];
 }
 
 /* ---------------- derived metrics (same formulas as the workbook) ---------------- */
@@ -643,6 +686,11 @@ async function editDeliverableInfo(id){
 /* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, click-to-open panel ---- */
 let _vDragged = false;   // guards against the click that fires at the end of a drag
 const fmtDate = d => d ? new Date(d+ (String(d).length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+// Stage-history timestamps are stored UTC (timestamptz). Render in the viewer's
+// local timezone WITH the tz short-name (e.g. "Jun 22, 2026, 3:04 PM PDT") so a
+// scheduled time is never ambiguous for people in other time zones.
+const fmtHistTime = ts => ts ? new Date(ts).toLocaleString(undefined,
+  { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' }) : '';
 function daysIn(stage_since){ if(!stage_since) return 0; return Math.max(0,Math.floor((Date.now()-new Date(stage_since))/86400000)); }
 function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
 
@@ -729,7 +777,8 @@ async function addVideoTo(stage){
   if(!item.trim()){ flash('Enter a name.'); return; }
   try{
     const { error } = await sb.from('video_pipeline')
-      .insert({ practice_id: practiceId, item: item.trim(), stage })
+      // new assets default to 'planned' (backlog) unless added from a specific column
+      .insert({ practice_id: practiceId, item: item.trim(), stage: stage || 'planned' })
       .select();
     if(error){ flash('Add failed: '+error.message); alert('Add failed: '+error.message); return; }
     flash('Video added.');
@@ -748,7 +797,7 @@ function openVideoDetail(id){
   // CLIENT (read-only): watch the finished video, see where the asset is and its stage history.
   if(!isTeamView()){
     const histRO = hist.length
-      ? hist.map(h=>`<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}</span></div>`).join('')
+      ? hist.map(h=>`<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${fmtHistTime(h.moved_at)}</span></div>`).join('')
       : '<div class="note">No stage history yet.</div>';
     const mc = $('modal');
     mc.innerHTML = `<div class="modalcard">
@@ -774,7 +823,7 @@ function openVideoDetail(id){
   }
 
   const histRows = hist.length? hist.map(h=>
-    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
+    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${fmtHistTime(h.moved_at)}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
 
   const m = $('modal');
@@ -965,6 +1014,65 @@ $('btnPost').onclick = async ()=>{
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
 };
 
+/* ---- ONBOARDING (team): add a client/practice, invite surgeon/client users ---- */
+const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+
+// Add a new client practice — reuses the seed_practice() RPC so it lands fully loaded
+// with the standard deliverables / roadmap / pipeline. Then jump to it.
+$('btnAddClient').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const name = $('newClientName').value.trim();
+  const kickoff = $('newClientKickoff').value || new Date().toISOString().slice(0,10);
+  if(!name){ onbFlash('Enter a practice name.'); return; }
+  // Guard against duplicates (e.g. a second empty "Balikian"): if a practice with
+  // this name already exists, offer to switch to it instead of creating a clone.
+  const dupe = practicesList.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
+  if(dupe){
+    if(confirm(`"${dupe.name}" already exists. Switch to it instead of creating a duplicate?`)){
+      practiceId = dupe.id; $('newClientName').value=''; buildSwitcher(practicesList); loadAll();
+    } else {
+      onbFlash('No duplicate created. Rename if this is a different practice.');
+    }
+    return;
+  }
+  $('btnAddClient').disabled = true; onbFlash('Creating…');
+  try{
+    const { data, error } = await sb.rpc('seed_practice', { p_name: name, p_kickoff: kickoff });
+    if(error) throw error;
+    $('newClientName').value = '';
+    await loadTeamPractices();
+    if(data){ practiceId = data; }            // RPC returns the new practice id
+    onbFlash(`Added "${name}". Now invite their users below.`);
+    loadAll();
+  }catch(e){ onbFlash('Could not add client: '+e.message); }
+  finally{ $('btnAddClient').disabled = false; }
+};
+
+// Invite a surgeon/client user — calls the invite-user Edge Function (service role)
+// which creates/links the auth user + profile + membership and emails the invite.
+$('btnInvite').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const email = $('inviteeEmail').value.trim();
+  const practice_id = $('inviteePractice').value;
+  const full_name = $('inviteeName').value.trim();
+  const role = $('inviteeRole').value || 'member';
+  if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
+  $('btnInvite').disabled = true; onbFlash('Sending invite…');
+  try{
+    const { data, error } = await sb.functions.invoke('invite-user', {
+      body: { email, practice_id, full_name, role }
+    });
+    if(error) throw error;
+    if(data && data.error) throw new Error(data.error);
+    $('inviteeEmail').value=''; $('inviteeName').value='';
+    onbFlash(data && data.invited===false
+      ? `${email} already had an account — linked to this practice.`
+      : `Invite sent to ${email}.`);
+  }catch(e){
+    onbFlash('Invite failed: '+(e.message||e)+' (is the invite-user function deployed?)');
+  }finally{ $('btnInvite').disabled = false; }
+};
+
 /* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */
 const resetFlash = t=>{ const el=$('resetMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
 $('btnResetData').onclick = async ()=>{
@@ -1007,9 +1115,9 @@ $('btnResetData').onclick = async ()=>{
       if(mr.error) throw new Error(mr.error.message);
     }
 
-    // 4) reset the video pipeline back to "scheduled" and clear per-asset progress
+    // 4) reset the video pipeline back to "planned" / backlog and clear per-asset progress
     const vRes = await sb.from('video_pipeline')
-      .update({ stage:'scheduled', blocked:false, blocked_reason:null, video_url:null,
+      .update({ stage:'planned', blocked:false, blocked_reason:null, video_url:null,
                 posted_date:null, shot_date:null, stage_since:new Date().toISOString() })
       .eq('practice_id', pid);
     if(vRes.error) throw new Error(vRes.error.message);
