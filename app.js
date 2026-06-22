@@ -23,7 +23,7 @@ const XL_MAP = {
   'Social rankings index (baseline = 1.0x)':'rank','Cadence posts published':'posts',
 };
 const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
-const STALE_DAYS = 14; // a card sitting this long in one stage flags red (team only)
+// Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
 let me = null;            // profile row
 let practiceId = null;    // active practice
@@ -273,7 +273,7 @@ function render(){
   const heroes = [
     {v: d? fmt$(d.cpl):'—', l:'Cost per lead', cls: statusCPL(d? d.cpl:0), note: latest? 'this month':'awaiting data'},
     {v: latest? (+latest.cons||0).toLocaleString():'—', l:'Consults this month', cls: latest?'g':'i', note: d? fmt$(d.rev)+' est. revenue':'awaiting data'},
-    {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'promised vs delivered'},
+    {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
     {v: latest&&latest.price? (+latest.price).toFixed(2)+'×':'—', l:'Pricing index', cls: latest&&+latest.price>=1.5?'g':'i', note: latest? 'vs. starting baseline':'awaiting data'},
   ];
   $('heroStats').innerHTML = heroes.map(h=>
@@ -460,13 +460,17 @@ function renderDeliverables(isTeam){
     t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
       const {done,total,pct} = phaseProgress(g);
       const collapsed = delivCollapsed.has(g.phase);
-      const rows = g.items.map(x=>`<div class="drow taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
+      const rows = g.items.map(x=>{
+        const sla = slaState(x.status_since, x.status==='delivered');   // team-only age colour
+        const ageChip = sla? `<span class="agechip ${sla}" title="${daysIn(x.status_since)} days in this status">${daysIn(x.status_since)}d</span>` : '';
+        return `<div class="drow taskrow ${sla}" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
         <span class="taskgrip">⋮⋮</span>
         <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
         <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
+        ${ageChip}
         <button class="infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
         ${statusSelect('deliv', x.status)}
-        <button class="rowdel" title="Delete">✕</button></div>`).join('');
+        <button class="rowdel" title="Delete">✕</button></div>`;}).join('');
       return `<div class="phasecard${collapsed?' collapsed':''}" draggable="true" data-phase="${esc(g.phase)}">
         <div class="phasehead">
           <span class="grip">⋮⋮</span>
@@ -692,6 +696,13 @@ const fmtDate = d => d ? new Date(d+ (String(d).length<=10?'T00:00:00':'')).toLo
 const fmtHistTime = ts => ts ? new Date(ts).toLocaleString(undefined,
   { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' }) : '';
 function daysIn(stage_since){ if(!stage_since) return 0; return Math.max(0,Math.floor((Date.now()-new Date(stage_since))/86400000)); }
+// Team-only age-based SLA colour for an item sitting in a non-final stage:
+// >= 7 days = overdue (red), >= 3 days = warn (yellow), else none.
+function slaState(since, isFinal){
+  if(!isTeamView() || isFinal || !since) return '';
+  const d = daysIn(since);
+  return d>=7 ? 'overdue' : d>=3 ? 'warn' : '';
+}
 function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
 
 function videoTooltip(v){
@@ -710,12 +721,13 @@ function renderPipeline(isTeam){
   wrap.innerHTML = STAGES.map(([key,label])=>{
     const items = data.video.filter(v=>v.stage===key);
     const cards = items.map(v=>{
-      const stale = isTeam && key!=='posted' && daysIn(v.stage_since) >= STALE_DAYS;
+      const isFinal = key==='posted' || key==='delivered';
+      const sla = slaState(v.stage_since, isFinal);   // '', 'warn' or 'overdue' (team only)
       const enteredStr = v.stage_since ? fmtDate(v.stage_since) : '';
       const days = daysIn(v.stage_since);
-      const daysLine = isTeam? `<span class="vdays ${stale?'stale':''}">${days} day${days===1?'':'s'} in this stage</span>` : '';
+      const daysLine = isTeam? `<span class="vdays ${sla}">${days} day${days===1?'':'s'} in this stage${sla==='overdue'?' · overdue':sla==='warn'?' · watch':''}</span>` : '';
       const stageDateLine = enteredStr? `<span class="vdate">${stageLabelOf(key)} · ${enteredStr}</span>` : '';
-      return `<div class="vitem ${v.blocked?'blocked':''} ${stale?'staleflag':''}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
+      return `<div class="vitem ${v.blocked?'blocked':''} ${sla}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
         ${isTeam?`<button class="vdel" data-del="${v.id}" title="Delete">✕</button>`:''}
         <span class="vtitle">${esc(v.item)}</span>
         ${v.video_url && key==='posted'?`<a class="vlink" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ watch</a>`:''}
@@ -986,7 +998,15 @@ function renderBanner(){
   const unseen = (data.notif||[]).filter(n=>!n.seen);
   if(!unseen.length){ bar.classList.add('hidden'); return; }
   const n = unseen[0];
-  bar.innerHTML = `<span class="noteicon">●</span><span class="notetext">${esc(n.message)}</span>
+  // 'stats' notifications bake the month into the text at insert time, so a stale or
+  // bad-period row (e.g. a future "Jan 2030") would show forever. Re-derive the month
+  // from the actual latest reported period so the banner is always self-correcting.
+  let text = n.message;
+  if(n.kind==='stats' && data.kpi && data.kpi.length){
+    const latestP = data.kpi.map(k=>k.period).sort().slice(-1)[0];
+    if(latestP) text = `Your ${periodLabel(latestP)} performance update is ready.`;
+  }
+  bar.innerHTML = `<span class="noteicon">●</span><span class="notetext">${esc(text)}</span>
     <button class="noteclose" title="Dismiss">✕</button>`;
   bar.classList.remove('hidden');
   bar.querySelector('.noteclose').onclick = async ()=>{

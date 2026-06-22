@@ -61,7 +61,8 @@ create table if not exists deliverables (
   delivered_at timestamptz,
   sort int default 0,
   phase_order int default 0,
-  description text                -- client-facing "what this deliverable means" guide
+  description text,               -- client-facing "what this deliverable means" guide
+  status_since timestamptz default now()  -- when status last changed (drives team SLA colours)
 );
 
 -- Milestone timeline — so the surgeon always knows where he is and what's next.
@@ -275,6 +276,14 @@ begin
   return new;
 end $$;
 
+-- Stamp deliverables.status_since whenever the status changes (drives team SLA colours).
+create or replace function touch_deliv_status() returns trigger
+language plpgsql as $$
+begin
+  if new.status is distinct from old.status then new.status_since := now(); end if;
+  return new;
+end $$;
+
 -- Keep `month` derived from `period` and refresh updated_at on every KPI write.
 create or replace function sync_kpi_month() returns trigger
 language plpgsql as $$
@@ -290,6 +299,11 @@ end $$;
 create or replace function notif_stats() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- Skip implausible/future periods (typos like 2030) so they can't create a
+  -- stale "Your <month> update is ready" banner.
+  if new.period > (date_trunc('month', now()) + interval '1 month')::date then
+    return new;
+  end if;
   perform notify(new.practice_id, 'stats',
     'Your ' || to_char(new.period, 'Mon YYYY') || ' performance update is ready.');
   return new;
@@ -306,6 +320,10 @@ create trigger trg_video_stage before update on video_pipeline
 drop trigger if exists trg_sync_kpi_month on kpi_monthly;
 create trigger trg_sync_kpi_month before insert or update on kpi_monthly
   for each row execute function sync_kpi_month();
+
+drop trigger if exists trg_deliv_status on deliverables;
+create trigger trg_deliv_status before update on deliverables
+  for each row execute function touch_deliv_status();
 
 drop trigger if exists trg_notif_stats on kpi_monthly;
 create trigger trg_notif_stats after insert on kpi_monthly
