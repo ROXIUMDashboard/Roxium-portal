@@ -29,7 +29,10 @@
   <header><div class="wrap bar">
     <div class="mark">ROX<b>I</b>UM</div>
     <div class="right">
-      <select id="practicePicker" class="picker hidden"></select>
+      <div id="practiceSwitcher" class="switcher hidden">
+        <input id="practiceSearch" class="picker switcher-input" type="text" placeholder="Switch client…" autocomplete="off" spellcheck="false">
+        <div id="practiceResults" class="switcher-results hidden"></div>
+      </div>
       <button class="btn ghost sm teamonly hidden" id="btnPreview">Preview as client</button>
       <span class="practice" id="whoami"></span>
       <button class="btn ghost sm" id="btnLogout">Sign out</button>
@@ -46,30 +49,46 @@
       <div class="stats" id="heroStats"></div>
     </div>
 
+    <!-- Tabbed navigation (hash-routed) -->
+    <nav class="tabs" id="tabnav">
+      <a href="#roadmap"      class="tab" data-view="roadmap">Roadmap</a>
+      <a href="#deliverables" class="tab" data-view="deliverables">Deliverables</a>
+      <a href="#video"        class="tab" data-view="video">Video</a>
+      <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
+      <a href="#updates"      class="tab" data-view="updates">Updates</a>
+      <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
+    </nav>
+
     <!-- Milestone timeline -->
-    <section>
+    <section class="view" data-view="roadmap">
       <h2>Your <em>roadmap</em></h2>
       <div class="sub">Every milestone, where you stand today, and what happens next.</div>
       <div class="timeline" id="timeline"></div>
     </section>
 
     <!-- Deliverables: promised vs delivered -->
-    <section>
-      <h2>What we promised — and <em>delivered</em></h2>
-      <div class="sub" id="delivSub"></div>
+    <section class="view" data-view="deliverables">
+      <div class="sechead">
+        <div>
+          <h2>What we promised — and <em>delivered</em></h2>
+          <div class="sub" id="delivSub"></div>
+        </div>
+        <button class="btn ghost sm" id="delivGuideBtn" type="button">What do these mean?</button>
+      </div>
+      <div id="delivGuide" class="guide hidden"></div>
       <div class="progressbar"><div id="delivBar"></div></div>
-      <div class="tablebox"><table id="delivTable"></table></div>
+      <div id="delivTable"></div>
     </section>
 
     <!-- Video pipeline -->
-    <section>
+    <section class="view" data-view="video">
       <h2>Video production <em>pipeline</em></h2>
-      <div class="sub">Every asset and its exact stage. Items waiting on the practice are flagged gold.</div>
+      <div class="sub">Every asset and its exact stage. Items waiting on the practice are flagged gold. Click any card for details, history and the finished video.</div>
       <div class="pipeline" id="pipeline"></div>
     </section>
 
     <!-- KPI dashboard -->
-    <section>
+    <section class="view" data-view="metrics">
       <h2>Performance <em>metrics</em></h2>
       <div class="metricshead">
         <div class="sub" id="kpiSub">Latest month against target.</div>
@@ -80,14 +99,14 @@
     </section>
 
     <!-- Activity feed -->
-    <section>
+    <section class="view" data-view="updates">
       <h2>Latest <em>updates</em></h2>
       <div class="sub">Posted by your ROXIUM team as work ships.</div>
       <div id="feed"></div>
     </section>
 
     <!-- TEAM-ONLY -->
-    <section id="teamPanel" class="teamonly hidden">
+    <section id="teamPanel" class="view teamonly hidden" data-view="team">
       <h2>Team · <em>controls</em></h2>
       <div class="sub">Only ROXIUM staff can see this. Everything you save updates the client view instantly.</div>
 
@@ -110,6 +129,15 @@
       <div class="entry">
         <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
         <div class="f"><button class="btn" id="btnPost">Post update</button></div>
+      </div>
+
+      <h3 class="danger-title">Danger zone</h3>
+      <div class="dangerzone">
+        <p class="note">Reset returns <b id="resetTarget">this practice</b> to a clean slate: it permanently deletes every KPI month, the activity feed, all notifications and stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.</p>
+        <div class="actions">
+          <button class="btn danger" id="btnResetData">Reset all data for this practice</button>
+          <span id="resetMsg" class="note"></span>
+        </div>
       </div>
     </section>
 

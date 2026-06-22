@@ -51,7 +51,8 @@ create table if not exists deliverables (
   due date,
   delivered_at timestamptz,
   sort int default 0,
-  phase_order int default 0
+  phase_order int default 0,
+  description text                -- client-facing "what this deliverable means" guide
 );
 
 -- Milestone timeline — so the surgeon always knows where he is and what's next.
@@ -103,7 +104,8 @@ create table if not exists activity (
   message text not null,
   author text,
   source text default 'portal',   -- 'portal' | 'asana' | 'coefficient'
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  edited_at timestamptz           -- set when a posted update is edited (shows "(edited)")
 );
 
 -- Client-facing banner notifications (deliverable shipped, video posted, stats ready).
@@ -215,15 +217,23 @@ begin
   return new;
 end $$;
 
--- On a stage change: stamp stage_since, auto-fill shot/posted dates, log history.
+-- On a stage change: stamp stage_since, auto-fill shot/posted dates, and log
+-- history ONLY for forward progression in the canonical workflow. Backward moves
+-- still restamp stage_since/dates but must not inflate progression history.
 create or replace function log_video_stage() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare
+  ord text[] := array['planned','scheduled','pre_production','shot','editing','delivered','posted'];
+  old_i int := array_position(ord, old.stage);
+  new_i int := array_position(ord, new.stage);
 begin
   if (new.stage is distinct from old.stage) then
     new.stage_since := now();
     if new.stage = 'shot'   and new.shot_date   is null then new.shot_date   := current_date; end if;
     if new.stage = 'posted' and new.posted_date is null then new.posted_date := current_date; end if;
-    insert into video_history(video_id, practice_id, stage) values (new.id, new.practice_id, new.stage);
+    if new_i is not null and old_i is not null and new_i > old_i then
+      insert into video_history(video_id, practice_id, stage) values (new.id, new.practice_id, new.stage);
+    end if;
   end if;
   return new;
 end $$;

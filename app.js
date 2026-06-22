@@ -45,6 +45,63 @@ function safe(label, fn){
   catch(e){ console.error(`[render] "${label}" failed:`, e); }
 }
 
+/* ---------------- tabbed views (hash router) ---------------- */
+const VIEWS = ['roadmap','deliverables','video','metrics','updates','team'];
+function currentView(){
+  const h = (location.hash||'').replace('#','');
+  return VIEWS.includes(h) ? h : 'roadmap';
+}
+function showView(name){
+  if(!VIEWS.includes(name)) name = 'roadmap';
+  if(name==='team' && !isTeamView()) name = 'roadmap';   // clients/preview can't open Team
+  document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
+  document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
+}
+// Show/hide team-only chrome (Team tab + panel, preview button, client switcher)
+// based on the *real* role and whether we're previewing as a client.
+function syncChrome(){
+  const realTeam = !!(me && me.role==='team');
+  $('btnPreview').classList.toggle('hidden', !realTeam);
+  $('practiceSwitcher').classList.toggle('hidden', !realTeam);
+  const teamView = isTeamView();
+  const teamTab = document.querySelector('.tab[data-view="team"]');
+  if(teamTab) teamTab.classList.toggle('hidden', !teamView);
+  $('teamPanel').classList.toggle('hidden', !teamView);
+  if(!teamView && currentView()==='team') location.hash = '#roadmap';
+}
+window.addEventListener('hashchange', ()=> showView(currentView()));
+
+/* ---------------- searchable client switcher (team) ---------------- */
+let practicesList = [];
+let switcherWired = false;
+function buildSwitcher(list){
+  practicesList = list || [];
+  const cur = practicesList.find(p=>p.id===practiceId);
+  $('practiceSearch').value = cur ? cur.name : '';
+  if(switcherWired) return;
+  switcherWired = true;
+  const input = $('practiceSearch'), results = $('practiceResults');
+  const draw = (q)=>{
+    const ql = (q||'').trim().toLowerCase();
+    const matches = practicesList.filter(p=> p.name.toLowerCase().includes(ql));
+    results.innerHTML = matches.length
+      ? matches.map(p=>`<button type="button" class="switcher-item${p.id===practiceId?' current':''}" data-id="${p.id}">${esc(p.name)}</button>`).join('')
+      : '<div class="switcher-empty">No matches</div>';
+    results.querySelectorAll('.switcher-item').forEach(b=> b.onclick = ()=>{
+      practiceId = b.dataset.id;
+      const p = practicesList.find(x=>x.id===practiceId);
+      input.value = p ? p.name : '';
+      results.classList.add('hidden');
+      input.blur();
+      loadAll();
+    });
+  };
+  input.addEventListener('focus', ()=>{ input.select(); draw(''); results.classList.remove('hidden'); });
+  input.addEventListener('input', ()=>{ draw(input.value); results.classList.remove('hidden'); });
+  input.addEventListener('keydown', e=>{ if(e.key==='Escape'){ results.classList.add('hidden'); input.blur(); } });
+  document.addEventListener('click', e=>{ if(!$('practiceSwitcher').contains(e.target)) results.classList.add('hidden'); });
+}
+
 // Single-shot boot so the initial getSession AND the onAuthStateChange event
 // (which Supabase fires on load) can't both kick off afterLogin concurrently.
 let booted = false;
@@ -85,24 +142,23 @@ async function afterLogin(){
   $('whoami').textContent = (me.full_name||'') + ' · ' + me.role;
 
   if(me.role === 'team'){
-    $('teamPanel').classList.remove('hidden');
-    $('btnPreview').classList.remove('hidden');
     const { data: prax } = await sb.from('practices').select('*').order('name');
-    const pick = $('practicePicker');
-    pick.classList.remove('hidden');
-    pick.innerHTML = (prax||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-    pick.onchange = ()=>{ practiceId = pick.value; loadAll(); };
     practiceId = prax && prax.length ? prax[0].id : null;
+    buildSwitcher(prax||[]);
     $('btnPreview').onclick = ()=>{
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
       $('btnPreview').classList.toggle('previewing', previewMode);
       $('whoami').textContent = (me.full_name||'') + ' · ' + (previewMode ? 'client preview' : me.role);
+      syncChrome();
+      showView(currentView());
       render();
     };
   } else {
     practiceId = me.practice_id;
   }
+  syncChrome();
+  showView(currentView());
   if(practiceId) loadAll();
 }
 
@@ -210,7 +266,7 @@ function render(){
       `<div class="fitem" data-fid="${f.id}">
          <span class="fmsg">${esc(f.message)}</span>
          ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
-         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
+         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}${f.edited_at? ' · <span class="edited">edited '+new Date(f.edited_at).toLocaleDateString()+'</span>':''}</div></div>`).join('')
       : '<p class="note">No updates yet.</p>';
     if(teamFeed){
       $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
@@ -224,8 +280,12 @@ function render(){
 
   // team panel + controls only when team AND not previewing as client
   safe('team panel', ()=>{
-    $('teamPanel').classList.toggle('hidden', !isTeamView());
-    if(isTeamView()) renderTeam(latest);
+    syncChrome();
+    if(isTeamView()){
+      renderTeam(latest);
+      const rt = $('resetTarget');
+      if(rt) rt.textContent = (data.practice && data.practice.name) ? `"${data.practice.name}"` : 'this practice';
+    }
   });
 }
 
@@ -314,23 +374,39 @@ function phaseGroups(){
     .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
 }
 
+let delivCollapsed = new Set();   // phase names the user has collapsed (persists in-session)
+let delivInit = false;            // auto-collapse fully-delivered phases once on first paint
+function phaseProgress(g){
+  const done = g.items.filter(i=>i.status==='delivered').length;
+  const pct = g.items.length? Math.round(100*done/g.items.length):0;
+  return { done, total:g.items.length, pct };
+}
+
 function renderDeliverables(isTeam){
   const t = $('delivTable');
   const groups = phaseGroups();
+  if(!delivInit){
+    groups.forEach(g=>{ if(g.items.length && g.items.every(i=>i.status==='delivered')) delivCollapsed.add(g.phase); });
+    delivInit = true;
+  }
   if(isTeam){
     t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
-      const done = g.items.filter(i=>i.status==='delivered').length;
+      const {done,total,pct} = phaseProgress(g);
+      const collapsed = delivCollapsed.has(g.phase);
       const rows = g.items.map(x=>`<div class="drow taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
         <span class="taskgrip">⋮⋮</span>
         <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
         <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
+        <button class="infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
         ${statusSelect('deliv', x.status)}
         <button class="rowdel" title="Delete">✕</button></div>`).join('');
-      return `<div class="phasecard" draggable="true" data-phase="${esc(g.phase)}">
+      return `<div class="phasecard${collapsed?' collapsed':''}" draggable="true" data-phase="${esc(g.phase)}">
         <div class="phasehead">
           <span class="grip">⋮⋮</span>
+          <button class="caret" type="button" data-phase="${esc(g.phase)}" title="Collapse / expand">▾</button>
           <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
-          <span class="phasecount">${done}/${g.items.length}</span>
+          <span class="phaseprog"><span style="width:${pct}%"></span></span>
+          <span class="phasecount">${done}/${total}</span>
           <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete phase">✕</button>
         </div>
         <div class="phaserows">${rows}
@@ -340,19 +416,44 @@ function renderDeliverables(isTeam){
       <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
     wireDeliverables();
   } else {
-    // client: clean phase blocks, no owner, no editing
-    t.innerHTML = `<div class="phasewrap">` + groups.map(g=>{
-      const done = g.items.filter(i=>i.status==='delivered').length;
-      const rows = g.items.map(x=>`<div class="drow client"><span class="dnameC">${esc(x.name)}</span>
+    // client: clean, collapsible phase blocks with per-phase progress + info layer
+    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
+      const {done,total,pct} = phaseProgress(g);
+      const collapsed = delivCollapsed.has(g.phase);
+      const rows = g.items.map(x=>`<div class="drow client">
+        <span class="dnameC">${esc(x.name)}${x.description?`<button class="infobtn has" type="button" data-info="${x.id}" title="What is this?">ⓘ</button>`:''}
+          ${x.description?`<span class="dinfo hidden" id="dinfo-${x.id}">${esc(x.description)}</span>`:''}</span>
         <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
-      return `<div class="phasecard"><div class="phasehead"><span class="phasenameC">${esc(g.phase)}</span>
-        <span class="phasecount">${done}/${g.items.length}</span></div>
+      return `<div class="phasecard${collapsed?' collapsed':''}"><div class="phasehead">
+        <button class="caret" type="button" data-phase="${esc(g.phase)}" title="Collapse / expand">▾</button>
+        <span class="phasenameC">${esc(g.phase)}</span>
+        <span class="phaseprog"><span style="width:${pct}%"></span></span>
+        <span class="phasecount">${done}/${total}</span></div>
         <div class="phaserows">${rows}</div></div>`;
     }).join('') + `</div>`;
+    wireDelivClient();
   }
+}
+// caret collapse/expand + client info toggles (shared)
+function wireCollapse(scope){
+  scope.querySelectorAll('.caret').forEach(c=> c.addEventListener('click', e=>{
+    e.preventDefault(); e.stopPropagation();
+    const phase = c.dataset.phase;
+    if(delivCollapsed.has(phase)) delivCollapsed.delete(phase); else delivCollapsed.add(phase);
+    const card = c.closest('.phasecard'); if(card) card.classList.toggle('collapsed');
+  }));
+}
+function wireDelivClient(){
+  const wrap = $('phaseWrap');
+  wireCollapse(wrap);
+  wrap.querySelectorAll('.infobtn[data-info]').forEach(b=> b.addEventListener('click', ()=>{
+    const el = document.getElementById('dinfo-'+b.dataset.info);
+    if(el) el.classList.toggle('hidden');
+  }));
 }
 function wireDeliverables(){
   const wrap = $('phaseWrap');
+  wireCollapse(wrap);
   // inline edits on each deliverable row
   wrap.querySelectorAll('.taskrow[data-id]').forEach(row=>{
     const id = row.dataset.id;
@@ -360,6 +461,8 @@ function wireDeliverables(){
     const ssel = row.querySelector('select');
     ssel.onchange = ()=> updateDeliverableStatus(id, ssel.value);
     row.querySelector('.rowdel').onclick = ()=> deleteRow('deliverables', id, 'Delete this deliverable?');
+    const info = row.querySelector('.infobtn[data-info-edit]');
+    if(info) info.onclick = ()=> editDeliverableInfo(id);
   });
   // rename a whole phase (updates every deliverable in it)
   wrap.querySelectorAll('.phasename').forEach(inp=>{
@@ -504,6 +607,14 @@ async function addPhase(){
   const { error } = await sb.from('deliverables').insert({ practice_id:practiceId, phase, phase_order:po, name:'New deliverable', status:'promised', sort:0 });
   flash(error? error.message : 'Phase added.'); if(!error) loadAll();
 }
+// team: set the client-facing explanation for a deliverable (the ⓘ info layer)
+async function editDeliverableInfo(id){
+  const d = data.deliv.find(x=>x.id===id); if(!d) return;
+  const v = prompt(`Client explanation for "${d.name}"\n(what this deliverable means — shown to the client under an ⓘ icon). Leave blank to remove.`, d.description||'');
+  if(v===null) return;
+  const { error } = await sb.from('deliverables').update({ description: v.trim()||null }).eq('id', id);
+  flash(error? error.message : 'Saved.'); if(!error) loadAll();
+}
 
 /* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, click-to-open panel ---- */
 let _vDragged = false;   // guards against the click that fires at the end of a drag
@@ -627,7 +738,10 @@ function openVideoDetail(id){
         <div class="histbox">${histRO}</div>
       </div>
       <div class="modalfoot">
-        ${v.video_url? `<a class="btn" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ Watch video</a>`:'<span class="note">Video not posted yet.</span>'}
+        ${v.video_url
+          ? `<a class="btn" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ Watch video</a>
+             <a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>`
+          : '<span class="note">Video not posted yet.</span>'}
       </div></div>`;
     mc.classList.add('open');
     $('mClose').onclick = closeModal;
@@ -667,6 +781,7 @@ function openVideoDetail(id){
     <div class="modalfoot">
       <button class="btn" id="mSave">Save changes</button>
       <button class="btn" id="mPost">Post video &amp; email client</button>
+      ${v.video_url? `<a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>`:''}
       <span id="mMsg" class="note"></span>
     </div></div>`;
   m.classList.add('open');
@@ -816,7 +931,7 @@ async function editFeedItem(id){
   const msg = prompt('Edit this update:', f.message);
   if(msg===null) return;
   if(!msg.trim()){ alert('Message cannot be empty.'); return; }
-  const { error } = await sb.from('activity').update({ message: msg.trim() }).eq('id', id);
+  const { error } = await sb.from('activity').update({ message: msg.trim(), edited_at: new Date().toISOString() }).eq('id', id);
   if(error) alert('Edit failed: '+error.message); else loadAll();
 }
 
@@ -825,5 +940,83 @@ $('btnPost').onclick = async ()=>{
   const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: me.full_name||'ROXIUM', source:'portal' });
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
 };
+
+/* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */
+const resetFlash = t=>{ const el=$('resetMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+$('btnResetData').onclick = async ()=>{
+  if(!isTeamView()){ return; }                 // safety: team-only, never in client preview
+  if(!practiceId){ resetFlash('No practice selected.'); return; }
+  const name = (data.practice && data.practice.name) || 'this practice';
+
+  // Step 1 — "are you sure?"
+  if(!confirm(`Reset ALL data for "${name}"?\n\nThis permanently deletes:\n  • every KPI month\n  • the activity / updates feed\n  • all notifications\n  • all video stage history\n\nand resets all deliverables, milestones and videos to their starting state.\n\nThis CANNOT be undone.`)) return;
+
+  // Step 2 — type the practice name to confirm (guards against accidental wipes)
+  const typed = prompt(`To confirm, type the practice name exactly:\n\n${name}`);
+  if(typed === null) return;                    // cancelled
+  if(typed.trim() !== name){ alert('Name did not match — reset cancelled. Nothing was changed.'); return; }
+
+  const pid = practiceId;
+  $('btnResetData').disabled = true;
+  resetFlash('Resetting…');
+  try {
+    // 1) wipe the time-series / log data
+    const wipes = await Promise.all([
+      sb.from('kpi_monthly').delete().eq('practice_id', pid),
+      sb.from('activity').delete().eq('practice_id', pid),
+      sb.from('notifications').delete().eq('practice_id', pid),
+    ]);
+    const wipeErr = wipes.find(r=>r.error);
+    if(wipeErr){ throw new Error(wipeErr.error.message); }
+
+    // 2) reset deliverables back to "promised"
+    const dRes = await sb.from('deliverables')
+      .update({ status:'promised', delivered_at:null })
+      .eq('practice_id', pid);
+    if(dRes.error) throw new Error(dRes.error.message);
+
+    // 3) reset the roadmap: first milestone "current", the rest "upcoming"
+    const miles = [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0));
+    for(let i=0;i<miles.length;i++){
+      const want = i===0 ? 'current' : 'upcoming';
+      const mr = await sb.from('milestones').update({ status: want }).eq('id', miles[i].id);
+      if(mr.error) throw new Error(mr.error.message);
+    }
+
+    // 4) reset the video pipeline back to "scheduled" and clear per-asset progress
+    const vRes = await sb.from('video_pipeline')
+      .update({ stage:'scheduled', blocked:false, blocked_reason:null, video_url:null,
+                posted_date:null, shot_date:null, stage_since:new Date().toISOString() })
+      .eq('practice_id', pid);
+    if(vRes.error) throw new Error(vRes.error.message);
+
+    // 5) clear stage history last (the video reset above may re-log entries via trigger)
+    const hRes = await sb.from('video_history').delete().eq('practice_id', pid);
+    if(hRes.error) throw new Error(hRes.error.message);
+
+    resetFlash(`"${name}" was reset to a clean slate.`);
+    await loadAll();
+  } catch(e){
+    resetFlash('Reset failed: '+e.message);
+    alert('Reset failed: '+e.message);
+  } finally {
+    $('btnResetData').disabled = false;
+  }
+};
+
+/* ---- Deliverables info-guide (explains promised vs delivered, the ⓘ layer, phases) ---- */
+(function setupDelivGuide(){
+  const guide = $('delivGuide'), btn = $('delivGuideBtn');
+  if(!guide || !btn) return;
+  guide.innerHTML = `
+    <p>This is everything we committed to for your practice, grouped into <b>phases</b> of work. Each phase shows how many items are <b>delivered</b> out of the total, and you can collapse a phase with the ▾ caret to focus on what's active.</p>
+    <ul class="guidelist">
+      <li><span class="chip promised">promised</span> Committed and scheduled — not started yet.</li>
+      <li><span class="chip in_progress">in progress</span> Actively being worked on right now.</li>
+      <li><span class="chip delivered">delivered</span> Completed and handed off.</li>
+    </ul>
+    <p>Where you see an <b>ⓘ</b> next to a deliverable, click it for a plain-English explanation of what that item is and why it matters.</p>`;
+  btn.onclick = ()=> guide.classList.toggle('hidden');
+})();
 
 init();
