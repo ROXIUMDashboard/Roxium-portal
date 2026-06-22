@@ -205,8 +205,16 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 .vtitle{display:block;padding-right:18px}
 .vdate{display:block;font-size:10px;color:var(--muted);letter-spacing:.04em;margin-top:6px;line-height:1.5}
 .vdays{display:block;font-size:9.5px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
-.vdays.stale{color:var(--red)}
-.vitem.staleflag{border-color:var(--red)}
+/* team-only age-based SLA states (>=3d warn, >=7d overdue) for video + deliverables */
+.vdays.warn{color:var(--amber)}
+.vdays.overdue{color:var(--red)}
+.vitem.warn{border-color:var(--amber);background:rgba(212,162,78,.07)}
+.vitem.overdue{border-color:var(--red);background:rgba(198,106,88,.10)}
+.drow.taskrow.warn{box-shadow:inset 2px 0 0 var(--amber);background:rgba(212,162,78,.06)}
+.drow.taskrow.overdue{box-shadow:inset 2px 0 0 var(--red);background:rgba(198,106,88,.08)}
+.agechip{flex-shrink:0;font-size:9.5px;letter-spacing:.06em;padding:1px 5px;border-radius:8px;font-variant-numeric:tabular-nums}
+.agechip.warn{color:var(--amber);border:1px solid var(--amber)}
+.agechip.overdue{color:var(--red);border:1px solid var(--red)}
 .vlink{display:inline-block;font-size:10px;color:var(--gold);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;text-decoration:none}
 .vlink:hover{text-decoration:underline}
 .vitem{position:relative}
