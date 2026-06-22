@@ -57,6 +57,7 @@
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
+      <a href="#admin"        class="tab teamonly hidden" data-view="admin">Admin</a>
     </nav>
 
     <!-- Milestone timeline -->
@@ -105,19 +106,22 @@
       <div id="feed"></div>
     </section>
 
-    <!-- TEAM-ONLY -->
-    <section id="teamPanel" class="view teamonly hidden" data-view="team">
-      <h2>Team · <em>controls</em></h2>
-      <div class="sub">Only ROXIUM staff can see this. Everything you save updates the client view instantly.</div>
+    <!-- ADMIN-ONLY · global client / access management (NOT tied to one practice) -->
+    <section id="adminPanel" class="view teamonly hidden" data-view="admin">
+      <h2>Admin · <em>client management</em></h2>
+      <div class="sub">Global controls for the whole portal — create clients, invite users and manage access in one place. These are not specific to the practice currently open.</div>
 
-      <h3>Clients &amp; access</h3>
-      <p class="note" style="margin-top:-2px">Add a new client practice (it's seeded with the standard deliverables, roadmap and pipeline), then invite the surgeon and their staff. Invited users get a sign-in link by email; access is invite-only — nobody can self-register.</p>
+      <h3>Add a client practice</h3>
+      <p class="note" style="margin-top:-2px">A new practice is seeded with the standard deliverables, roadmap and pipeline. Duplicate names are blocked.</p>
       <div class="entry">
         <div class="f"><label>New practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
         <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
         <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Add client</button></div>
       </div>
-      <div class="entry" style="margin-top:10px">
+
+      <h3>Invite a surgeon / client user</h3>
+      <p class="note" style="margin-top:-2px">Invited users get a sign-in link by email; access is invite-only — nobody can self-register. Pick any practice — invites aren't limited to the one you currently have open.</p>
+      <div class="entry">
         <div class="f"><label>Invite email</label><input id="inviteeEmail" type="email" placeholder="surgeon@practice.com"></div>
         <div class="f"><label>Name (optional)</label><input id="inviteeName" placeholder="Dr. Jane Smith"></div>
         <div class="f"><label>Practice</label><select id="inviteePractice"></select></div>
@@ -125,6 +129,12 @@
         <div class="f" style="align-self:end"><button class="btn" id="btnInvite">Send invite</button></div>
       </div>
       <p class="note" id="onbMsg" style="margin-top:6px"></p>
+    </section>
+
+    <!-- TEAM-ONLY · controls for the practice currently open -->
+    <section id="teamPanel" class="view teamonly hidden" data-view="team">
+      <h2>Team · <em>controls</em></h2>
+      <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in the Admin tab.)</div>
 
       <h3>Monthly KPIs</h3>
       <p class="note" style="margin-top:-2px">Each month is its own saved snapshot — editing one month never changes another, and re-reporting a later month can't overwrite the past. Pick the month, enter values, Save.</p>
