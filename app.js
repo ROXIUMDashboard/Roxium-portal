@@ -37,12 +37,32 @@ function isTeamView(){ return me && me.role === 'team' && !previewMode; }
 /* ---------------- auth ---------------- */
 const $ = id => document.getElementById(id);
 
+// Run a render step in isolation so one failing section can never blank the rest
+// of the page (e.g. a throw in the deliverables wiring must not hide the pipeline
+// or the performance metrics). Any failure is surfaced in the console.
+function safe(label, fn){
+  try { return fn(); }
+  catch(e){ console.error(`[render] "${label}" failed:`, e); }
+}
+
+// Single-shot boot so the initial getSession AND the onAuthStateChange event
+// (which Supabase fires on load) can't both kick off afterLogin concurrently.
+let booted = false;
+async function boot(){
+  if(booted) return;
+  booted = true;
+  try { await afterLogin(); }
+  catch(e){ booted = false; console.error('[boot] afterLogin failed:', e); }
+}
+
 async function init(){
   const { data:{ session } } = await sb.auth.getSession();
   if(!session){ $('login').classList.remove('hidden'); return; }
-  await afterLogin();
+  await boot();
 }
-sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) afterLogin(); });
+// Never await Supabase calls directly inside the auth callback — that can stall
+// the client. Defer to a fresh task and let boot() dedupe.
+sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0); });
 
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
@@ -149,56 +169,64 @@ function render(){
 
   // timeline
   const isTeam = isTeamView();
-  renderTimeline(isTeam);
+  safe('timeline', ()=> renderTimeline(isTeam));
 
   // deliverables
-  const pct = data.deliv.length? Math.round(100*delivered/data.deliv.length):0;
-  $('delivSub').textContent = data.deliv.length? `${delivered} of ${data.deliv.length} deliverables shipped (${pct}%).` : 'Deliverables will be loaded at kickoff.';
-  $('delivBar').style.width = pct+'%';
-  renderDeliverables(isTeam);
+  safe('deliverables', ()=>{
+    const pct = data.deliv.length? Math.round(100*delivered/data.deliv.length):0;
+    $('delivSub').textContent = data.deliv.length? `${delivered} of ${data.deliv.length} deliverables shipped (${pct}%).` : 'Deliverables will be loaded at kickoff.';
+    $('delivBar').style.width = pct+'%';
+    renderDeliverables(isTeam);
+  });
 
   // video pipeline
-  renderPipeline(isTeam);
+  safe('video pipeline', ()=> renderPipeline(isTeam));
 
   // KPI cards + status board
-  const cards = [
-    {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
-    {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
-    {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
-    {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
-  ];
-  $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div></div>`).join('');
-  const rows = latest? [
-    ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
-    ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
-    ['Ad CTR', fmtP(d.ctr), statusGen(d.ctr,.012)],
-    ['Email open rate', fmtP(d.orate), statusGen(d.orate,.28)],
-    ['Close rate', fmtP(d.close), statusGen(d.close,.35)],
-    ['Social rank index', (+latest.rank||0).toFixed(2)+'×', statusGen(+latest.rank||0,1.5)],
-  ]:[];
-  $('statusBoard').innerHTML = rows.map(r=>
-    `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
+  safe('performance metrics', ()=>{
+    const cards = [
+      {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
+      {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
+      {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
+      {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
+    ];
+    $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div></div>`).join('');
+    const rows = latest? [
+      ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
+      ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
+      ['Ad CTR', fmtP(d.ctr), statusGen(d.ctr,.012)],
+      ['Email open rate', fmtP(d.orate), statusGen(d.orate,.28)],
+      ['Close rate', fmtP(d.close), statusGen(d.close,.35)],
+      ['Social rank index', (+latest.rank||0).toFixed(2)+'×', statusGen(+latest.rank||0,1.5)],
+    ]:[];
+    $('statusBoard').innerHTML = rows.map(r=>
+      `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
+  });
 
   // feed (team can edit/delete each posted update)
-  const teamFeed = isTeamView();
-  $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-    `<div class="fitem" data-fid="${f.id}">
-       <span class="fmsg">${esc(f.message)}</span>
-       ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
-       <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
-    : '<p class="note">No updates yet.</p>';
-  if(teamFeed){
-    $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
-    $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
-      if(!confirm('Delete this update?')) return;
-      const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
-      if(error) alert('Delete failed: '+error.message); else loadAll();
-    });
-  }
+  safe('updates feed', ()=>{
+    const teamFeed = isTeamView();
+    $('feed').innerHTML = data.feed.length? data.feed.map(f=>
+      `<div class="fitem" data-fid="${f.id}">
+         <span class="fmsg">${esc(f.message)}</span>
+         ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
+         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
+      : '<p class="note">No updates yet.</p>';
+    if(teamFeed){
+      $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
+      $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
+        if(!confirm('Delete this update?')) return;
+        const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
+        if(error) alert('Delete failed: '+error.message); else loadAll();
+      });
+    }
+  });
 
   // team panel + controls only when team AND not previewing as client
-  $('teamPanel').classList.toggle('hidden', !isTeamView());
-  if(isTeamView()) renderTeam(latest);
+  safe('team panel', ()=>{
+    $('teamPanel').classList.toggle('hidden', !isTeamView());
+    if(isTeamView()) renderTeam(latest);
+  });
 }
 
 /* Month selector for performance metrics: 'Latest' + each reported month */
