@@ -1,11 +1,15 @@
 -- ============================================================
 -- ROXIUM CLIENT PORTAL · SUPABASE SCHEMA
--- Run this once in Supabase: SQL Editor → New query → paste → Run
+-- ------------------------------------------------------------
+-- This file mirrors the LIVE database (project nchtmeqsjkpcvtuscxfy).
+-- Run it once on a fresh Supabase project: SQL Editor → New query → paste → Run.
+-- It is safe to re-run: every object uses CREATE ... IF NOT EXISTS / OR REPLACE
+-- or DROP ... IF EXISTS first, so it will not clobber data on an existing project.
 -- ============================================================
 
 -- ---------- CORE TABLES ----------
 
-create table practices (
+create table if not exists practices (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   go_live date,
@@ -13,7 +17,7 @@ create table practices (
 );
 
 -- One row per logged-in user. role: 'team' (ROXIUM staff) or 'client' (practice).
-create table profiles (
+create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text,
   role text not null default 'client' check (role in ('team','client')),
@@ -22,7 +26,7 @@ create table profiles (
 );
 
 -- Monthly KPI inputs — mirrors the KPI workbook blue cells exactly.
-create table kpi_monthly (
+create table if not exists kpi_monthly (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   month int not null check (month between 1 and 12),
@@ -35,20 +39,23 @@ create table kpi_monthly (
 );
 
 -- "Progress on the things we promised them" — the deliverables tracker.
-create table deliverables (
+-- Grouped into draggable phase cards in the UI: phase_order sets card order,
+-- sort sets row order inside a card.
+create table if not exists deliverables (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
-  phase text not null,            -- e.g. 'Phase 2 · Authority'
+  phase text not null,            -- e.g. 'Phase 2 · Video & Authority'
   name text not null,             -- e.g. 'VSL produced and embedded'
   owner_seat text,                -- AL / BD / VP / WD / MB / SM / AT
   status text not null default 'promised' check (status in ('promised','in_progress','delivered')),
   due date,
   delivered_at timestamptz,
-  sort int default 0
+  sort int default 0,
+  phase_order int default 0
 );
 
 -- Milestone timeline — so the surgeon always knows where he is and what's next.
-create table milestones (
+create table if not exists milestones (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   name text not null,             -- 'Milestone I — Foundation' etc.
@@ -59,19 +66,38 @@ create table milestones (
 );
 
 -- Video production pipeline — makes the cinematography bottleneck visible.
-create table video_pipeline (
+-- stage_since drives "days in stage"; shot_date/posted_date are auto-stamped
+-- by the stage trigger; video_url is the finished asset shown to the client.
+create table if not exists video_pipeline (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   item text not null,             -- e.g. 'Facelift recovery SEO video'
   stage text not null default 'scheduled' check (stage in
-    ('scheduled','pre_production','shot','editing','delivered','posted')),
+    ('planned','scheduled','pre_production','shot','editing','delivered','posted')),
   blocked boolean default false,
   blocked_reason text,            -- e.g. 'Surgeon reviewing — awaiting approval'
-  updated_at timestamptz default now()
+  updated_at timestamptz default now(),
+  stage_since timestamptz default now(),
+  planned_shoot_date date,
+  shot_date date,
+  posted_date date,
+  video_url text,
+  sort int default 0,
+  description text
+);
+
+-- Per-asset stage history (auto-written by the triggers below).
+create table if not exists video_history (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references video_pipeline(id) on delete cascade,
+  practice_id uuid not null references practices(id) on delete cascade,
+  stage text not null,
+  note text,
+  moved_at timestamptz default now()
 );
 
 -- Activity feed — team posts updates; later, Asana webhooks can write here too.
-create table activity (
+create table if not exists activity (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   message text not null,
@@ -80,16 +106,29 @@ create table activity (
   created_at timestamptz default now()
 );
 
+-- Client-facing banner notifications (deliverable shipped, video posted, stats ready).
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  practice_id uuid not null references practices(id) on delete cascade,
+  kind text not null,             -- 'deliverable' | 'milestone' | 'video' | 'stats'
+  message text not null,
+  seen boolean default false,
+  emailed boolean default false,
+  created_at timestamptz default now()
+);
+
 -- ---------- ROW LEVEL SECURITY ----------
 -- Clients see ONLY their own practice. Team sees and edits everything.
 
-alter table practices     enable row level security;
-alter table profiles      enable row level security;
-alter table kpi_monthly   enable row level security;
-alter table deliverables  enable row level security;
-alter table milestones    enable row level security;
+alter table practices      enable row level security;
+alter table profiles       enable row level security;
+alter table kpi_monthly    enable row level security;
+alter table deliverables   enable row level security;
+alter table milestones     enable row level security;
 alter table video_pipeline enable row level security;
-alter table activity      enable row level security;
+alter table video_history  enable row level security;
+alter table activity       enable row level security;
+alter table notifications  enable row level security;
 
 -- security definer: these helpers read profiles directly without re-triggering
 -- the profiles RLS policy (prevents infinite recursion on profile lookups).
@@ -104,29 +143,118 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- profiles: users read their own row; team reads all; team manages rows.
+drop policy if exists "own profile" on profiles;
 create policy "own profile"   on profiles for select using (id = auth.uid() or is_team());
+drop policy if exists "team upserts profiles" on profiles;
 create policy "team upserts profiles" on profiles for all using (is_team()) with check (is_team());
 
 -- practices
+drop policy if exists "read own practice" on practices;
 create policy "read own practice" on practices for select using (is_team() or id = my_practice());
+drop policy if exists "team writes practices" on practices;
 create policy "team writes practices" on practices for all using (is_team()) with check (is_team());
 
--- data tables: same pattern.
+-- data tables: client reads its own practice, team does everything.
+drop policy if exists "read kpi" on kpi_monthly;
 create policy "read kpi"   on kpi_monthly    for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team kpi" on kpi_monthly;
 create policy "team kpi"   on kpi_monthly    for all using (is_team()) with check (is_team());
+
+drop policy if exists "read deliv" on deliverables;
 create policy "read deliv" on deliverables   for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team deliv" on deliverables;
 create policy "team deliv" on deliverables   for all using (is_team()) with check (is_team());
+
+drop policy if exists "read miles" on milestones;
 create policy "read miles" on milestones     for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team miles" on milestones;
 create policy "team miles" on milestones     for all using (is_team()) with check (is_team());
+
+drop policy if exists "read video" on video_pipeline;
 create policy "read video" on video_pipeline for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team video" on video_pipeline;
 create policy "team video" on video_pipeline for all using (is_team()) with check (is_team());
+
+-- video_history: client reads its own; team manages; explicit delete for clarity.
+drop policy if exists "read vh" on video_history;
+create policy "read vh" on video_history for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team vh" on video_history;
+create policy "team vh" on video_history for all using (is_team()) with check (is_team());
+drop policy if exists "team delete vh" on video_history;
+create policy "team delete vh" on video_history for delete using (is_team());
+
+drop policy if exists "read activity" on activity;
 create policy "read activity" on activity    for select using (is_team() or practice_id = my_practice());
+drop policy if exists "team activity" on activity;
 create policy "team activity" on activity    for all using (is_team()) with check (is_team());
 
+-- notifications: client reads its own + can flag them seen; inserts come from the
+-- notify() trigger helper (security definer) and from the team; team manages all.
+drop policy if exists "read notif" on notifications;
+create policy "read notif" on notifications for select using (is_team() or practice_id = my_practice());
+drop policy if exists "insert notif" on notifications;
+create policy "insert notif" on notifications for insert with check (true);
+drop policy if exists "client seen" on notifications;
+create policy "client seen" on notifications for update using (practice_id = my_practice()) with check (practice_id = my_practice());
+drop policy if exists "team notif" on notifications;
+create policy "team notif" on notifications for all using (is_team()) with check (is_team());
+
+-- ---------- TRIGGERS: history + notifications ----------
+
+-- Drop one banner-notification row for a practice (used by triggers).
+create or replace function notify(p_practice uuid, p_kind text, p_msg text) returns void
+language sql security definer set search_path = public as $$
+  insert into notifications(practice_id, kind, message) values (p_practice, p_kind, p_msg);
+$$;
+
+-- Log the starting stage when a video asset is created.
+create or replace function log_video_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into video_history(video_id, practice_id, stage) values (new.id, new.practice_id, new.stage);
+  return new;
+end $$;
+
+-- On a stage change: stamp stage_since, auto-fill shot/posted dates, log history.
+create or replace function log_video_stage() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (new.stage is distinct from old.stage) then
+    new.stage_since := now();
+    if new.stage = 'shot'   and new.shot_date   is null then new.shot_date   := current_date; end if;
+    if new.stage = 'posted' and new.posted_date is null then new.posted_date := current_date; end if;
+    insert into video_history(video_id, practice_id, stage) values (new.id, new.practice_id, new.stage);
+  end if;
+  return new;
+end $$;
+
+-- When a KPI month is reported, drop the client a "stats ready" banner.
+create or replace function notif_stats() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform notify(new.practice_id, 'stats', 'Your Month ' || new.month || ' performance update is ready.');
+  return new;
+end $$;
+
+drop trigger if exists trg_video_insert on video_pipeline;
+create trigger trg_video_insert after insert on video_pipeline
+  for each row execute function log_video_insert();
+
+drop trigger if exists trg_video_stage on video_pipeline;
+create trigger trg_video_stage before update on video_pipeline
+  for each row execute function log_video_stage();
+
+drop trigger if exists trg_notif_stats on kpi_monthly;
+create trigger trg_notif_stats after insert on kpi_monthly
+  for each row execute function notif_stats();
+
 -- ---------- STORAGE (deliverable files: videos, brand guidelines, reports) ----------
-insert into storage.buckets (id, name, public) values ('deliverables','deliverables', false);
+insert into storage.buckets (id, name, public) values ('deliverables','deliverables', false)
+  on conflict (id) do nothing;
+drop policy if exists "read own files" on storage.objects;
 create policy "read own files" on storage.objects for select
   using (bucket_id = 'deliverables' and (is_team() or (storage.foldername(name))[1] = my_practice()::text));
+drop policy if exists "team uploads" on storage.objects;
 create policy "team uploads" on storage.objects for insert
   with check (bucket_id = 'deliverables' and is_team());
 
@@ -186,25 +314,23 @@ begin
     (pid,'Milestone III — Full Funnel','Landing pages live, paid amplification on, nurture engine running.','upcoming', p_kickoff + 42, 3),
     (pid,'Go-Live & Growth','Campaigns live. Initial ROI window: 1.5–2 months.','upcoming', p_kickoff + 49, 4);
 
-  -- ---- Standard video pipeline ----
+  -- ---- Standard video pipeline (assets start in 'scheduled') ----
   insert into video_pipeline (practice_id, item, stage) values
-    (pid,'Video Sales Letter (VSL)','planned'),
-    (pid,'Recovery Masterclass (gated webinar)','planned'),
-    (pid,'SEO video — facelift recovery','planned'),
-    (pid,'SEO video — rhinoplasty healing','planned'),
-    (pid,'SEO video — blepharoplasty','planned'),
-    (pid,'SEO video — body contouring','planned'),
-    (pid,'Patient testimonial #1','planned'),
-    (pid,'Patient testimonial #2','planned'),
-    (pid,'Patient testimonial #3','planned'),
-    (pid,'Office walkthrough B-roll package','planned');
+    (pid,'Video Sales Letter (VSL)','scheduled'),
+    (pid,'Recovery Masterclass (gated webinar)','scheduled'),
+    (pid,'SEO video — facelift recovery','scheduled'),
+    (pid,'SEO video — rhinoplasty healing','scheduled'),
+    (pid,'SEO video — blepharoplasty','scheduled'),
+    (pid,'SEO video — body contouring','scheduled'),
+    (pid,'Patient testimonial #1','scheduled'),
+    (pid,'Patient testimonial #2','scheduled'),
+    (pid,'Patient testimonial #3','scheduled'),
+    (pid,'Office walkthrough B-roll package','scheduled');
 
   return pid;
 end $$;
 
--- Create your first practice now (edit the name and kickoff date):
-select seed_practice('Demo Practice', current_date);
-
--- After creating users under Authentication → Users, link them:
+-- Create your first practice (edit the name and kickoff date), then link users:
+--   select seed_practice('Demo Practice', current_date);
 --   insert into profiles (id, full_name, role) values ('<auth-user-uuid>', 'Your Name', 'team');
 --   insert into profiles (id, full_name, role, practice_id) values ('<client-uuid>', 'Dr. Client', 'client', '<practice-id>');

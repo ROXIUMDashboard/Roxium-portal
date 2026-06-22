@@ -37,12 +37,32 @@ function isTeamView(){ return me && me.role === 'team' && !previewMode; }
 /* ---------------- auth ---------------- */
 const $ = id => document.getElementById(id);
 
+// Run a render step in isolation so one failing section can never blank the rest
+// of the page (e.g. a throw in the deliverables wiring must not hide the pipeline
+// or the performance metrics). Any failure is surfaced in the console.
+function safe(label, fn){
+  try { return fn(); }
+  catch(e){ console.error(`[render] "${label}" failed:`, e); }
+}
+
+// Single-shot boot so the initial getSession AND the onAuthStateChange event
+// (which Supabase fires on load) can't both kick off afterLogin concurrently.
+let booted = false;
+async function boot(){
+  if(booted) return;
+  booted = true;
+  try { await afterLogin(); }
+  catch(e){ booted = false; console.error('[boot] afterLogin failed:', e); }
+}
+
 async function init(){
   const { data:{ session } } = await sb.auth.getSession();
   if(!session){ $('login').classList.remove('hidden'); return; }
-  await afterLogin();
+  await boot();
 }
-sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) afterLogin(); });
+// Never await Supabase calls directly inside the auth callback — that can stall
+// the client. Defer to a fresh task and let boot() dedupe.
+sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0); });
 
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
@@ -149,56 +169,64 @@ function render(){
 
   // timeline
   const isTeam = isTeamView();
-  renderTimeline(isTeam);
+  safe('timeline', ()=> renderTimeline(isTeam));
 
   // deliverables
-  const pct = data.deliv.length? Math.round(100*delivered/data.deliv.length):0;
-  $('delivSub').textContent = data.deliv.length? `${delivered} of ${data.deliv.length} deliverables shipped (${pct}%).` : 'Deliverables will be loaded at kickoff.';
-  $('delivBar').style.width = pct+'%';
-  renderDeliverables(isTeam);
+  safe('deliverables', ()=>{
+    const pct = data.deliv.length? Math.round(100*delivered/data.deliv.length):0;
+    $('delivSub').textContent = data.deliv.length? `${delivered} of ${data.deliv.length} deliverables shipped (${pct}%).` : 'Deliverables will be loaded at kickoff.';
+    $('delivBar').style.width = pct+'%';
+    renderDeliverables(isTeam);
+  });
 
   // video pipeline
-  renderPipeline(isTeam);
+  safe('video pipeline', ()=> renderPipeline(isTeam));
 
   // KPI cards + status board
-  const cards = [
-    {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
-    {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
-    {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
-    {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
-  ];
-  $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div></div>`).join('');
-  const rows = latest? [
-    ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
-    ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
-    ['Ad CTR', fmtP(d.ctr), statusGen(d.ctr,.012)],
-    ['Email open rate', fmtP(d.orate), statusGen(d.orate,.28)],
-    ['Close rate', fmtP(d.close), statusGen(d.close,.35)],
-    ['Social rank index', (+latest.rank||0).toFixed(2)+'×', statusGen(+latest.rank||0,1.5)],
-  ]:[];
-  $('statusBoard').innerHTML = rows.map(r=>
-    `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
+  safe('performance metrics', ()=>{
+    const cards = [
+      {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
+      {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
+      {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
+      {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
+    ];
+    $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div></div>`).join('');
+    const rows = latest? [
+      ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
+      ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
+      ['Ad CTR', fmtP(d.ctr), statusGen(d.ctr,.012)],
+      ['Email open rate', fmtP(d.orate), statusGen(d.orate,.28)],
+      ['Close rate', fmtP(d.close), statusGen(d.close,.35)],
+      ['Social rank index', (+latest.rank||0).toFixed(2)+'×', statusGen(+latest.rank||0,1.5)],
+    ]:[];
+    $('statusBoard').innerHTML = rows.map(r=>
+      `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
+  });
 
   // feed (team can edit/delete each posted update)
-  const teamFeed = isTeamView();
-  $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-    `<div class="fitem" data-fid="${f.id}">
-       <span class="fmsg">${esc(f.message)}</span>
-       ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
-       <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
-    : '<p class="note">No updates yet.</p>';
-  if(teamFeed){
-    $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
-    $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
-      if(!confirm('Delete this update?')) return;
-      const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
-      if(error) alert('Delete failed: '+error.message); else loadAll();
-    });
-  }
+  safe('updates feed', ()=>{
+    const teamFeed = isTeamView();
+    $('feed').innerHTML = data.feed.length? data.feed.map(f=>
+      `<div class="fitem" data-fid="${f.id}">
+         <span class="fmsg">${esc(f.message)}</span>
+         ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
+         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
+      : '<p class="note">No updates yet.</p>';
+    if(teamFeed){
+      $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
+      $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
+        if(!confirm('Delete this update?')) return;
+        const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
+        if(error) alert('Delete failed: '+error.message); else loadAll();
+      });
+    }
+  });
 
   // team panel + controls only when team AND not previewing as client
-  $('teamPanel').classList.toggle('hidden', !isTeamView());
-  if(isTeamView()) renderTeam(latest);
+  safe('team panel', ()=>{
+    $('teamPanel').classList.toggle('hidden', !isTeamView());
+    if(isTeamView()) renderTeam(latest);
+  });
 }
 
 /* Month selector for performance metrics: 'Latest' + each reported month */
@@ -477,7 +505,8 @@ async function addPhase(){
   flash(error? error.message : 'Phase added.'); if(!error) loadAll();
 }
 
-/* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, double-click panel ---- */
+/* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, click-to-open panel ---- */
+let _vDragged = false;   // guards against the click that fires at the end of a drag
 const fmtDate = d => d ? new Date(d+ (String(d).length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
 function daysIn(stage_since){ if(!stage_since) return 0; return Math.max(0,Math.floor((Date.now()-new Date(stage_since))/86400000)); }
 function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
@@ -513,18 +542,28 @@ function renderPipeline(isTeam){
     const addBtn = isTeam? `<button class="vadd" data-addstage="${key}">+ Add video</button>` : '';
     return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div>${addBtn}</div>`;
   }).join('');
-  if(isTeam) wirePipeline(wrap);
+  wirePipeline(wrap, isTeam);
 }
 
-function wirePipeline(wrap){
+function wirePipeline(wrap, isTeam){
+  // Click ANY card to open its detail panel (watch / history — plus editing for team).
+  wrap.querySelectorAll('.vitem[data-vid]').forEach(card=>{
+    card.addEventListener('click', e=>{
+      if(_vDragged) return;                                              // ignore the click that ends a drag
+      if(e.target.closest('.vdel') || e.target.closest('.vlink')) return; // those handle their own clicks
+      openVideoDetail(card.dataset.vid);
+    });
+  });
+  if(!isTeam) return;   // clients get click-to-view only; everything below is team editing
+
   wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
     card.addEventListener('dragstart', e=>{
+      _vDragged = true;
       e.dataTransfer.setData('text/plain', card.dataset.vid);  // reliable: travels with the drag
       e.dataTransfer.effectAllowed='move';
       card.classList.add('dragging');
     });
-    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
-    card.addEventListener('dblclick', ()=> openVideoDetail(card.dataset.vid));
+    card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); setTimeout(()=>{ _vDragged=false; }, 60); });
   });
   wrap.querySelectorAll('.vdel').forEach(b=>{
     b.addEventListener('click', e=>{ e.stopPropagation(); deleteRow('video_pipeline', b.dataset.del, 'Delete this video asset and its history?'); });
@@ -570,6 +609,32 @@ function openVideoDetail(id){
   const v = data.video.find(x=>x.id===id); if(!v) return;
   const hist = data.vhist.filter(h=>h.video_id===id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
   const stageLabel = k => (STAGES.find(s=>s[0]===k)||[k,k])[1];
+
+  // CLIENT (read-only): watch the finished video, see where the asset is and its stage history.
+  if(!isTeamView()){
+    const histRO = hist.length
+      ? hist.map(h=>`<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}</span></div>`).join('')
+      : '<div class="note">No stage history yet.</div>';
+    const mc = $('modal');
+    mc.innerHTML = `<div class="modalcard">
+      <div class="modalhead"><h3 style="margin:0">${esc(v.item)}</h3><button class="modalx" id="mClose">✕</button></div>
+      <div class="modalbody">
+        ${v.description? `<label class="mlabel">About this asset</label><div class="mfield">${esc(v.description)}</div>`:''}
+        <label class="mlabel">Current stage</label>
+        <div class="mstage">${stageLabel(v.stage)}${v.stage_since? ' · since '+fmtDate(v.stage_since):''}</div>
+        ${v.blocked? `<label class="mlabel">Status</label><div class="mfield" style="color:var(--gold)">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</div>`:''}
+        <label class="mlabel">Stage history</label>
+        <div class="histbox">${histRO}</div>
+      </div>
+      <div class="modalfoot">
+        ${v.video_url? `<a class="btn" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ Watch video</a>`:'<span class="note">Video not posted yet.</span>'}
+      </div></div>`;
+    mc.classList.add('open');
+    $('mClose').onclick = closeModal;
+    mc.onclick = e=>{ if(e.target===mc) closeModal(); };
+    return;
+  }
+
   const histRows = hist.length? hist.map(h=>
     `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
