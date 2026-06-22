@@ -15,6 +15,8 @@ create table if not exists practices (
   go_live date,
   created_at timestamptz default now()
 );
+-- One practice per name (trimmed, case-insensitive) — prevents duplicate "Balikians".
+create unique index if not exists practices_name_lower_uq on practices (lower(btrim(name)));
 
 -- One row per logged-in user. role: 'team' (ROXIUM staff) or 'client' (practice).
 create table if not exists profiles (
@@ -333,7 +335,18 @@ create or replace function seed_practice(p_name text, p_kickoff date)
 returns uuid language plpgsql as $$
 declare pid uuid;
 begin
-  insert into practices (name, go_live) values (p_name, p_kickoff) returning id into pid;
+  -- Guard against duplicate practices (the cause of the "two Balikians" bug):
+  -- if a practice with the same trimmed, case-insensitive name already exists,
+  -- refuse rather than silently create a second, empty one. The caller (team UI
+  -- or SQL) gets a clear error and should use / switch to the existing practice.
+  select id into pid from practices where lower(btrim(name)) = lower(btrim(p_name)) limit 1;
+  if pid is not null then
+    raise exception
+      'A practice named "%" already exists (id %). Switch to it instead of creating a duplicate.',
+      btrim(p_name), pid using errcode = 'unique_violation';
+  end if;
+
+  insert into practices (name, go_live) values (btrim(p_name), p_kickoff) returning id into pid;
 
   -- ---- Standard deliverables (from the Execution Workbook / Asana framework) ----
   insert into deliverables (practice_id, phase, name, owner_seat, sort) values

@@ -997,6 +997,17 @@ $('btnAddClient').onclick = async ()=>{
   const name = $('newClientName').value.trim();
   const kickoff = $('newClientKickoff').value || new Date().toISOString().slice(0,10);
   if(!name){ onbFlash('Enter a practice name.'); return; }
+  // Guard against duplicates (e.g. a second empty "Balikian"): if a practice with
+  // this name already exists, offer to switch to it instead of creating a clone.
+  const dupe = practicesList.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
+  if(dupe){
+    if(confirm(`"${dupe.name}" already exists. Switch to it instead of creating a duplicate?`)){
+      practiceId = dupe.id; $('newClientName').value=''; buildSwitcher(practicesList); loadAll();
+    } else {
+      onbFlash('No duplicate created. Rename if this is a different practice.');
+    }
+    return;
+  }
   $('btnAddClient').disabled = true; onbFlash('Creating…');
   try{
     const { data, error } = await sb.rpc('seed_practice', { p_name: name, p_kickoff: kickoff });
