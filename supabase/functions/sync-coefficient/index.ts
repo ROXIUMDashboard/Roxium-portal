@@ -28,6 +28,14 @@ const METRIC_KEYS = [
 ];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// First-of-month for "one month from now" — periods past this are rejected as future.
+function nextMonthCutoff(): string {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
     status,
@@ -91,6 +99,13 @@ Deno.serve(async (req) => {
       let period = cell(r, "period");
       if (/^\d{4}-\d{2}$/.test(period)) period += "-01";
       if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) { skipped.push({ row: i + 1, reason: "bad period", value: period }); continue; }
+      // Reject implausible periods (typos / placeholders like 2030) so they can't
+      // create future "your <month> update is ready" rows. Allow up to next month.
+      const py = Number(period.slice(0, 4));
+      const nowY = new Date().getUTCFullYear();
+      if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
+        skipped.push({ row: i + 1, reason: "implausible/future period", value: period }); continue;
+      }
 
       const obj: Record<string, unknown> = { practice_id: pid, period, source: SOURCE };
       for (const k of METRIC_KEYS) {
