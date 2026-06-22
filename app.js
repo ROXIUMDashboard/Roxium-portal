@@ -29,7 +29,7 @@ let me = null;            // profile row
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
 let metricsMonth = null;  // null = latest reported month; or a specific month number to view past data
-let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], practice: null };
+let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
 
 // True only when the real user is team AND not previewing the client view.
 function isTeamView(){ return me && me.role === 'team' && !previewMode; }
@@ -88,7 +88,7 @@ async function afterLogin(){
 
 /* ---------------- data ---------------- */
 async function loadAll(){
-  const [p,k,d,m,v,f,vh] = await Promise.all([
+  const [p,k,d,m,v,f,vh,nt] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
     sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('month'),
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
@@ -96,8 +96,9 @@ async function loadAll(){
     sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('activity').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(12),
     sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
+    sb.from('notifications').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(10),
   ]);
-  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[] };
+  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   render();
 }
 
@@ -120,6 +121,7 @@ const statusGen = (v,t)=> v===0?'i': v>=t?'g': v>=t*0.8?'a':'r';
 
 /* ---------------- render ---------------- */
 function render(){
+  renderBanner();
   $('heroTitle').innerHTML = (data.practice? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
   const reported = [...data.kpi].sort((a,b)=>b.month-a.month);
   const latestMonth = reported.length? reported[0].month : null;
@@ -177,10 +179,22 @@ function render(){
   $('statusBoard').innerHTML = rows.map(r=>
     `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
 
-  // feed
+  // feed (team can edit/delete each posted update)
+  const teamFeed = isTeamView();
   $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-    `<div class="fitem">${f.message}<div class="meta">${f.author||'ROXIUM'} · ${new Date(f.created_at).toLocaleDateString()} · ${f.source}</div></div>`).join('')
+    `<div class="fitem" data-fid="${f.id}">
+       <span class="fmsg">${esc(f.message)}</span>
+       ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
+       <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}</div></div>`).join('')
     : '<p class="note">No updates yet.</p>';
+  if(teamFeed){
+    $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
+    $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
+      if(!confirm('Delete this update?')) return;
+      const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
+      if(error) alert('Delete failed: '+error.message); else loadAll();
+    });
+  }
 
   // team panel + controls only when team AND not previewing as client
   $('teamPanel').classList.toggle('hidden', !isTeamView());
@@ -260,51 +274,207 @@ const STATUS_OPTS = [['promised','Promised'],['in_progress','In progress'],['del
 const MILE_OPTS   = [['upcoming','Up next'],['current','You are here'],['done','Complete']];
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-/* ---- DELIVERABLES ---- */
+/* ---- DELIVERABLES: grouped into draggable phase cards (team) / clean phase blocks (client) ---- */
+function phaseGroups(){
+  // group deliverables by phase, ordered by phase_order then sort
+  const groups = {};
+  data.deliv.forEach(d=>{ (groups[d.phase] = groups[d.phase] || []).push(d); });
+  const order = {};
+  data.deliv.forEach(d=>{ if(!(d.phase in order)) order[d.phase] = d.phase_order ?? 999; });
+  return Object.keys(groups)
+    .sort((a,b)=> (order[a]-order[b]) || a.localeCompare(b))
+    .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
+}
+
 function renderDeliverables(isTeam){
   const t = $('delivTable');
+  const groups = phaseGroups();
   if(isTeam){
-    const head = '<tr><th>Phase</th><th>Deliverable</th><th>Owner</th><th>Status</th><th></th></tr>';
-    const rows = data.deliv.map(x=>`<tr data-id="${x.id}">
-      <td><input class="cellinput" data-f="phase" value="${esc(x.phase)}"></td>
-      <td><input class="cellinput" data-f="name" value="${esc(x.name)}"></td>
-      <td><input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—"></td>
-      <td>${statusSelect('deliv', x.status)}</td>
-      <td><button class="rowdel" title="Delete">✕</button></td></tr>`).join('');
-    const addRow = `<tr class="addrow"><td><input id="ndPhase" class="cellinput" placeholder="Phase…"></td>
-      <td><input id="ndName" class="cellinput" placeholder="New deliverable…"></td>
-      <td><input id="ndOwner" class="cellinput owner" placeholder="Owner"></td>
-      <td colspan="2"><button class="btn sm" id="ndAdd">+ Add</button></td></tr>`;
-    t.innerHTML = head + rows + addRow;
-    // wire inline edits
-    t.querySelectorAll('tr[data-id]').forEach(tr=>{
-      const id = tr.dataset.id;
-      tr.querySelectorAll('.cellinput').forEach(inp=>{
-        inp.onchange = ()=> updateRow('deliverables', id, { [inp.dataset.f]: inp.value.trim()||null });
-      });
-      const ssel = tr.querySelector('select');
-      ssel.onchange = ()=> updateRow('deliverables', id, { status: ssel.value, delivered_at: ssel.value==='delivered'? new Date().toISOString():null });
-      tr.querySelector('.rowdel').onclick = ()=> deleteRow('deliverables', id, 'Delete this deliverable?');
-    });
-    $('ndAdd').onclick = addDeliverable;
+    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
+      const done = g.items.filter(i=>i.status==='delivered').length;
+      const rows = g.items.map(x=>`<div class="drow taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
+        <span class="taskgrip">⋮⋮</span>
+        <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
+        <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
+        ${statusSelect('deliv', x.status)}
+        <button class="rowdel" title="Delete">✕</button></div>`).join('');
+      return `<div class="phasecard" draggable="true" data-phase="${esc(g.phase)}">
+        <div class="phasehead">
+          <span class="grip">⋮⋮</span>
+          <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
+          <span class="phasecount">${done}/${g.items.length}</span>
+          <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete phase">✕</button>
+        </div>
+        <div class="phaserows">${rows}
+          <button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button>
+        </div></div>`;
+    }).join('') + `</div>
+      <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
+    wireDeliverables();
   } else {
-    // client: clean, no owner column, no editing
-    t.innerHTML = '<tr><th>Phase</th><th>Deliverable</th><th>Status</th></tr>' +
-      data.deliv.map(x=>`<tr><td>${esc(x.phase)}</td><td>${esc(x.name)}</td>
-        <td><span class="chip ${x.status}">${x.status.replace('_',' ')}</span></td></tr>`).join('');
+    // client: clean phase blocks, no owner, no editing
+    t.innerHTML = `<div class="phasewrap">` + groups.map(g=>{
+      const done = g.items.filter(i=>i.status==='delivered').length;
+      const rows = g.items.map(x=>`<div class="drow client"><span class="dnameC">${esc(x.name)}</span>
+        <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
+      return `<div class="phasecard"><div class="phasehead"><span class="phasenameC">${esc(g.phase)}</span>
+        <span class="phasecount">${done}/${g.items.length}</span></div>
+        <div class="phaserows">${rows}</div></div>`;
+    }).join('') + `</div>`;
+  }
+}
+function wireDeliverables(){
+  const wrap = $('phaseWrap');
+  // inline edits on each deliverable row
+  wrap.querySelectorAll('.taskrow[data-id]').forEach(row=>{
+    const id = row.dataset.id;
+    row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=> updateRow('deliverables', id, { [inp.dataset.f]: inp.value.trim()||null }));
+    const ssel = row.querySelector('select');
+    ssel.onchange = ()=> updateDeliverableStatus(id, ssel.value);
+    row.querySelector('.rowdel').onclick = ()=> deleteRow('deliverables', id, 'Delete this deliverable?');
+  });
+  // rename a whole phase (updates every deliverable in it)
+  wrap.querySelectorAll('.phasename').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const oldName = inp.dataset.phase, newName = inp.value.trim();
+      if(!newName || newName===oldName) return;
+      await sb.from('deliverables').update({ phase:newName }).eq('practice_id',practiceId).eq('phase',oldName);
+      loadAll();
+    };
+  });
+  // delete a whole phase + its deliverables
+  wrap.querySelectorAll('.phasedel').forEach(b=>{
+    b.onclick = async (e)=>{
+      e.stopPropagation();
+      const phase = b.dataset.phase;
+      if(!confirm(`Delete the entire "${phase}" phase and all its deliverables?`)) return;
+      const { error } = await sb.from('deliverables').delete().eq('practice_id',practiceId).eq('phase',phase);
+      if(error){ alert('Delete failed: '+error.message); return; }
+      loadAll();
+    };
+  });
+  // add deliverable within a phase
+  wrap.querySelectorAll('.adddeliv').forEach(b=> b.onclick = ()=> addDeliverableTo(b.dataset.phase));
+  $('ndAddPhase').onclick = addPhase;
+
+  // drag phase CARDS to reorder phases
+  wrap.querySelectorAll('.phasecard[draggable]').forEach(card=>{
+    card.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'phase:'+card.dataset.phase); card.classList.add('dragging'); });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
+    card.addEventListener('dragover', e=>{ e.preventDefault(); card.classList.add('over'); });
+    card.addEventListener('dragleave', ()=> card.classList.remove('over'));
+    card.addEventListener('drop', async e=>{
+      e.preventDefault(); card.classList.remove('over');
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('phase:')) return;
+      const from = payload.slice(6), to = card.dataset.phase;
+      if(!from || from===to) return;
+      await reorderPhases(from, to);
+    });
+  });
+
+  // drag task rows to reorder WITHIN their phase
+  wrap.querySelectorAll('.taskrow[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', 'task:'+row.dataset.id); row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('taskover'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('taskover'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); e.stopPropagation(); row.classList.remove('taskover');
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('task:')) return;
+      const fromId = payload.slice(5), toId = row.dataset.id;
+      if(fromId===toId) return;
+      await reorderTaskWithinPhase(fromId, toId, row.dataset.phase);
+    });
+  });
+}
+
+async function reorderTaskWithinPhase(fromId, toId, phase){
+  // only reorder if both are in the same phase
+  const fromD = data.deliv.find(d=>d.id===fromId);
+  const toD = data.deliv.find(d=>d.id===toId);
+  if(!fromD || !toD || fromD.phase!==toD.phase) return;  // same-phase only
+  const items = data.deliv.filter(d=>d.phase===phase).sort((a,b)=>(a.sort||0)-(b.sort||0));
+  const ids = items.map(i=>i.id);
+  const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+  if(fi<0||ti<0) return;
+  ids.splice(ti,0,ids.splice(fi,1)[0]);
+  // rewrite sort within this phase
+  for(let i=0;i<ids.length;i++){
+    await sb.from('deliverables').update({ sort:i }).eq('id', ids[i]);
+  }
+  loadAll();
+}
+
+async function reorderPhases(fromPhase, toPhase){
+  const order = phaseGroups().map(g=>g.phase);
+  const fi = order.indexOf(fromPhase), ti = order.indexOf(toPhase);
+  if(fi<0||ti<0) return;
+  order.splice(ti, 0, order.splice(fi,1)[0]); // move from -> to position
+  // write new phase_order to every deliverable
+  for(let i=0;i<order.length;i++){
+    await sb.from('deliverables').update({ phase_order:i }).eq('practice_id',practiceId).eq('phase',order[i]);
+  }
+  loadAll();
+}
+async function updateDeliverableStatus(id, status){
+  const prev = data.deliv.find(d=>d.id===id);
+  await sb.from('deliverables').update({ status, delivered_at: status==='delivered'? new Date().toISOString():null }).eq('id', id);
+  // notify on newly-delivered
+  if(status==='delivered' && prev && prev.status!=='delivered'){
+    await notifyClient('deliverable', `Deliverable completed: ${prev.name}.`);
+  }
+  await autoAdvanceMilestones();
+  loadAll();
+}
+
+/* Auto-advance the roadmap based on overall deliverable completion %.
+   Each milestone gets a threshold; the highest threshold passed becomes "current",
+   everything below it "done", everything above "upcoming". Tweak THRESHOLDS freely. */
+async function autoAdvanceMilestones(){
+  const total = data.deliv.length;
+  if(!total || !data.miles.length) return;
+  // recompute delivered count from the freshest data we have
+  const fresh = await sb.from('deliverables').select('status').eq('practice_id', practiceId);
+  const list = fresh.data || [];
+  const pct = list.length ? Math.round(100 * list.filter(d=>d.status==='delivered').length / list.length) : 0;
+
+  // milestones in display order
+  const miles = [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0));
+  const n = miles.length;
+  // even thresholds: e.g. 4 milestones -> [0, 25, 50, 75]; first is always reachable
+  const THRESHOLDS = miles.map((_,i)=> Math.round((i/n)*100));
+  // highest threshold index that pct has reached
+  let currentIdx = 0;
+  for(let i=0;i<n;i++){ if(pct >= THRESHOLDS[i]) currentIdx = i; }
+
+  // apply: below current = done, current = current, above = upcoming
+  for(let i=0;i<n;i++){
+    const want = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'upcoming';
+    if(miles[i].status !== want){
+      await sb.from('milestones').update({ status: want }).eq('id', miles[i].id);
+      if(want==='current') await notifyClient('milestone', `You've reached: ${miles[i].name}.`);
+      if(want==='done')    await notifyClient('milestone', `Completed: ${miles[i].name}.`);
+    }
   }
 }
 function statusSelect(kind, cur){
   return `<select class="statussel">`+STATUS_OPTS.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
 }
-async function addDeliverable(){
-  const phase = $('ndPhase').value.trim()||'Custom';
-  const name  = $('ndName').value.trim();
-  if(!name){ flash('Enter a deliverable name.'); return; }
-  const owner = $('ndOwner').value.trim()||null;
-  const sort  = (Math.max(0,...data.deliv.map(d=>d.sort||0)))+1;
-  const { error } = await sb.from('deliverables').insert({ practice_id:practiceId, phase, name, owner_seat:owner, status:'promised', sort });
-  flash(error? error.message : 'Deliverable added.'); if(!error) loadAll();
+async function addDeliverableTo(phase){
+  const name = prompt('New deliverable in "'+phase+'":'); if(name===null) return;
+  if(!name.trim()){ flash('Enter a name.'); return; }
+  const po = data.deliv.find(d=>d.phase===phase)?.phase_order ?? 0;
+  const sort = (Math.max(0,...data.deliv.filter(d=>d.phase===phase).map(d=>d.sort||0)))+1;
+  const { error } = await sb.from('deliverables').insert({ practice_id:practiceId, phase, phase_order:po, name:name.trim(), status:'promised', sort });
+  flash(error? error.message : 'Added.'); if(!error) loadAll();
+}
+async function addPhase(){
+  const phase = $('ndPhase').value.trim(); if(!phase){ flash('Enter a phase name.'); return; }
+  const po = (Math.max(-1,...data.deliv.map(d=>d.phase_order??0)))+1;
+  const { error } = await sb.from('deliverables').insert({ practice_id:practiceId, phase, phase_order:po, name:'New deliverable', status:'promised', sort:0 });
+  flash(error? error.message : 'Phase added.'); if(!error) loadAll();
 }
 
 /* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, double-click panel ---- */
@@ -401,7 +571,7 @@ function openVideoDetail(id){
   const hist = data.vhist.filter(h=>h.video_id===id).sort((a,b)=>new Date(a.moved_at)-new Date(b.moved_at));
   const stageLabel = k => (STAGES.find(s=>s[0]===k)||[k,k])[1];
   const histRows = hist.length? hist.map(h=>
-    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span></div>`).join('')
+    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
 
   const m = $('modal');
@@ -439,6 +609,19 @@ function openVideoDetail(id){
   $('mClose').onclick = closeModal;
   m.onclick = e=>{ if(e.target===m) closeModal(); };
 
+  // delete individual stage-history rows
+  m.querySelectorAll('.histdel').forEach(b=>{
+    b.onclick = async (e)=>{
+      e.stopPropagation(); e.preventDefault();
+      if(!confirm('Delete this history entry?')) return;
+      const { data: del, error } = await sb.from('video_history').delete().eq('id', b.dataset.hid).select();
+      if(error){ alert('Delete failed: '+error.message); return; }
+      if(!del || !del.length){ alert('Delete failed: no permission (row-level security). Run the latest migration.'); return; }
+      await loadAll();
+      openVideoDetail(id);  // reopen so the history list refreshes
+    };
+  });
+
   $('mSave').onclick = async ()=>{
     const stageDate = $('mStageDate').value; // yyyy-mm-dd or ''
     const patch = {
@@ -474,31 +657,44 @@ function openVideoDetail(id){
     }catch(e){
       $('mMsg').textContent = 'Posted to portal, but email failed: '+e.message;
     }
+    const v = data.video.find(x=>x.id===id);
+    // write a banner notification (the email is handled by notify-video-ready)
+    await sb.from('notifications').insert({ practice_id: practiceId, kind:'video', message:`New video published: ${v? v.item : 'your video'}. Watch it in your portal.` });
     await loadAll();
     setTimeout(closeModal, 1400);
   };
 }
 function closeModal(){ const m=$('modal'); m.classList.remove('open'); m.innerHTML=''; }
 
-/* ---- MILESTONES: original display; team can edit only the date (dates auto-seeded per surgeon) ---- */
+/* ---- MILESTONES: original display; team edits date + status (status change notifies client) ---- */
 function renderTimeline(isTeam){
   const wrap = $('timeline');
   if(!data.miles.length){ wrap.innerHTML = '<p class="note">Roadmap milestones will appear here at kickoff.</p>'; return; }
   wrap.innerHTML = data.miles.map(m=>{
     const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
     const dateBit = m.target_date? ' · '+m.target_date : '';
-    const dateEl = isTeam
+    // status is auto-advanced by deliverable %; team can still edit only the target date
+    const teamCtl = isTeam
       ? `<div class="tldate"><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}"></div>`
       : '';
     return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>
-       <span class="tag">${tagLabel}${isTeam?'':dateBit}</span>${dateEl}</div>`;
+       <span class="tag">${tagLabel}${isTeam?'':dateBit}</span>${teamCtl}</div>`;
   }).join('');
   if(isTeam){
     wrap.querySelectorAll('.dateedit').forEach(inp=>{
       inp.onchange = ()=> updateRow('milestones', inp.dataset.id, { target_date: inp.value||null });
     });
   }
+}
+async function updateMilestoneStatus(id, status){
+  const prev = data.miles.find(m=>m.id===id);
+  await sb.from('milestones').update({ status }).eq('id', id);
+  if(prev && prev.status!==status && (status==='current'||status==='done')){
+    const verb = status==='done' ? 'completed' : 'now underway';
+    await notifyClient('milestone', `Milestone ${verb}: ${prev.name}.`);
+  }
+  loadAll();
 }
 
 /* ---- shared write helpers ---- */
@@ -510,6 +706,53 @@ async function deleteRow(table, id, confirmMsg){
   if(!confirm(confirmMsg)) return;
   const { error } = await sb.from(table).delete().eq('id', id);
   flash(error? error.message : 'Deleted.'); if(!error) loadAll();
+}
+
+/* ---- NOTIFICATIONS: write a banner row for the client + fire an email ---- */
+async function notifyClient(kind, message){
+  try{
+    await sb.from('notifications').insert({ practice_id: practiceId, kind, message });
+    // also drop it into the activity feed
+    await sb.from('activity').insert({ practice_id: practiceId, message, author:'ROXIUM', source:'portal' });
+    // fire the email (works once the Edge Function + Resend domain are live; silent if not)
+    const { data: sess } = await sb.auth.getSession();
+    fetch(`${CONFIG.SUPABASE_URL}/functions/v1/notify-client`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sess.session.access_token}` },
+      body: JSON.stringify({ practice_id: practiceId, message, kind }),
+    }).catch(()=>{});
+  }catch(e){ /* non-blocking */ }
+}
+
+/* client-facing dismissable banner showing the newest unseen notification */
+function renderBanner(){
+  const bar = $('notifyBar');
+  if(!bar) return;
+  // only show to the client view, and only if there's an unseen notification
+  if(isTeamView()){ bar.classList.add('hidden'); return; }
+  const unseen = (data.notif||[]).filter(n=>!n.seen);
+  if(!unseen.length){ bar.classList.add('hidden'); return; }
+  const n = unseen[0];
+  bar.innerHTML = `<span class="noteicon">●</span><span class="notetext">${esc(n.message)}</span>
+    <button class="noteclose" title="Dismiss">✕</button>`;
+  bar.classList.remove('hidden');
+  bar.querySelector('.noteclose').onclick = async ()=>{
+    bar.classList.add('hidden');
+    // mark all current unseen as seen
+    const ids = unseen.map(x=>x.id);
+    await sb.from('notifications').update({ seen:true }).in('id', ids);
+    const fresh = await sb.from('notifications').select('*').eq('practice_id',practiceId).order('created_at',{ascending:false}).limit(10);
+    data.notif = fresh.data||[];
+  };
+}
+
+async function editFeedItem(id){
+  const f = data.feed.find(x=>x.id===id); if(!f) return;
+  const msg = prompt('Edit this update:', f.message);
+  if(msg===null) return;
+  if(!msg.trim()){ alert('Message cannot be empty.'); return; }
+  const { error } = await sb.from('activity').update({ message: msg.trim() }).eq('id', id);
+  if(error) alert('Edit failed: '+error.message); else loadAll();
 }
 
 $('btnPost').onclick = async ()=>{
