@@ -24,6 +24,9 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 1. Create a project at supabase.com (free tier is fine to start).
 2. **SQL Editor → New query** → paste the entire contents of `schema.sql` → **Run**.
    This creates all tables, security rules, and a demo practice.
+   - **Already have a live DB from before Phase B?** Don't re-run `schema.sql`. Instead run the
+     incremental migration in `migrations/2026-06-22_phase_b_kpi_period.sql` once — it's additive,
+     idempotent, and backfills existing KPI rows to the new month-snapshot model without data loss.
 3. **Authentication → Providers → Email**: leave Email enabled (magic links work out of the box).
 4. **Authentication → URL Configuration**: set Site URL to your Netlify URL (step 3) once you have it.
 5. **Settings → API**: copy the `Project URL` and `anon public` key into `config.js`. Commit + push.

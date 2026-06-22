@@ -111,8 +111,10 @@
       <div class="sub">Only ROXIUM staff can see this. Everything you save updates the client view instantly.</div>
 
       <h3>Monthly KPIs</h3>
+      <p class="note" style="margin-top:-2px">Each month is its own saved snapshot — editing one month never changes another, and re-reporting a later month can't overwrite the past. Pick the month, enter values, Save.</p>
       <div class="entry" id="kpiMeta">
-        <div class="f"><label>Month</label><select id="inMonth"></select></div>
+        <div class="f"><label>Reporting month</label><input id="inMonth" type="month"></div>
+        <div class="f"><label>Import year</label><input id="inYear" type="number" min="2000" max="2100" step="1" placeholder="2026"></div>
       </div>
       <div class="entry" id="entryFields"></div>
       <div class="actions">

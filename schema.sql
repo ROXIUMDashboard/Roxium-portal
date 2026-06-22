@@ -25,17 +25,24 @@ create table if not exists profiles (
   created_at timestamptz default now()
 );
 
--- Monthly KPI inputs — mirrors the KPI workbook blue cells exactly.
+-- Monthly KPI snapshots — mirrors the KPI workbook blue cells exactly.
+-- Keyed by `period` (first-of-month DATE) + `source`, so every calendar month is its
+-- own immutable snapshot: re-reporting a later month can never overwrite an earlier one,
+-- and marketing / coefficient / future Asana data coexist under one practice.
+-- `month` is auto-derived from `period` (see sync_kpi_month) and kept only for the
+-- 1..12 check + the "stats ready" notification copy.
 create table if not exists kpi_monthly (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
-  month int not null check (month between 1 and 12),
+  period date not null,                                  -- first day of the reported month
+  source text not null default 'marketing',              -- 'marketing' | 'coefficient' | 'asana' | …
+  month int not null check (month between 1 and 12),     -- derived from period via trigger
   spend numeric, impr numeric, clicks numeric, lpv numeric, leads numeric,
   cons numeric, proc numeric, apv numeric, price numeric,
   sent numeric, opens numeric, eclk numeric, sms numeric,
   vid numeric, foll numeric, rank numeric, posts numeric,
   updated_at timestamptz default now(),
-  unique (practice_id, month)
+  unique (practice_id, period, source)
 );
 
 -- "Progress on the things we promised them" — the deliverables tracker.
@@ -238,11 +245,23 @@ begin
   return new;
 end $$;
 
+-- Keep `month` derived from `period` and refresh updated_at on every KPI write.
+create or replace function sync_kpi_month() returns trigger
+language plpgsql as $$
+begin
+  if new.period is not null then
+    new.month := extract(month from new.period)::int;
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+
 -- When a KPI month is reported, drop the client a "stats ready" banner.
 create or replace function notif_stats() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  perform notify(new.practice_id, 'stats', 'Your Month ' || new.month || ' performance update is ready.');
+  perform notify(new.practice_id, 'stats',
+    'Your ' || to_char(new.period, 'Mon YYYY') || ' performance update is ready.');
   return new;
 end $$;
 
@@ -253,6 +272,10 @@ create trigger trg_video_insert after insert on video_pipeline
 drop trigger if exists trg_video_stage on video_pipeline;
 create trigger trg_video_stage before update on video_pipeline
   for each row execute function log_video_stage();
+
+drop trigger if exists trg_sync_kpi_month on kpi_monthly;
+create trigger trg_sync_kpi_month before insert or update on kpi_monthly
+  for each row execute function sync_kpi_month();
 
 drop trigger if exists trg_notif_stats on kpi_monthly;
 create trigger trg_notif_stats after insert on kpi_monthly

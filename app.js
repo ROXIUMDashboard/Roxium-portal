@@ -28,8 +28,17 @@ const STALE_DAYS = 14; // a card sitting this long in one stage flags red (team 
 let me = null;            // profile row
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
-let metricsMonth = null;  // null = latest reported month; or a specific month number to view past data
+let metricsPeriod = null; // null = follow latest reported month; or a 'YYYY-MM-01' period to view past data
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
+
+/* ---- KPI period helpers (period = first-of-month 'YYYY-MM-01' snapshot key) ---- */
+const monthInputToPeriod = v => v ? v + '-01' : null;           // 'YYYY-MM' -> 'YYYY-MM-01'
+const periodToMonthInput = p => p ? String(p).slice(0,7) : '';  // 'YYYY-MM-01' -> 'YYYY-MM'
+const periodLabel = p => p
+  ? new Date(p.length<=10 ? p+'T00:00:00' : p).toLocaleDateString(undefined,{month:'short',year:'numeric'})
+  : '';
+const currentPeriod = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; };
+const KPI_SOURCE = 'marketing'; // the source the team form reads/writes; other sources land via imports
 
 // True only when the real user is team AND not previewing the client view.
 function isTeamView(){ return me && me.role === 'team' && !previewMode; }
@@ -166,7 +175,7 @@ async function afterLogin(){
 async function loadAll(){
   const [p,k,d,m,v,f,vh,nt] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
-    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('month'),
+    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).eq('source', KPI_SOURCE).order('period'),
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('milestones').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
@@ -199,18 +208,22 @@ const statusGen = (v,t)=> v===0?'i': v>=t?'g': v>=t*0.8?'a':'r';
 function render(){
   renderBanner();
   $('heroTitle').innerHTML = (data.practice? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
-  const reported = [...data.kpi].sort((a,b)=>b.month-a.month);
-  const latestMonth = reported.length? reported[0].month : null;
-  // metricsMonth null = follow latest; otherwise show the chosen past month
-  const viewMonth = (metricsMonth!=null && data.kpi.some(x=>x.month===metricsMonth)) ? metricsMonth : latestMonth;
-  const latest = viewMonth!=null ? data.kpi.find(x=>x.month===viewMonth) : null;
+  // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
+  const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));
+  const latestPeriod = reported.length? reported[0].period : null;
+  // metricsPeriod null = follow latest; otherwise show the chosen past month's snapshot
+  const viewPeriod = (metricsPeriod!=null && data.kpi.some(x=>x.period===metricsPeriod)) ? metricsPeriod : latestPeriod;
+  const latest = viewPeriod!=null ? data.kpi.find(x=>x.period===viewPeriod) : null;
+  // the snapshot immediately before the viewed one — used for trend comparison
+  const prev = latest ? reported.find(x=> x.period < latest.period) : null;
   const d = derive(latest);
+  const isLive = viewPeriod===latestPeriod;
   $('updated').textContent = latest
-    ? `Showing Month ${latest.month}${viewMonth===latestMonth?' (latest)':''} · KPI data live from Supabase`
+    ? `Showing ${periodLabel(latest.period)}${isLive?' (live)':' (archived snapshot)'} · KPI data live from Supabase`
     : 'KPI data will appear here after the first month is reported.';
   // build the month selector (latest + any reported months)
-  buildMetricsPicker(reported, viewMonth, latestMonth);
-  $('kpiSub').textContent = latest? `Month ${latest.month} against target.` : 'Latest month against target.';
+  buildMetricsPicker(reported, viewPeriod, latestPeriod);
+  $('kpiSub').textContent = latest? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
   // hero stats
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
@@ -240,13 +253,22 @@ function render(){
 
   // KPI cards + status board
   safe('performance metrics', ()=>{
+    const dp = derive(prev);
+    // delta vs the previous month's snapshot; lowerBetter flips colour for cost metrics
+    const trend = (cur, before, opts={})=>{
+      if(before==null || cur==null || !isFinite(+before) || !isFinite(+cur) || +before===0) return '';
+      const pct = (cur-before)/Math.abs(before)*100;
+      if(Math.abs(pct)<0.5) return `<div class="trend flat">±0% vs ${periodLabel(prev.period)}</div>`;
+      const up = pct>0, good = opts.lowerBetter ? !up : up;
+      return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}% vs ${periodLabel(prev.period)}</div>`;
+    };
     const cards = [
-      {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume'},
-      {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits'},
-      {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults'},
-      {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend'},
+      {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume', tr: trend(latest?+latest.leads||0:null, prev?+prev.leads||0:null)},
+      {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits', tr: trend(d?d.cvr:null, dp?dp.cvr:null)},
+      {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults', tr: trend(d?d.cpc:null, dp?dp.cpc:null, {lowerBetter:true})},
+      {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend', tr: trend(d?d.roas:null, dp?dp.roas:null)},
     ];
-    $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div></div>`).join('');
+    $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div>${c.tr||''}</div>`).join('');
     const rows = latest? [
       ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
       ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
@@ -289,48 +311,53 @@ function render(){
   });
 }
 
-/* Month selector for performance metrics: 'Latest' + each reported month */
-function buildMetricsPicker(reported, viewMonth, latestMonth){
+/* Month selector for performance metrics: 'Latest (live)' + each reported month snapshot */
+function buildMetricsPicker(reported, viewPeriod, latestPeriod){
   const sel = $('metricsPicker');
   if(!sel) return;
   if(!reported.length){ sel.style.display='none'; return; }
   sel.style.display='';
-  const opts = ['<option value="">Latest month</option>']
-    .concat(reported.slice().sort((a,b)=>a.month-b.month).map(r=>
-      `<option value="${r.month}">Month ${r.month}${r.month===latestMonth?' (latest)':''}</option>`));
+  // oldest → newest in the dropdown
+  const opts = ['<option value="">Latest month (live)</option>']
+    .concat(reported.slice().sort((a,b)=> (a.period<b.period?-1:a.period>b.period?1:0)).map(r=>
+      `<option value="${r.period}">${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}</option>`));
   sel.innerHTML = opts.join('');
-  sel.value = (metricsMonth!=null) ? String(metricsMonth) : '';
-  sel.onchange = ()=>{ metricsMonth = sel.value===''? null : +sel.value; render(); };
+  sel.value = (metricsPeriod!=null) ? String(metricsPeriod) : '';
+  sel.onchange = ()=>{ metricsPeriod = sel.value===''? null : sel.value; render(); };
 }
 
 /* ---------------- team controls ---------------- */
-let entryMonth = 1;  // remembers which month the team is editing, survives re-renders
+let entryPeriod = null; // 'YYYY-MM-01' month the team is editing; survives re-renders
 function renderTeam(){
-  const sel = $('inMonth');
-  // build options once; preserve the current selection on every later render
-  if(sel.options.length !== 12){
-    sel.innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">Month ${i+1}</option>`).join('');
-    sel.onchange = ()=>{ entryMonth = +sel.value; fillKpiForm(); };
+  const inp = $('inMonth'); // an <input type="month"> — value is 'YYYY-MM'
+  if(!entryPeriod) entryPeriod = currentPeriod();
+  if(!inp.dataset.wired){
+    inp.dataset.wired = '1';
+    inp.onchange = ()=>{ entryPeriod = monthInputToPeriod(inp.value) || currentPeriod(); fillKpiForm(); };
   }
-  sel.value = entryMonth;       // restore the month the team was on
+  inp.value = periodToMonthInput(entryPeriod); // restore the month the team was on
+  const yr = $('inYear'); if(yr && !yr.value) yr.value = new Date().getFullYear();
   fillKpiForm();
 }
 function fillKpiForm(){
-  const m = data.kpi.find(x=>x.month===entryMonth) || {};
+  const m = data.kpi.find(x=>x.period===entryPeriod) || {};
   $('entryFields').innerHTML = FIELDS.map(f=>
     `<div class="f"><label>${f.l}</label><input data-k="${f.k}" type="number" step="any" value="${m[f.k]??''}" placeholder="0"></div>`).join('');
 }
 const flash = t=>{ $('saveMsg').textContent=t; setTimeout(()=>$('saveMsg').textContent='',3500); };
 
 $('btnSaveKpi').onclick = async ()=>{
-  const row = { practice_id: practiceId, month: entryMonth, updated_at: new Date().toISOString() };
+  if(!entryPeriod){ flash('Pick a month first.'); return; }
+  const row = { practice_id: practiceId, period: entryPeriod, source: KPI_SOURCE };
   document.querySelectorAll('#entryFields input').forEach(i=>{ row[i.dataset.k] = i.value===''? null : +i.value; });
-  const { error } = await sb.from('kpi_monthly').upsert(row, { onConflict:'practice_id,month' });
-  flash(error? error.message : 'Saved.'); if(!error) loadAll();
+  const { error } = await sb.from('kpi_monthly').upsert(row, { onConflict:'practice_id,period,source' });
+  flash(error? error.message : `Saved ${periodLabel(entryPeriod)}.`); if(!error) loadAll();
 };
 
 $('xlsxFile').onchange = async (e)=>{
   const file = e.target.files[0]; if(!file) return;
+  // the workbook is 12 sequential month columns; the year comes from the import-year field
+  const yr = parseInt($('inYear').value, 10) || new Date().getFullYear();
   try{
     const wb = XLSX.read(await file.arrayBuffer());
     const ws = wb.Sheets['Dashboard']; if(!ws) throw new Error('No "Dashboard" sheet');
@@ -338,7 +365,8 @@ $('xlsxFile').onchange = async (e)=>{
     const byLabel = {}; grid.forEach(r=>{ if(r&&r[0]) byLabel[String(r[0]).trim()]=r; });
     const rows = [];
     for(let mIdx=0;mIdx<12;mIdx++){
-      const row = { practice_id: practiceId, month: mIdx+1 };
+      const period = `${yr}-${String(mIdx+1).padStart(2,'0')}-01`;
+      const row = { practice_id: practiceId, period, source: KPI_SOURCE };
       let any=false;
       Object.entries(XL_MAP).forEach(([label,key])=>{
         const r = byLabel[label]; if(!r) return;
@@ -348,8 +376,8 @@ $('xlsxFile').onchange = async (e)=>{
       if(any) rows.push(row);
     }
     if(!rows.length) throw new Error('No monthly values found');
-    const { error } = await sb.from('kpi_monthly').upsert(rows, { onConflict:'practice_id,month' });
-    flash(error? error.message : `Imported ${rows.length} month(s) from workbook.`);
+    const { error } = await sb.from('kpi_monthly').upsert(rows, { onConflict:'practice_id,period,source' });
+    flash(error? error.message : `Imported ${rows.length} month(s) of ${yr} from workbook.`);
     if(!error) loadAll();
   }catch(err){ flash('Import failed: '+err.message); }
   e.target.value='';
