@@ -187,6 +187,7 @@ tr.addrow td{background:rgba(201,168,76,.04)}
 .coldrop{min-height:80px}
 .col.dropcol{display:flex;flex-direction:column}
 .col.dropcol .coldrop{flex:1}
+.vitem[data-vid]{cursor:pointer}
 .vitem[draggable]{cursor:grab}
 .vitem[draggable]:hover{border-color:var(--gold)}
 .vitem.dragging{opacity:.4;cursor:grabbing}
