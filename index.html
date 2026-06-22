@@ -111,6 +111,15 @@
         <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
         <div class="f"><button class="btn" id="btnPost">Post update</button></div>
       </div>
+
+      <h3 class="danger-title">Danger zone</h3>
+      <div class="dangerzone">
+        <p class="note">Reset returns <b id="resetTarget">this practice</b> to a clean slate: it permanently deletes every KPI month, the activity feed, all notifications and stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.</p>
+        <div class="actions">
+          <button class="btn danger" id="btnResetData">Reset all data for this practice</button>
+          <span id="resetMsg" class="note"></span>
+        </div>
+      </div>
     </section>
 
     <footer>

@@ -152,6 +152,12 @@ select option{background:var(--surface2);color:var(--cream)}
 .btn{background:var(--gold);color:#171410;border:none;font-family:'Jost';font-weight:500;font-size:11px;letter-spacing:.22em;text-transform:uppercase;padding:12px 22px;cursor:pointer}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--cream)}
 .btn.ghost.previewing{background:var(--gold);color:#171410}
+.btn.danger{background:none;border:1px solid var(--red);color:var(--red)}
+.btn.danger:hover{background:var(--red);color:#171410}
+.btn.danger:disabled{opacity:.5;cursor:default}
+.danger-title{color:var(--red) !important}
+.dangerzone{border:1px solid rgba(198,106,88,.4);border-radius:4px;padding:14px 16px;margin-top:4px;background:rgba(198,106,88,.05)}
+.dangerzone .actions{margin-top:12px}
 /* notification banner (client) */
 .notifybar{display:flex;align-items:center;gap:12px;background:linear-gradient(90deg,rgba(201,168,76,.16),rgba(201,168,76,.04));border-bottom:1px solid var(--gold);padding:12px 28px;color:var(--cream);font-size:14px}
 .notifybar .noteicon{color:var(--gold);font-size:10px}

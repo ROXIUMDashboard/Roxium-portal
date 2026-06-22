@@ -225,7 +225,11 @@ function render(){
   // team panel + controls only when team AND not previewing as client
   safe('team panel', ()=>{
     $('teamPanel').classList.toggle('hidden', !isTeamView());
-    if(isTeamView()) renderTeam(latest);
+    if(isTeamView()){
+      renderTeam(latest);
+      const rt = $('resetTarget');
+      if(rt) rt.textContent = (data.practice && data.practice.name) ? `"${data.practice.name}"` : 'this practice';
+    }
   });
 }
 
@@ -824,6 +828,69 @@ $('btnPost').onclick = async ()=>{
   const msg = $('updMsg').value.trim(); if(!msg) return;
   const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: me.full_name||'ROXIUM', source:'portal' });
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
+};
+
+/* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */
+const resetFlash = t=>{ const el=$('resetMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+$('btnResetData').onclick = async ()=>{
+  if(!isTeamView()){ return; }                 // safety: team-only, never in client preview
+  if(!practiceId){ resetFlash('No practice selected.'); return; }
+  const name = (data.practice && data.practice.name) || 'this practice';
+
+  // Step 1 — "are you sure?"
+  if(!confirm(`Reset ALL data for "${name}"?\n\nThis permanently deletes:\n  • every KPI month\n  • the activity / updates feed\n  • all notifications\n  • all video stage history\n\nand resets all deliverables, milestones and videos to their starting state.\n\nThis CANNOT be undone.`)) return;
+
+  // Step 2 — type the practice name to confirm (guards against accidental wipes)
+  const typed = prompt(`To confirm, type the practice name exactly:\n\n${name}`);
+  if(typed === null) return;                    // cancelled
+  if(typed.trim() !== name){ alert('Name did not match — reset cancelled. Nothing was changed.'); return; }
+
+  const pid = practiceId;
+  $('btnResetData').disabled = true;
+  resetFlash('Resetting…');
+  try {
+    // 1) wipe the time-series / log data
+    const wipes = await Promise.all([
+      sb.from('kpi_monthly').delete().eq('practice_id', pid),
+      sb.from('activity').delete().eq('practice_id', pid),
+      sb.from('notifications').delete().eq('practice_id', pid),
+    ]);
+    const wipeErr = wipes.find(r=>r.error);
+    if(wipeErr){ throw new Error(wipeErr.error.message); }
+
+    // 2) reset deliverables back to "promised"
+    const dRes = await sb.from('deliverables')
+      .update({ status:'promised', delivered_at:null })
+      .eq('practice_id', pid);
+    if(dRes.error) throw new Error(dRes.error.message);
+
+    // 3) reset the roadmap: first milestone "current", the rest "upcoming"
+    const miles = [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0));
+    for(let i=0;i<miles.length;i++){
+      const want = i===0 ? 'current' : 'upcoming';
+      const mr = await sb.from('milestones').update({ status: want }).eq('id', miles[i].id);
+      if(mr.error) throw new Error(mr.error.message);
+    }
+
+    // 4) reset the video pipeline back to "scheduled" and clear per-asset progress
+    const vRes = await sb.from('video_pipeline')
+      .update({ stage:'scheduled', blocked:false, blocked_reason:null, video_url:null,
+                posted_date:null, shot_date:null, stage_since:new Date().toISOString() })
+      .eq('practice_id', pid);
+    if(vRes.error) throw new Error(vRes.error.message);
+
+    // 5) clear stage history last (the video reset above may re-log entries via trigger)
+    const hRes = await sb.from('video_history').delete().eq('practice_id', pid);
+    if(hRes.error) throw new Error(hRes.error.message);
+
+    resetFlash(`"${name}" was reset to a clean slate.`);
+    await loadAll();
+  } catch(e){
+    resetFlash('Reset failed: '+e.message);
+    alert('Reset failed: '+e.message);
+  } finally {
+    $('btnResetData').disabled = false;
+  }
 };
 
 init();
