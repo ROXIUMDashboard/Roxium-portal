@@ -197,7 +197,10 @@ async function afterLogin(){
 async function loadAll(){
   const [p,k,d,m,v,f,vh,nt] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
-    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).eq('source', KPI_SOURCE).order('period'),
+    // Read EVERY source (marketing / coefficient / asana …), not just one — the
+    // Coefficient sync may land rows under 'coefficient'. mergeKpiByPeriod() folds
+    // all sources for a month into one effective snapshot so the data always shows.
+    sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('period'),
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('milestones').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
@@ -205,8 +208,26 @@ async function loadAll(){
     sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
     sb.from('notifications').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(10),
   ]);
-  data = { practice:p.data, kpi:k.data||[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
+  data = { practice:p.data, kpi:mergeKpiByPeriod(k.data||[]), deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   render();
+}
+
+// Collapse multiple source rows for the same month into one effective snapshot.
+// Non-null fields win; if two sources set the same field, the more recently
+// updated row wins. Keeps the period model intact (one row per period downstream).
+function mergeKpiByPeriod(rows){
+  const byPeriod = new Map();
+  const ordered = [...rows].sort((a,b)=> new Date(a.updated_at||0) - new Date(b.updated_at||0));
+  for(const r of ordered){
+    const cur = byPeriod.get(r.period) || { practice_id:r.practice_id, period:r.period };
+    for(const key of Object.keys(r)){
+      if(key==='id' || key==='source') continue;
+      const val = r[key];
+      if(val!==null && val!==undefined && val!=='') cur[key] = val;
+    }
+    byPeriod.set(r.period, cur);
+  }
+  return [...byPeriod.values()];
 }
 
 /* ---------------- derived metrics (same formulas as the workbook) ---------------- */
@@ -665,6 +686,11 @@ async function editDeliverableInfo(id){
 /* ---- VIDEO PIPELINE: column board with dates, drag-drop, stale-red flag, hover detail, click-to-open panel ---- */
 let _vDragged = false;   // guards against the click that fires at the end of a drag
 const fmtDate = d => d ? new Date(d+ (String(d).length<=10?'T00:00:00':'')).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+// Stage-history timestamps are stored UTC (timestamptz). Render in the viewer's
+// local timezone WITH the tz short-name (e.g. "Jun 22, 2026, 3:04 PM PDT") so a
+// scheduled time is never ambiguous for people in other time zones.
+const fmtHistTime = ts => ts ? new Date(ts).toLocaleString(undefined,
+  { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' }) : '';
 function daysIn(stage_since){ if(!stage_since) return 0; return Math.max(0,Math.floor((Date.now()-new Date(stage_since))/86400000)); }
 function stageLabelOf(k){ return (STAGES.find(s=>s[0]===k)||[k,k])[1]; }
 
@@ -751,7 +777,8 @@ async function addVideoTo(stage){
   if(!item.trim()){ flash('Enter a name.'); return; }
   try{
     const { error } = await sb.from('video_pipeline')
-      .insert({ practice_id: practiceId, item: item.trim(), stage })
+      // new assets default to 'planned' (backlog) unless added from a specific column
+      .insert({ practice_id: practiceId, item: item.trim(), stage: stage || 'planned' })
       .select();
     if(error){ flash('Add failed: '+error.message); alert('Add failed: '+error.message); return; }
     flash('Video added.');
@@ -770,7 +797,7 @@ function openVideoDetail(id){
   // CLIENT (read-only): watch the finished video, see where the asset is and its stage history.
   if(!isTeamView()){
     const histRO = hist.length
-      ? hist.map(h=>`<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}</span></div>`).join('')
+      ? hist.map(h=>`<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${fmtHistTime(h.moved_at)}</span></div>`).join('')
       : '<div class="note">No stage history yet.</div>';
     const mc = $('modal');
     mc.innerHTML = `<div class="modalcard">
@@ -796,7 +823,7 @@ function openVideoDetail(id){
   }
 
   const histRows = hist.length? hist.map(h=>
-    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${new Date(h.moved_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
+    `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${fmtHistTime(h.moved_at)}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
 
   const m = $('modal');
@@ -1088,9 +1115,9 @@ $('btnResetData').onclick = async ()=>{
       if(mr.error) throw new Error(mr.error.message);
     }
 
-    // 4) reset the video pipeline back to "scheduled" and clear per-asset progress
+    // 4) reset the video pipeline back to "planned" / backlog and clear per-asset progress
     const vRes = await sb.from('video_pipeline')
-      .update({ stage:'scheduled', blocked:false, blocked_reason:null, video_url:null,
+      .update({ stage:'planned', blocked:false, blocked_reason:null, video_url:null,
                 posted_date:null, shot_date:null, stage_since:new Date().toISOString() })
       .eq('practice_id', pid);
     if(vRes.error) throw new Error(vRes.error.message);

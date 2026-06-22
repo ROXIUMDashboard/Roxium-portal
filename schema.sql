@@ -82,7 +82,7 @@ create table if not exists video_pipeline (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   item text not null,             -- e.g. 'Facelift recovery SEO video'
-  stage text not null default 'scheduled' check (stage in
+  stage text not null default 'planned' check (stage in
     ('planned','scheduled','pre_production','shot','editing','delivered','posted')),
   blocked boolean default false,
   blocked_reason text,            -- e.g. 'Surgeon reviewing — awaiting approval'
@@ -392,18 +392,18 @@ begin
     (pid,'Milestone III — Full Funnel','Landing pages live, paid amplification on, nurture engine running.','upcoming', p_kickoff + 42, 3),
     (pid,'Go-Live & Growth','Campaigns live. Initial ROI window: 1.5–2 months.','upcoming', p_kickoff + 49, 4);
 
-  -- ---- Standard video pipeline (assets start in 'scheduled') ----
+  -- ---- Standard video pipeline (assets start in 'planned' / backlog) ----
   insert into video_pipeline (practice_id, item, stage) values
-    (pid,'Video Sales Letter (VSL)','scheduled'),
-    (pid,'Recovery Masterclass (gated webinar)','scheduled'),
-    (pid,'SEO video — facelift recovery','scheduled'),
-    (pid,'SEO video — rhinoplasty healing','scheduled'),
-    (pid,'SEO video — blepharoplasty','scheduled'),
-    (pid,'SEO video — body contouring','scheduled'),
-    (pid,'Patient testimonial #1','scheduled'),
-    (pid,'Patient testimonial #2','scheduled'),
-    (pid,'Patient testimonial #3','scheduled'),
-    (pid,'Office walkthrough B-roll package','scheduled');
+    (pid,'Video Sales Letter (VSL)','planned'),
+    (pid,'Recovery Masterclass (gated webinar)','planned'),
+    (pid,'SEO video — facelift recovery','planned'),
+    (pid,'SEO video — rhinoplasty healing','planned'),
+    (pid,'SEO video — blepharoplasty','planned'),
+    (pid,'SEO video — body contouring','planned'),
+    (pid,'Patient testimonial #1','planned'),
+    (pid,'Patient testimonial #2','planned'),
+    (pid,'Patient testimonial #3','planned'),
+    (pid,'Office walkthrough B-roll package','planned');
 
   return pid;
 end $$;
