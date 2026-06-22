@@ -111,6 +111,21 @@ function buildSwitcher(list){
   document.addEventListener('click', e=>{ if(!$('practiceSwitcher').contains(e.target)) results.classList.add('hidden'); });
 }
 
+// Team: (re)load every practice and refresh the switcher + the invite dropdown.
+async function loadTeamPractices(){
+  const { data: prax } = await sb.from('practices').select('*').order('name');
+  const list = prax || [];
+  buildSwitcher(list);
+  const sel = $('inviteePractice');
+  if(sel){
+    const keep = sel.value;
+    sel.innerHTML = list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if(list.some(p=>p.id===keep)) sel.value = keep;
+    else if(practiceId && list.some(p=>p.id===practiceId)) sel.value = practiceId;
+  }
+  return list;
+}
+
 // Single-shot boot so the initial getSession AND the onAuthStateChange event
 // (which Supabase fires on load) can't both kick off afterLogin concurrently.
 let booted = false;
@@ -133,8 +148,16 @@ sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
   if(!email) return;
-  const { error } = await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.origin } });
-  $('loginMsg').textContent = error ? error.message : 'Check your email for the sign-in link.';
+  // Invite-only: shouldCreateUser:false means a magic link is only sent to users
+  // who already exist (i.e. were invited by the team). Random emails get nothing.
+  const { error } = await sb.auth.signInWithOtp({
+    email, options:{ emailRedirectTo: location.origin, shouldCreateUser: false }
+  });
+  $('loginMsg').textContent = error
+    ? (/not.*found|signups?.*disabled|user/i.test(error.message)
+        ? "We couldn't find an invite for that email. Ask your ROXIUM lead to add you."
+        : error.message)
+    : 'Check your email for the sign-in link.';
 };
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 
@@ -151,9 +174,8 @@ async function afterLogin(){
   $('whoami').textContent = (me.full_name||'') + ' · ' + me.role;
 
   if(me.role === 'team'){
-    const { data: prax } = await sb.from('practices').select('*').order('name');
+    const prax = await loadTeamPractices();
     practiceId = prax && prax.length ? prax[0].id : null;
-    buildSwitcher(prax||[]);
     $('btnPreview').onclick = ()=>{
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
@@ -963,6 +985,54 @@ $('btnPost').onclick = async ()=>{
   const msg = $('updMsg').value.trim(); if(!msg) return;
   const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: me.full_name||'ROXIUM', source:'portal' });
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
+};
+
+/* ---- ONBOARDING (team): add a client/practice, invite surgeon/client users ---- */
+const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+
+// Add a new client practice — reuses the seed_practice() RPC so it lands fully loaded
+// with the standard deliverables / roadmap / pipeline. Then jump to it.
+$('btnAddClient').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const name = $('newClientName').value.trim();
+  const kickoff = $('newClientKickoff').value || new Date().toISOString().slice(0,10);
+  if(!name){ onbFlash('Enter a practice name.'); return; }
+  $('btnAddClient').disabled = true; onbFlash('Creating…');
+  try{
+    const { data, error } = await sb.rpc('seed_practice', { p_name: name, p_kickoff: kickoff });
+    if(error) throw error;
+    $('newClientName').value = '';
+    await loadTeamPractices();
+    if(data){ practiceId = data; }            // RPC returns the new practice id
+    onbFlash(`Added "${name}". Now invite their users below.`);
+    loadAll();
+  }catch(e){ onbFlash('Could not add client: '+e.message); }
+  finally{ $('btnAddClient').disabled = false; }
+};
+
+// Invite a surgeon/client user — calls the invite-user Edge Function (service role)
+// which creates/links the auth user + profile + membership and emails the invite.
+$('btnInvite').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const email = $('inviteeEmail').value.trim();
+  const practice_id = $('inviteePractice').value;
+  const full_name = $('inviteeName').value.trim();
+  const role = $('inviteeRole').value || 'member';
+  if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
+  $('btnInvite').disabled = true; onbFlash('Sending invite…');
+  try{
+    const { data, error } = await sb.functions.invoke('invite-user', {
+      body: { email, practice_id, full_name, role }
+    });
+    if(error) throw error;
+    if(data && data.error) throw new Error(data.error);
+    $('inviteeEmail').value=''; $('inviteeName').value='';
+    onbFlash(data && data.invited===false
+      ? `${email} already had an account — linked to this practice.`
+      : `Invite sent to ${email}.`);
+  }catch(e){
+    onbFlash('Invite failed: '+(e.message||e)+' (is the invite-user function deployed?)');
+  }finally{ $('btnInvite').disabled = false; }
 };
 
 /* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */

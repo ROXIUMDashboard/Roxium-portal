@@ -126,6 +126,18 @@ create table if not exists notifications (
   created_at timestamptz default now()
 );
 
+-- Org membership: who can access which practice, and in what capacity.
+-- This is the access-control layer (many users per practice, many practices per
+-- user). `profiles.practice_id` is kept as each user's default/active practice.
+create table if not exists memberships (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  practice_id uuid not null references practices(id) on delete cascade,
+  role text not null default 'member' check (role in ('owner','member')),
+  created_at timestamptz default now(),
+  unique (user_id, practice_id)
+);
+
 -- ---------- ROW LEVEL SECURITY ----------
 -- Clients see ONLY their own practice. Team sees and edits everything.
 
@@ -138,6 +150,7 @@ alter table video_pipeline enable row level security;
 alter table video_history  enable row level security;
 alter table activity       enable row level security;
 alter table notifications  enable row level security;
+alter table memberships    enable row level security;
 
 -- security definer: these helpers read profiles directly without re-triggering
 -- the profiles RLS policy (prevents infinite recursion on profile lookups).
@@ -151,60 +164,75 @@ language sql stable security definer set search_path = public as $$
   select practice_id from profiles where id = auth.uid();
 $$;
 
+-- Membership test: is the current user attached to this practice? Drives all
+-- client-facing read policies, so a practice can have many users.
+create or replace function is_member_of(p uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from memberships where user_id = auth.uid() and practice_id = p
+  );
+$$;
+
 -- profiles: users read their own row; team reads all; team manages rows.
 drop policy if exists "own profile" on profiles;
 create policy "own profile"   on profiles for select using (id = auth.uid() or is_team());
 drop policy if exists "team upserts profiles" on profiles;
 create policy "team upserts profiles" on profiles for all using (is_team()) with check (is_team());
 
+-- memberships: user reads their own; team reads/manages all (invites write via service role).
+drop policy if exists "read memberships" on memberships;
+create policy "read memberships" on memberships for select using (is_team() or user_id = auth.uid());
+drop policy if exists "team memberships" on memberships;
+create policy "team memberships" on memberships for all using (is_team()) with check (is_team());
+
 -- practices
 drop policy if exists "read own practice" on practices;
-create policy "read own practice" on practices for select using (is_team() or id = my_practice());
+create policy "read own practice" on practices for select using (is_team() or is_member_of(id));
 drop policy if exists "team writes practices" on practices;
 create policy "team writes practices" on practices for all using (is_team()) with check (is_team());
 
 -- data tables: client reads its own practice, team does everything.
 drop policy if exists "read kpi" on kpi_monthly;
-create policy "read kpi"   on kpi_monthly    for select using (is_team() or practice_id = my_practice());
+create policy "read kpi"   on kpi_monthly    for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team kpi" on kpi_monthly;
 create policy "team kpi"   on kpi_monthly    for all using (is_team()) with check (is_team());
 
 drop policy if exists "read deliv" on deliverables;
-create policy "read deliv" on deliverables   for select using (is_team() or practice_id = my_practice());
+create policy "read deliv" on deliverables   for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team deliv" on deliverables;
 create policy "team deliv" on deliverables   for all using (is_team()) with check (is_team());
 
 drop policy if exists "read miles" on milestones;
-create policy "read miles" on milestones     for select using (is_team() or practice_id = my_practice());
+create policy "read miles" on milestones     for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team miles" on milestones;
 create policy "team miles" on milestones     for all using (is_team()) with check (is_team());
 
 drop policy if exists "read video" on video_pipeline;
-create policy "read video" on video_pipeline for select using (is_team() or practice_id = my_practice());
+create policy "read video" on video_pipeline for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team video" on video_pipeline;
 create policy "team video" on video_pipeline for all using (is_team()) with check (is_team());
 
 -- video_history: client reads its own; team manages; explicit delete for clarity.
 drop policy if exists "read vh" on video_history;
-create policy "read vh" on video_history for select using (is_team() or practice_id = my_practice());
+create policy "read vh" on video_history for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team vh" on video_history;
 create policy "team vh" on video_history for all using (is_team()) with check (is_team());
 drop policy if exists "team delete vh" on video_history;
 create policy "team delete vh" on video_history for delete using (is_team());
 
 drop policy if exists "read activity" on activity;
-create policy "read activity" on activity    for select using (is_team() or practice_id = my_practice());
+create policy "read activity" on activity    for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team activity" on activity;
 create policy "team activity" on activity    for all using (is_team()) with check (is_team());
 
 -- notifications: client reads its own + can flag them seen; inserts come from the
 -- notify() trigger helper (security definer) and from the team; team manages all.
 drop policy if exists "read notif" on notifications;
-create policy "read notif" on notifications for select using (is_team() or practice_id = my_practice());
+create policy "read notif" on notifications for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "insert notif" on notifications;
 create policy "insert notif" on notifications for insert with check (true);
 drop policy if exists "client seen" on notifications;
-create policy "client seen" on notifications for update using (practice_id = my_practice()) with check (practice_id = my_practice());
+create policy "client seen" on notifications for update using (is_member_of(practice_id)) with check (is_member_of(practice_id));
 drop policy if exists "team notif" on notifications;
 create policy "team notif" on notifications for all using (is_team()) with check (is_team());
 
@@ -286,7 +314,11 @@ insert into storage.buckets (id, name, public) values ('deliverables','deliverab
   on conflict (id) do nothing;
 drop policy if exists "read own files" on storage.objects;
 create policy "read own files" on storage.objects for select
-  using (bucket_id = 'deliverables' and (is_team() or (storage.foldername(name))[1] = my_practice()::text));
+  using (bucket_id = 'deliverables' and (is_team() or exists (
+    select 1 from memberships m
+    where m.user_id = auth.uid()
+      and m.practice_id::text = (storage.foldername(name))[1]
+  )));
 drop policy if exists "team uploads" on storage.objects;
 create policy "team uploads" on storage.objects for insert
   with check (bucket_id = 'deliverables' and is_team());

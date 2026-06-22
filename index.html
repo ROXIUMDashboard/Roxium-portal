@@ -110,6 +110,22 @@
       <h2>Team · <em>controls</em></h2>
       <div class="sub">Only ROXIUM staff can see this. Everything you save updates the client view instantly.</div>
 
+      <h3>Clients &amp; access</h3>
+      <p class="note" style="margin-top:-2px">Add a new client practice (it's seeded with the standard deliverables, roadmap and pipeline), then invite the surgeon and their staff. Invited users get a sign-in link by email; access is invite-only — nobody can self-register.</p>
+      <div class="entry">
+        <div class="f"><label>New practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
+        <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Add client</button></div>
+      </div>
+      <div class="entry" style="margin-top:10px">
+        <div class="f"><label>Invite email</label><input id="inviteeEmail" type="email" placeholder="surgeon@practice.com"></div>
+        <div class="f"><label>Name (optional)</label><input id="inviteeName" placeholder="Dr. Jane Smith"></div>
+        <div class="f"><label>Practice</label><select id="inviteePractice"></select></div>
+        <div class="f"><label>Role</label><select id="inviteeRole"><option value="member">Member</option><option value="owner">Owner</option></select></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnInvite">Send invite</button></div>
+      </div>
+      <p class="note" id="onbMsg" style="margin-top:6px"></p>
+
       <h3>Monthly KPIs</h3>
       <p class="note" style="margin-top:-2px">Each month is its own saved snapshot — editing one month never changes another, and re-reporting a later month can't overwrite the past. Pick the month, enter values, Save.</p>
       <div class="entry" id="kpiMeta">

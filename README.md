@@ -39,11 +39,15 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 
 ### 4 · Create users (5 min)
 1. Supabase → **Authentication → Users → Add user** → enter your email (and each teammate's).
-2. Supabase → **Table Editor → profiles** → add a row per user:
+2. Supabase → **Table Editor → profiles** → add a row per **team** user:
    - `id` = the user's UUID from the Auth screen
-   - `role` = `team` for ROXIUM staff, `client` for the surgeon/practice manager
-   - `practice_id` = the practice they belong to (clients only)
-3. Add the practice itself in the `practices` table (the schema seeds one demo practice).
+   - `role` = `team` for ROXIUM staff
+   - `practice_id` = optional home practice (the schema seeds one demo practice)
+
+> **Clients are no longer added by hand.** After Phase C, team users add clients and
+> invite surgeon/staff logins from the **Team → Clients & access** panel in the portal
+> itself (multi-user practices, invite-only). See `docs/phase-c-onboarding.md` for the
+> one-time setup (run the membership migration + deploy the `invite-user` Edge Function).
 
 ### 5 · Load the engagement (5 min)
 - **Deliverables**: Table Editor → `deliverables` → add the promised items per phase
@@ -53,7 +57,7 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 - **KPIs**: easiest path — Team view → *Import KPI workbook (.xlsx)* and upload the
   `ROXIUM_KPI_Dashboard.xlsx` file. It maps every metric automatically.
 
-That's it. Clients sign in with a magic link and see only their own practice.
+That's it. Clients sign in with a magic link (invite-only) and see only their own practice.
 Row-level security in Postgres enforces this — not the front end.
 
 ---
