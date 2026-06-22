@@ -375,7 +375,6 @@ function phaseGroups(){
 }
 
 let delivCollapsed = new Set();   // phase names the user has collapsed (persists in-session)
-let delivInit = false;            // auto-collapse fully-delivered phases once on first paint
 function phaseProgress(g){
   const done = g.items.filter(i=>i.status==='delivered').length;
   const pct = g.items.length? Math.round(100*done/g.items.length):0;
@@ -385,10 +384,7 @@ function phaseProgress(g){
 function renderDeliverables(isTeam){
   const t = $('delivTable');
   const groups = phaseGroups();
-  if(!delivInit){
-    groups.forEach(g=>{ if(g.items.length && g.items.every(i=>i.status==='delivered')) delivCollapsed.add(g.phase); });
-    delivInit = true;
-  }
+  // Phases start expanded; collapsing is opt-in per session via the ▾ caret.
   if(isTeam){
     t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
       const {done,total,pct} = phaseProgress(g);
