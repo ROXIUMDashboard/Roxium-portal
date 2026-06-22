@@ -55,28 +55,32 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['roadmap','deliverables','video','metrics','updates','team'];
+const VIEWS = ['roadmap','deliverables','video','metrics','updates','team','admin'];
+const TEAM_ONLY_VIEWS = ['team','admin'];   // require a real team user (not client/preview)
 function currentView(){
   const h = (location.hash||'').replace('#','');
   return VIEWS.includes(h) ? h : 'roadmap';
 }
 function showView(name){
   if(!VIEWS.includes(name)) name = 'roadmap';
-  if(name==='team' && !isTeamView()) name = 'roadmap';   // clients/preview can't open Team
+  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';   // clients/preview can't open Team/Admin
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
 }
-// Show/hide team-only chrome (Team tab + panel, preview button, client switcher)
+// Show/hide team-only chrome (Team + Admin tabs/panels, preview button, switcher)
 // based on the *real* role and whether we're previewing as a client.
 function syncChrome(){
   const realTeam = !!(me && me.role==='team');
   $('btnPreview').classList.toggle('hidden', !realTeam);
   $('practiceSwitcher').classList.toggle('hidden', !realTeam);
   const teamView = isTeamView();
-  const teamTab = document.querySelector('.tab[data-view="team"]');
-  if(teamTab) teamTab.classList.toggle('hidden', !teamView);
-  $('teamPanel').classList.toggle('hidden', !teamView);
-  if(!teamView && currentView()==='team') location.hash = '#roadmap';
+  TEAM_ONLY_VIEWS.forEach(v=>{
+    const tab = document.querySelector(`.tab[data-view="${v}"]`);
+    if(tab) tab.classList.toggle('hidden', !teamView);
+    const panel = document.querySelector(`section[data-view="${v}"]`);
+    if(panel) panel.classList.toggle('hidden', !teamView);
+  });
+  if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
 
@@ -102,6 +106,9 @@ function buildSwitcher(list){
       input.value = p ? p.name : '';
       results.classList.add('hidden');
       input.blur();
+      // each practice defaults to ITS OWN latest reported month (don't carry a
+      // selected/edited month across practices — that's the "stuck on old month" bug)
+      metricsPeriod = null; entryPeriod = null;
       loadAll();
     });
   };
@@ -347,7 +354,7 @@ function render(){
   safe('team panel', ()=>{
     syncChrome();
     if(isTeamView()){
-      renderTeam(latest);
+      renderTeam(viewPeriod, latestPeriod);
       const rt = $('resetTarget');
       if(rt) rt.textContent = (data.practice && data.practice.name) ? `"${data.practice.name}"` : 'this practice';
     }
@@ -366,17 +373,32 @@ function buildMetricsPicker(reported, viewPeriod, latestPeriod){
       `<option value="${r.period}">${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}</option>`));
   sel.innerHTML = opts.join('');
   sel.value = (metricsPeriod!=null) ? String(metricsPeriod) : '';
-  sel.onchange = ()=>{ metricsPeriod = sel.value===''? null : sel.value; render(); };
+  sel.onchange = ()=>{
+    metricsPeriod = sel.value===''? null : sel.value;
+    // keep the team entry month on the same reporting period as the view
+    entryPeriod = metricsPeriod || latestPeriod;
+    render();
+  };
 }
 
 /* ---------------- team controls ---------------- */
-let entryPeriod = null; // 'YYYY-MM-01' month the team is editing; survives re-renders
-function renderTeam(){
+let entryPeriod = null; // 'YYYY-MM-01' reporting month the team is viewing/editing
+// The team's reporting month is the SAME concept as the client's view month: one
+// source of truth drives the top label, the KPI cards and the entry form together.
+function renderTeam(viewPeriod, latestPeriod){
   const inp = $('inMonth'); // an <input type="month"> — value is 'YYYY-MM'
-  if(!entryPeriod) entryPeriod = currentPeriod();
+  // default to the month currently being VIEWED (data-driven), not today's date
+  if(!entryPeriod) entryPeriod = viewPeriod || latestPeriod || currentPeriod();
   if(!inp.dataset.wired){
     inp.dataset.wired = '1';
-    inp.onchange = ()=>{ entryPeriod = monthInputToPeriod(inp.value) || currentPeriod(); fillKpiForm(); };
+    inp.onchange = ()=>{
+      entryPeriod = monthInputToPeriod(inp.value) || currentPeriod();
+      // if that month has data, drive the whole page (top label + cards) to it so
+      // team view stays in sync exactly like the client view; a brand-new month
+      // (no data yet) just targets the entry form and shows after Save.
+      if(data.kpi.some(x=>x.period===entryPeriod)) metricsPeriod = entryPeriod;
+      render();
+    };
   }
   inp.value = periodToMonthInput(entryPeriod); // restore the month the team was on
   const yr = $('inYear'); if(yr && !yr.value) yr.value = new Date().getFullYear();
