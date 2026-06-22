@@ -11,6 +11,48 @@
 -- never creates practices (it's FK-bound to existing ids), so it is NOT the cause.
 -- ============================================================
 
+-- ============================================================
+-- EASY MODE · auto-remove the empty duplicate (recommended)
+-- ------------------------------------------------------------
+-- Keeps the Balikian that has the imported KPI data (most kpi_monthly rows,
+-- tie-break most deliverables, then oldest), moves any attached users onto it,
+-- and deletes the empty clone(s). Safe to run as-is. Wrapped so you can review the
+-- NOTICE output; it commits only if no error. Handles any duplicated name, not
+-- just Balikian.
+do $$
+declare
+  nm     text;
+  keeper uuid;
+  loser  uuid;
+  has_memberships boolean := to_regclass('public.memberships') is not null;
+begin
+  for nm in
+    select lower(btrim(name)) from practices group by lower(btrim(name)) having count(*) > 1
+  loop
+    select p.id into keeper from practices p
+     where lower(btrim(p.name)) = nm
+     order by (select count(*) from kpi_monthly  k where k.practice_id = p.id) desc,
+              (select count(*) from deliverables d where d.practice_id = p.id) desc,
+              p.created_at asc
+     limit 1;
+
+    for loser in
+      select p.id from practices p where lower(btrim(p.name)) = nm and p.id <> keeper
+    loop
+      update profiles set practice_id = keeper where practice_id = loser;
+      if has_memberships then
+        execute 'delete from memberships where practice_id = $1' using loser;
+      end if;
+      delete from practices where id = loser;       -- deliverables/kpi/video cascade
+      raise notice 'Removed duplicate "%": % (kept %)', nm, loser, keeper;
+    end loop;
+  end loop;
+end $$;
+
+-- After EASY MODE, jump to step 4 (the backstop index). Steps 1–3 below are the
+-- manual alternative if you'd rather inspect and delete by hand.
+-- ------------------------------------------------------------
+
 -- 1) SEE the duplicates with row counts (run this first, read the output) ----------
 select p.id,
        p.name,
