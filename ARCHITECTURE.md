@@ -51,7 +51,7 @@ view or the monthly workbook import — and is instantly visible to both audienc
 | Show progress on the things we promised | `deliverables` table + promised-vs-delivered progress bar |
 | Surgeon knows where he is and what's next | `milestones` timeline — "You are here" marker |
 | Cinematography bottleneck visibility | `video_pipeline` board; blocked items flagged gold with the reason |
-| KPIs from ads/marketing/sales in one place | `kpi_monthly` + same formulas as the KPI workbook |
+| KPIs from ads/marketing/sales in one place | `kpi_monthly` keyed by `(practice_id, period, source)` — one immutable snapshot per calendar month + data source (`marketing`/`coefficient`/`asana`); latest period = live view, older periods are history. Same formulas as the KPI workbook. |
 | Asana updates (integrated last) | `activity` feed accepts webhook rows (`source='asana'`) |
 | File storage for deliverables | Supabase Storage bucket `deliverables`, per-practice folders |
 | No data the client must give us | Everything is ROXIUM-entered or auto-synced; client only views |
