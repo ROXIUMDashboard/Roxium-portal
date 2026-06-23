@@ -1,9 +1,10 @@
 // ============================================================
-// Edge Function: notify-video-ready
-// Notifies practice members that a finished video is posted.
-// - Expects POST { video_id: string }
-// - Uses SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to read the video and members.
-// - Returns { ok: true, emailed: N } where N is the number of intended recipients.
+// notify-video-ready — email a practice's client users when a video is posted.
+// Called by the portal when the team posts a finished video URL ({ video_id }).
+//
+// Deploy:  supabase functions deploy notify-video-ready --project-ref <ref>
+// Secrets: RESEND_API_KEY (required to send), EMAIL_FROM. SUPABASE_URL / SERVICE_ROLE_KEY auto-injected.
+// Requires practice_member_emails() RPC (migrations/2026-06-23_phase_d_email.sql).
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -13,40 +14,53 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+const json = (b: unknown, s = 200) =>
+  new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
+
+function escapeHtml(s: string) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+}
+
+const emailHtml = (item: string, url: string) => `
+  <div style="font-family:Arial,Helvetica,sans-serif;background:#0D0C10;padding:32px;color:#F2EDE3">
+    <div style="max-width:520px;margin:0 auto;border:1px solid rgba(201,168,76,.35);border-radius:8px;padding:28px 30px">
+      <div style="letter-spacing:.4em;font-weight:600">ROX<span style="color:#C9A84C">I</span>UM</div>
+      <p style="font-size:16px;line-height:1.6;margin:22px 0">Your new video <b>${escapeHtml(item)}</b> is ready to watch.</p>
+      <a href="${escapeHtml(url)}" style="display:inline-block;background:#C9A84C;color:#171410;text-decoration:none;
+         padding:12px 22px;border-radius:4px;font-weight:600;letter-spacing:.06em">▶ Watch the video</a>
+    </div>
+  </div>`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-  const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!SUPABASE_URL || !SERVICE_ROLE) return json({ error: "Missing Supabase env" }, 500);
-
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-
-  let body: { video_id?: string };
-  try { body = await req.json(); } catch { return json({ error: "Bad JSON body" }, 400); }
-  const video_id = (body.video_id ?? '').trim();
-  if (!video_id) return json({ error: 'video_id is required' }, 400);
-
+  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
   try {
-    const { data: v, error: vErr } = await admin.from('video_pipeline').select('id, practice_id, item').eq('id', video_id).single();
-    if (vErr || !v) return json({ error: 'Video not found' }, 404);
+    const { video_id } = await req.json();
+    if (!video_id) return json({ ok: false, error: "video_id required" }, 400);
 
-    const message = `New video published: ${v.item || 'your video'}. Watch it in your portal.`;
+    const RESEND = Deno.env.get("RESEND_API_KEY");
+    const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 
-    const { data: members, error: mErr } = await admin.from('memberships').select('user_id').eq('practice_id', v.practice_id);
-    if (mErr) return json({ error: 'Could not load members' }, 500);
-    const count = (members || []).length;
+    const { data: v, error: vErr } = await sb
+      .from("video_pipeline").select("practice_id,item,video_url").eq("id", video_id).single();
+    if (vErr || !v) return json({ ok: false, error: vErr?.message || "video not found" }, 404);
+    if (!v.video_url) return json({ ok: false, error: "video has no URL yet" }, 400);
 
-    // Optionally insert a notifications row server-side (frontend already inserts one).
-    try{ await admin.from('notifications').insert({ practice_id: v.practice_id, kind: 'video', message }); }catch(e){ /* non-blocking */ }
+    const { data: rows, error } = await sb.rpc("practice_member_emails", { p_id: v.practice_id });
+    if (error) return json({ ok: false, error: error.message }, 500);
+    const to = (rows || []).map((r: { email: string }) => r.email).filter(Boolean);
+    if (!to.length) return json({ ok: true, emailed: 0, note: "no client emails on file" });
+    if (!RESEND) return json({ ok: true, emailed: 0, note: "RESEND_API_KEY not set — would have emailed " + to.length });
 
-    return json({ ok: true, emailed: count });
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: FROM, to, subject: `Your video "${v.item}" is ready`, html: emailHtml(v.item, v.video_url) }),
+    });
+    if (!res.ok) return json({ ok: false, error: `resend ${res.status}: ${await res.text()}` }, 502);
+    return json({ ok: true, emailed: to.length });
   } catch (e) {
-    console.error(e);
-    return json({ error: String(e) }, 500);
+    return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
   }
 });
