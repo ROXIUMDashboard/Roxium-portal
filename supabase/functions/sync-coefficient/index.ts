@@ -26,17 +26,21 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// header alias (lower-cased) -> kpi_monthly column. Accepts both human labels and
-// the raw DB keys, so either a tidy Coefficient export or our template works.
+// header alias (lower-cased) -> kpi_monthly column. Accepts human labels (incl. the
+// common Meta/Coefficient variants) AND raw DB keys, so a real ad export or our
+// template both work. CTR/CPM/CPC are derived in the dashboard, so they're ignored here.
 const COLUMN_ALIASES: Record<string, string> = {
-  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend",
+  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend", "cost": "spend",
   "reach": "reach",
   "impressions": "impr", "impressions & reach": "impr", "impr": "impr",
-  "link clicks": "clicks", "clicks": "clicks",
+  "link clicks": "clicks", "clicks": "clicks", "clicks (all)": "clicks", "outbound clicks": "clicks",
   "landing page views": "lpv", "landing page visits": "lpv", "lpv": "lpv",
-  "page likes": "page_likes", "page_likes": "page_likes",
-  "followers": "foll", "qualified followers added": "foll", "foll": "foll",
+  "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes",
+  "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll",
 };
+// additive metrics are SUMmed when aggregating daily rows into a month; the rest
+// (unique-people / running totals) take the MAX day as the best monthly proxy.
+const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function nextMonthCutoff(): string {
@@ -74,38 +78,52 @@ const num = (v: string) => {
 };
 
 // Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
-// sheet has no practice_id column (per-client source).
+// sheet has no practice_id column (per-client source). Supports both a monthly
+// `period` column and a daily `date` column (daily rows are aggregated per month).
 function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
                       skipped: unknown[], label: string): Record<string, unknown>[] {
   if (grid.length < 2) return [];
   const header = grid[0].map(h => h.trim().toLowerCase());
   const idxOf = (n: string) => header.indexOf(n);
   const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
-  if (idxOf("period") < 0) { skipped.push({ source: label, reason: "no period column" }); return []; }
+  const hasPeriod = idxOf("period") >= 0;
+  const dateIdx = ["period", "date", "day", "reporting date", "month"].map(idxOf).find(i => i >= 0) ?? -1;
+  if (dateIdx < 0) { skipped.push({ source: label, reason: "no period/date column" }); return []; }
 
-  const out: Record<string, unknown>[] = [];
+  // bucket rows by practice|period, aggregating metrics
+  const buckets = new Map<string, Record<string, number | null>>();
   for (let i = 1; i < grid.length; i++) {
     const r = grid[i];
     const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
     if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
 
-    let period = cell(r, "period");
-    if (/^\d{4}-\d{2}$/.test(period)) period += "-01";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) { skipped.push({ source: label, row: i + 1, reason: "bad period", value: period }); continue; }
-    const py = Number(period.slice(0, 4));
-    const nowY = new Date().getUTCFullYear();
+    // resolve the reporting month from a 'YYYY-MM' period or any parseable date
+    let period: string | null = null;
+    const raw = (r[dateIdx] ?? "").trim();
+    if (hasPeriod && /^\d{4}-\d{2}(-\d{2})?$/.test(raw)) period = raw.slice(0, 7) + "-01";
+    else { const d = new Date(raw); if (!isNaN(d.getTime())) period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; }
+    if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
+
+    const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
     if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
       skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
     }
 
-    const obj: Record<string, unknown> = { practice_id: pid, period, source };
+    const key = pid + "|" + period;
+    const b = buckets.get(key) || { __pid: pid as unknown as number, __period: period as unknown as number };
     for (let c = 0; c < header.length; c++) {
-      const col = COLUMN_ALIASES[header[c]];
-      if (col) obj[col] = num((r[c] ?? "").trim());
+      const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
+      const v = num((r[c] ?? "").trim()); if (v == null) continue;
+      if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+      else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
     }
-    out.push(obj);
+    buckets.set(key, b);
   }
-  return out;
+
+  return [...buckets.values()].map(b => {
+    const { __pid, __period, ...metrics } = b as Record<string, unknown>;
+    return { practice_id: __pid, period: __period, source, ...metrics };
+  });
 }
 
 Deno.serve(async (req) => {
