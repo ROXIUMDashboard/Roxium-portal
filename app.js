@@ -1193,6 +1193,40 @@ async function loadSheetSources(){
   sheetSources = {}; (data||[]).forEach(s=> sheetSources[s.practice_id]=s);
   renderAdminClients();
 }
+
+// Admin · pull every active sheet_sources CSV into kpi_monthly (team JWT auth).
+$('btnSyncNow').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const row = document.querySelector('.syncnowrow');
+  const msg = $('syncNowMsg');
+  const btn = $('btnSyncNow');
+  row?.classList.remove('ok','err');
+  row?.classList.add('syncing');
+  btn.disabled = true;
+  msg.textContent = 'Syncing…';
+  try{
+    const { data, error } = await sb.functions.invoke('sync-coefficient', { body:{} });
+    if(error) throw error;
+    if(!data?.ok) throw new Error(data?.error || 'Sync failed');
+    const skip = data.skipped_count || 0;
+    const parts = [`Synced ${data.upserted ?? 0} row(s)`];
+    if(skip) parts.push(`skipped ${skip}`);
+    if(data.rows_seen === 0) parts.push('no rows parsed — check CSV URLs and sheet headers');
+    msg.textContent = parts.join(' · ');
+    row?.classList.add('ok');
+    await loadSheetSources();
+    if(practiceId) loadAll();
+  }catch(e){
+    const m = e?.message || String(e);
+    msg.textContent = m.includes('401') || /unauthorized/i.test(m)
+      ? 'Sync unauthorized — redeploy sync-coefficient with team-login support, or check SYNC_SECRET for cron.'
+      : 'Sync failed: '+m;
+    row?.classList.add('err');
+  }finally{
+    row?.classList.remove('syncing');
+    btn.disabled = false;
+  }
+};
 function renderAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
   if(!isTeamView()){ wrap.innerHTML=''; return; }

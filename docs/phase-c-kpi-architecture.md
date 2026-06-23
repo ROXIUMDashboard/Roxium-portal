@@ -74,3 +74,46 @@ source** (practice_id comes from the row, so a per-client tab doesn't even need 
   selection is per-practice; sync writes each row under its own `practice_id`.
 - **Run SQL:** `migrations/2026-06-23_phase_c_ad_kpi_rebuild.sql`. **Redeploy**
   `sync-coefficient`. Set the cron to `0 */2 * * *`.
+
+## Sync now (Admin button)
+The Admin tab has a **↻ Sync now** button. It calls `sync-coefficient` with your
+team login JWT (no secret in the browser). Redeploy the function **with JWT
+verification ON** (default):
+
+```bash
+supabase functions deploy sync-coefficient --project-ref nchtmeqsjkpcvtuscxfy
+```
+
+Cron / `pg_net` still use `x-sync-key` — deploy a second copy is **not** needed;
+the same function accepts either auth path. Cron must use `--no-verify-jwt` because
+`pg_net` sends no bearer token.
+
+## Troubleshooting 401 on cron / manual SQL sync
+
+`select net.http_post(...)` returning a number like `22` is **not an error** — that
+is the `pg_net` request id. Check the real HTTP status:
+
+```sql
+select id, status_code, left(content, 300) as body, created
+  from net._http_response
+ order by created desc limit 5;
+```
+
+A **401** almost always means the `x-sync-key` header does not exactly match the
+`SYNC_SECRET` Edge Function secret:
+
+1. Set the secret (no angle brackets — use your real value):
+   ```bash
+   supabase secrets set SYNC_SECRET=roxium-sync-2026xyz --project-ref nchtmeqsjkpcvtuscxfy
+   ```
+2. Use that **exact same string** in the cron SQL `x-sync-key` value.
+3. Confirm it is set: Supabase dashboard → Edge Functions → Secrets.
+4. Redeploy after secret changes: `supabase functions deploy sync-coefficient --no-verify-jwt`
+
+Turning off JWT on the function only skips Supabase's gateway check — the function
+still requires `x-sync-key` **or** a team JWT. A missing/wrong secret still 401s.
+
+Other statuses:
+- **500 `SYNC_SECRET not configured`** — secret never set; run `supabase secrets set`.
+- **400 `no active sheet sources`** — paste CSV URLs in Admin and Save sheet first.
+- **200 with `upserted: 0` and skips** — sheet missing `period` column, bad UUID, or placeholder rows.

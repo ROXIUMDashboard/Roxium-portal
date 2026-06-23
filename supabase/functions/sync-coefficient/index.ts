@@ -4,6 +4,10 @@
 //
 // Source of truth = Supabase. The portal NEVER reads the sheet directly.
 //
+// Auth (either path):
+//   • x-sync-key header (or ?key=) matching SYNC_SECRET — for pg_cron / pg_net
+//   • Bearer JWT from a team user — for the Admin "Sync now" button in the portal
+//
 // Per-client sources:
 //   • Preferred: rows in `sheet_sources` (one per practice, each with its own
 //     csv_url — a tab in the master sheet or a per-client sheet). The sync loops
@@ -12,22 +16,14 @@
 //   • Fallback: the legacy single CSV_URL secret (one master sheet whose rows
 //     carry a practice_id column). Used only when no sheet_sources exist.
 //
-// Snapshots:
-//   • Each (practice_id, period, source) is one row. The CURRENT calendar month is
-//     live (finalized=false, keeps updating). After upserting, finalize_past_months()
-//     freezes every earlier month; a DB trigger makes finalized rows immutable.
-//
-// Metrics mapped (header → column): the real ad fields. CTR/CPM/CPC are derived
-// in the dashboard from spend·impr·clicks, so they aren't stored.
-//
-// Env: SYNC_SECRET (required), KPI_SOURCE (default 'marketing'),
+// Env: SYNC_SECRET (required for cron), KPI_SOURCE (default 'marketing'),
 //      CSV_URL (legacy fallback), SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (auto).
+// Deploy:  supabase functions deploy sync-coefficient --no-verify-jwt   (cron)
+//          supabase functions deploy sync-coefficient                   (portal button)
 // ============================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// header alias (lower-cased) -> kpi_monthly column. Accepts both human labels and
-// the raw DB keys, so either a tidy Coefficient export or our template works.
 const COLUMN_ALIASES: Record<string, string> = {
   "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend",
   "reach": "reach",
@@ -39,6 +35,12 @@ const COLUMN_ALIASES: Record<string, string> = {
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-key",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function nextMonthCutoff(): string {
   const d = new Date();
   d.setUTCDate(1);
@@ -47,7 +49,10 @@ function nextMonthCutoff(): string {
 }
 
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body, null, 2), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: { ...cors, "content-type": "application/json" },
+  });
 
 function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
@@ -73,8 +78,6 @@ const num = (v: string) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
-// sheet has no practice_id column (per-client source).
 function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
                       skipped: unknown[], label: string): Record<string, unknown>[] {
   if (grid.length < 2) return [];
@@ -108,17 +111,36 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
   return out;
 }
 
+async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!token) return false;
+  const { data: caller, error } = await admin.auth.getUser(token);
+  if (error || !caller?.user) return false;
+  const { data: profile } = await admin
+    .from("profiles").select("role").eq("id", caller.user.id).single();
+  return profile?.role === "team";
+}
+
+async function authorize(req: Request, admin: SupabaseClient): Promise<Response | null> {
+  const secret = Deno.env.get("SYNC_SECRET");
+  const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
+  if (secret && got === secret) return null;
+  if (await isTeamCaller(req, admin)) return null;
+  if (!secret) return json({ ok: false, error: "SYNC_SECRET not configured" }, 500);
+  return json({ ok: false, error: "unauthorized — set x-sync-key to SYNC_SECRET, or sign in as team" }, 401);
+}
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
+
   try {
-    const secret = Deno.env.get("SYNC_SECRET");
-    if (!secret) return json({ ok: false, error: "SYNC_SECRET not configured" }, 500);
-    const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
-    if (got !== secret) return json({ ok: false, error: "unauthorized" }, 401);
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const denied = await authorize(req, sb);
+    if (denied) return denied;
 
     const SOURCE = Deno.env.get("KPI_SOURCE") || "marketing";
-    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // gather the sources to pull: per-client sheet_sources, else the legacy CSV_URL
     const { data: sources } = await sb.from("sheet_sources")
       .select("practice_id,csv_url,is_active").eq("is_active", true);
     const jobs: { pid: string | null; url: string; label: string }[] = [];
@@ -150,12 +172,10 @@ Deno.serve(async (req) => {
 
     let upserted = 0, error: string | null = null;
     if (upserts.length) {
-      // finalized rows are protected by a DB trigger, so upserting them is a safe no-op
       const { data, error: e } = await sb.from("kpi_monthly")
         .upsert(upserts, { onConflict: "practice_id,period,source" }).select("id");
       if (e) error = e.message; else upserted = data?.length ?? upserts.length;
     }
-    // freeze every month before the current one (idempotent)
     await sb.rpc("finalize_past_months");
 
     return json({ ok: !error, sources: perSource, rows_seen: upserts.length, upserted,
