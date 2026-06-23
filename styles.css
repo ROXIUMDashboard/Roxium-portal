@@ -172,6 +172,12 @@ select option{background:var(--surface2);color:var(--cream)}
 .metricshead .sub{margin-bottom:14px}
 #metricsPicker{min-width:150px}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
+/* Admin global screen */
+.adminback{display:inline-block;margin-bottom:14px;font-size:12px;letter-spacing:.06em;color:var(--gold);text-decoration:none}
+.adminback:hover{text-decoration:underline}
+.clientlist{margin-top:6px;display:flex;flex-direction:column;gap:1px}
+.clientrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;background:var(--surface);border:1px solid var(--line)}
+.clientrow .cname{font-size:14px}
 #saveMsg,#loginMsg{font-size:12px;color:var(--green);letter-spacing:.06em}
 footer{padding:34px 0 50px;color:var(--muted);font-size:11px;letter-spacing:.2em;text-transform:uppercase;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
 @media(max-width:640px){.stat{align-items:flex-start;text-align:left;border-right:none;border-left:1px solid var(--gold);padding:6px 0 6px 16px;margin-bottom:14px}}

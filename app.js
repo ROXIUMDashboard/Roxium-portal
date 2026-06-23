@@ -66,14 +66,21 @@ function showView(name){
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';   // clients/preview can't open Team/Admin
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
+  syncChrome();                              // re-apply chrome for the new view
+  if(name==='admin') renderAdminClients();   // Admin is global — refresh its client list on entry
 }
-// Show/hide team-only chrome (Team + Admin tabs/panels, preview button, switcher)
-// based on the *real* role and whether we're previewing as a client.
+// Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
+// so when it's open we hide the whole practice context (hero, tabs, switcher,
+// preview) — it must not look like a tab inside Balikian/Demo's portal.
 function syncChrome(){
   const realTeam = !!(me && me.role==='team');
-  $('btnPreview').classList.toggle('hidden', !realTeam);
-  $('practiceSwitcher').classList.toggle('hidden', !realTeam);
   const teamView = isTeamView();
+  const adminMode = currentView()==='admin';
+  $('btnAdmin').classList.toggle('hidden', !teamView);           // top-level entry, team only
+  $('btnPreview').classList.toggle('hidden', !realTeam || adminMode);
+  $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
+  document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
+  $('tabnav').classList.toggle('hidden', adminMode);
   TEAM_ONLY_VIEWS.forEach(v=>{
     const tab = document.querySelector(`.tab[data-view="${v}"]`);
     if(tab) tab.classList.toggle('hidden', !teamView);
@@ -83,6 +90,7 @@ function syncChrome(){
   if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
+$('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -1083,6 +1091,7 @@ $('btnAddClient').onclick = async ()=>{
     if(error) throw error;
     $('newClientName').value = '';
     await loadTeamPractices();
+    renderAdminClients();                      // refresh the admin client list
     if(data){ practiceId = data; }            // RPC returns the new practice id
     onbFlash(`Added "${name}". Now invite their users below.`);
     loadAll();
@@ -1114,6 +1123,40 @@ $('btnInvite').onclick = async ()=>{
     onbFlash('Invite failed: '+(e.message||e)+' (is the invite-user function deployed?)');
   }finally{ $('btnInvite').disabled = false; }
 };
+
+// ---- Admin: list every practice with a delete control (global, one place) ----
+const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+function renderAdminClients(){
+  const wrap = $('adminClientList'); if(!wrap) return;
+  if(!isTeamView()){ wrap.innerHTML=''; return; }
+  const list = practicesList || [];
+  wrap.innerHTML = list.length
+    ? list.map(p=>`<div class="clientrow"><span class="cname">${esc(p.name)}</span>
+        <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete</button></div>`).join('')
+    : '<div class="note">No practices yet — add one above.</div>';
+  wrap.querySelectorAll('[data-delpractice]').forEach(b=>
+    b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
+}
+async function deletePractice(id, name){
+  if(!isTeamView()) return;
+  // Step 1 — are you sure?
+  if(!confirm(`Delete "${name}"?\n\nThis permanently removes the practice and ALL of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins.\n\nThis CANNOT be undone.`)) return;
+  // Step 2 — type the name to confirm
+  const typed = prompt(`To confirm, type the practice name exactly:\n\n${name}`);
+  if(typed===null) return;
+  if(typed.trim()!==name){ alert('Name did not match — nothing was deleted.'); return; }
+  adminDelFlash('Deleting…');
+  try{
+    const { error } = await sb.rpc('delete_practice', { p_id: id });
+    if(error) throw error;
+    if(practiceId===id){ practiceId = null; metricsPeriod = null; entryPeriod = null; }  // we deleted the open one
+    await loadTeamPractices();
+    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;  // fall back to another practice
+    renderAdminClients();
+    adminDelFlash(`"${name}" was deleted.`);
+    if(practiceId) loadAll();
+  }catch(e){ adminDelFlash('Delete failed: '+(e.message||e)); }
+}
 
 /* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */
 const resetFlash = t=>{ const el=$('resetMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };

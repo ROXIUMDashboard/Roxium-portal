@@ -349,6 +349,20 @@ create policy "team uploads" on storage.objects for insert
 -- Returns the new practice id. Run once per new client.
 -- ============================================================
 
+-- Delete a practice and everything under it (team-only). Practice-scoped data
+-- (kpi/deliverables/milestones/video/history/notifications/memberships) cascades
+-- via on-delete-cascade FKs; client profiles are removed, other profiles detached.
+create or replace function delete_practice(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_team() then
+    raise exception 'Only team members can delete a practice' using errcode = 'insufficient_privilege';
+  end if;
+  delete from profiles where practice_id = p_id and role = 'client';
+  update profiles set practice_id = null where practice_id = p_id;
+  delete from practices where id = p_id;   -- cascades all practice-scoped rows
+end $$;
+
 create or replace function seed_practice(p_name text, p_kickoff date)
 returns uuid language plpgsql as $$
 declare pid uuid;
