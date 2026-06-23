@@ -430,3 +430,15 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
   .cards{grid-template-columns:1fr}
   .pipeline{grid-auto-columns:86vw}
 }
+
+/* Phase C · per-client reporting-sheet rows in Admin */
+.clientrow2{display:grid;grid-template-columns:minmax(160px,1fr) 2fr auto auto;gap:10px;align-items:center;
+  padding:10px 12px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease}
+.clientrow2:hover{border-color:var(--gold)}
+.clientrow2 .ccol{display:flex;flex-direction:column;gap:2px;min-width:0}
+.clientrow2 .sheeturl{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);
+  padding:9px 11px;font-family:'Jost';font-size:12.5px;border-radius:3px}
+.clientrow2 .sheeturl:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.ssok{font-size:10.5px;color:var(--green);letter-spacing:.04em}
+.ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
+@media(max-width:640px){.clientrow2{grid-template-columns:1fr;gap:8px}}

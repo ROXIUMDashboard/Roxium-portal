@@ -39,12 +39,29 @@ create table if not exists kpi_monthly (
   period date not null,                                  -- first day of the reported month
   source text not null default 'marketing',              -- 'marketing' | 'coefficient' | 'asana' | …
   month int not null check (month between 1 and 12),     -- derived from period via trigger
-  spend numeric, impr numeric, clicks numeric, lpv numeric, leads numeric,
-  cons numeric, proc numeric, apv numeric, price numeric,
-  sent numeric, opens numeric, eclk numeric, sms numeric,
-  vid numeric, foll numeric, rank numeric, posts numeric,
+  -- ad-performance metrics (the real Coefficient/Meta source). CTR/CPM/CPC are
+  -- derived in the dashboard from spend·impr·clicks, so they aren't stored.
+  spend numeric, reach numeric, impr numeric, clicks numeric, lpv numeric,
+  page_likes numeric, foll numeric,
+  -- legacy business columns kept for back-compat (not shown on the default dashboard)
+  leads numeric, cons numeric, proc numeric, apv numeric, price numeric,
+  sent numeric, opens numeric, eclk numeric, sms numeric, vid numeric,
+  rank numeric, posts numeric,
+  finalized boolean not null default false,   -- true = frozen archived snapshot
   updated_at timestamptz default now(),
   unique (practice_id, period, source)
+);
+
+-- Per-client reporting sheet source (one published-CSV per practice).
+create table if not exists sheet_sources (
+  id uuid primary key default gen_random_uuid(),
+  practice_id uuid not null references practices(id) on delete cascade,
+  source_type text not null default 'google_sheet_csv',
+  csv_url text, sheet_id text, tab_name text,
+  is_active boolean not null default true,
+  last_synced_at timestamptz, last_status text, last_error text,
+  created_at timestamptz default now(),
+  unique (practice_id)
 );
 
 -- "Progress on the things we promised them" — the deliverables tracker.
@@ -157,6 +174,9 @@ alter table video_history  enable row level security;
 alter table activity       enable row level security;
 alter table notifications  enable row level security;
 alter table memberships    enable row level security;
+alter table sheet_sources  enable row level security;
+drop policy if exists "team sheet sources" on sheet_sources;
+create policy "team sheet sources" on sheet_sources for all using (is_team()) with check (is_team());
 
 -- security definer: these helpers read profiles directly without re-triggering
 -- the profiles RLS policy (prevents infinite recursion on profile lookups).
@@ -287,6 +307,21 @@ begin
   return new;
 end $$;
 
+-- A finalized KPI month is an immutable archived snapshot (sync + manual edits no-op).
+create or replace function protect_finalized_kpi() returns trigger
+language plpgsql as $$
+begin
+  if old.finalized then return old; end if;
+  return new;
+end $$;
+
+-- Freeze every month before the current calendar month; current month stays live.
+create or replace function finalize_past_months() returns void
+language sql security definer set search_path = public as $$
+  update kpi_monthly set finalized = true
+   where finalized = false and period < date_trunc('month', now())::date;
+$$;
+
 -- Keep `month` derived from `period` and refresh updated_at on every KPI write.
 create or replace function sync_kpi_month() returns trigger
 language plpgsql as $$
@@ -319,6 +354,10 @@ create trigger trg_video_insert after insert on video_pipeline
 drop trigger if exists trg_video_stage on video_pipeline;
 create trigger trg_video_stage before update on video_pipeline
   for each row execute function log_video_stage();
+
+drop trigger if exists trg_protect_finalized_kpi on kpi_monthly;
+create trigger trg_protect_finalized_kpi before update on kpi_monthly
+  for each row execute function protect_finalized_kpi();
 
 drop trigger if exists trg_sync_kpi_month on kpi_monthly;
 create trigger trg_sync_kpi_month before insert or update on kpi_monthly
