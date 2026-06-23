@@ -2,33 +2,23 @@
 // sync-coefficient — pull each client's published Coefficient/Google-Sheet CSV
 // and upsert AD-PERFORMANCE metrics into kpi_monthly, then freeze past months.
 //
-// Source of truth = Supabase. The portal NEVER reads the sheet directly.
+// Auth (either path):
+//   • x-sync-key header (or ?key=) matching SYNC_SECRET — for pg_cron / pg_net
+//   • Bearer JWT from a team user — for the Admin "Sync now" button in the portal
 //
-// Per-client sources:
-//   • Preferred: rows in `sheet_sources` (one per practice, each with its own
-//     csv_url — a tab in the master sheet or a per-client sheet). The sync loops
-//     every active source. practice_id comes from the row, so the sheet doesn't
-//     even need a practice_id column (but it's still accepted if present).
-//   • Fallback: the legacy single CSV_URL secret (one master sheet whose rows
-//     carry a practice_id column). Used only when no sheet_sources exist.
+// Sheet parsing:
+//   • Accepts period OR date/day/month columns (daily rows roll up to one month)
+//   • Extra header aliases for Coefficient/Meta exports (cost, outbound clicks, etc.)
+//   • spend/impr/clicks/lpv are summed per month; reach/foll/etc. take the max
 //
-// Snapshots:
-//   • Each (practice_id, period, source) is one row. The CURRENT calendar month is
-//     live (finalized=false, keeps updating). After upserting, finalize_past_months()
-//     freezes every earlier month; a DB trigger makes finalized rows immutable.
-//
-// Metrics mapped (header → column): the real ad fields. CTR/CPM/CPC are derived
-// in the dashboard from spend·impr·clicks, so they aren't stored.
-//
-// Env: SYNC_SECRET (required), KPI_SOURCE (default 'marketing'),
-//      CSV_URL (legacy fallback), SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (auto).
+// Deploy:  supabase functions deploy sync-coefficient --no-verify-jwt
 // ============================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // header alias (lower-cased) -> kpi_monthly column. Accepts human labels (incl. the
-// common Meta/Coefficient variants) AND raw DB keys, so a real ad export or our
-// template both work. CTR/CPM/CPC are derived in the dashboard, so they're ignored here.
+// common Meta/Coefficient variants) AND raw DB keys. CTR/CPM/CPC are derived in the
+// dashboard, so they're ignored here.
 const COLUMN_ALIASES: Record<string, string> = {
   "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend", "cost": "spend",
   "reach": "reach",
@@ -43,6 +33,12 @@ const COLUMN_ALIASES: Record<string, string> = {
 const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-key",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function nextMonthCutoff(): string {
   const d = new Date();
   d.setUTCDate(1);
@@ -51,7 +47,10 @@ function nextMonthCutoff(): string {
 }
 
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body, null, 2), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: { ...cors, "content-type": "application/json" },
+  });
 
 function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
@@ -77,6 +76,12 @@ const num = (v: string) => {
   return Number.isFinite(n) ? n : null;
 };
 
+interface MonthBucket {
+  practice_id: string;
+  period: string;
+  [metric: string]: string | number | null;
+}
+
 // Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
 // sheet has no practice_id column (per-client source). Supports both a monthly
 // `period` column and a daily `date` column (daily rows are aggregated per month).
@@ -90,8 +95,7 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
   const dateIdx = ["period", "date", "day", "reporting date", "month"].map(idxOf).find(i => i >= 0) ?? -1;
   if (dateIdx < 0) { skipped.push({ source: label, reason: "no period/date column" }); return []; }
 
-  // bucket rows by practice|period, aggregating metrics
-  const buckets = new Map<string, Record<string, number | null>>();
+  const buckets = new Map<string, MonthBucket>();
   for (let i = 1; i < grid.length; i++) {
     const r = grid[i];
     const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
@@ -101,7 +105,10 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
     let period: string | null = null;
     const raw = (r[dateIdx] ?? "").trim();
     if (hasPeriod && /^\d{4}-\d{2}(-\d{2})?$/.test(raw)) period = raw.slice(0, 7) + "-01";
-    else { const d = new Date(raw); if (!isNaN(d.getTime())) period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; }
+    else {
+      const d = new Date(raw);
+      if (!isNaN(d.getTime())) period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    }
     if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
 
     const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
@@ -110,33 +117,56 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
     }
 
     const key = pid + "|" + period;
-    const b = buckets.get(key) || { __pid: pid as unknown as number, __period: period as unknown as number };
+    const b = buckets.get(key) || { practice_id: pid, period };
     for (let c = 0; c < header.length; c++) {
       const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
       const v = num((r[c] ?? "").trim()); if (v == null) continue;
-      if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
-      else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
+      if (ADDITIVE.has(col)) {
+        b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+      } else {
+        const prev = typeof b[col] === "number" ? b[col] as number : -Infinity;
+        b[col] = Math.max(prev, v);
+      }
     }
     buckets.set(key, b);
   }
 
   return [...buckets.values()].map(b => {
-    const { __pid, __period, ...metrics } = b as Record<string, unknown>;
-    return { practice_id: __pid, period: __period, source, ...metrics };
+    const { practice_id, period, ...metrics } = b;
+    return { practice_id, period, source, ...metrics };
   });
 }
 
+async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!token) return false;
+  const { data: caller, error } = await admin.auth.getUser(token);
+  if (error || !caller?.user) return false;
+  const { data: profile } = await admin
+    .from("profiles").select("role").eq("id", caller.user.id).single();
+  return profile?.role === "team";
+}
+
+async function authorize(req: Request, admin: SupabaseClient): Promise<Response | null> {
+  const secret = Deno.env.get("SYNC_SECRET");
+  const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
+  if (secret && got === secret) return null;
+  if (await isTeamCaller(req, admin)) return null;
+  if (!secret) return json({ ok: false, error: "SYNC_SECRET not configured" }, 500);
+  return json({ ok: false, error: "unauthorized — set x-sync-key to SYNC_SECRET, or sign in as team" }, 401);
+}
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
+
   try {
-    const secret = Deno.env.get("SYNC_SECRET");
-    if (!secret) return json({ ok: false, error: "SYNC_SECRET not configured" }, 500);
-    const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
-    if (got !== secret) return json({ ok: false, error: "unauthorized" }, 401);
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const denied = await authorize(req, sb);
+    if (denied) return denied;
 
     const SOURCE = Deno.env.get("KPI_SOURCE") || "marketing";
-    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // gather the sources to pull: per-client sheet_sources, else the legacy CSV_URL
     const { data: sources } = await sb.from("sheet_sources")
       .select("practice_id,csv_url,is_active").eq("is_active", true);
     const jobs: { pid: string | null; url: string; label: string }[] = [];
@@ -168,12 +198,10 @@ Deno.serve(async (req) => {
 
     let upserted = 0, error: string | null = null;
     if (upserts.length) {
-      // finalized rows are protected by a DB trigger, so upserting them is a safe no-op
       const { data, error: e } = await sb.from("kpi_monthly")
         .upsert(upserts, { onConflict: "practice_id,period,source" }).select("id");
       if (e) error = e.message; else upserted = data?.length ?? upserts.length;
     }
-    // freeze every month before the current one (idempotent)
     await sb.rpc("finalize_past_months");
 
     return json({ ok: !error, sources: perSource, rows_seen: upserts.length, upserted,

@@ -431,6 +431,13 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
   .pipeline{grid-auto-columns:86vw}
 }
 
+/* Admin · manual KPI sync trigger */
+.syncnowrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 12px}
+.syncnowrow .note{margin:0}
+.syncnowrow.syncing #btnSyncNow{opacity:.6;pointer-events:none}
+.syncnowrow.ok #syncNowMsg{color:var(--green)}
+.syncnowrow.err #syncNowMsg{color:var(--red)}
+
 /* Phase C · per-client reporting-sheet rows in Admin */
 .clientrow2{display:grid;grid-template-columns:minmax(160px,1fr) 2fr auto auto;gap:10px;align-items:center;
   padding:10px 12px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease}

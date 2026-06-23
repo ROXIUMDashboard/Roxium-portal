@@ -133,6 +133,10 @@
 
       <h3>Clients &amp; reporting sheets</h3>
       <p class="note" style="margin-top:-2px">Each client has its own published Google-Sheet CSV URL — Coefficient feeds that sheet, and the portal syncs it into Supabase every 2 hours (current month live, past months frozen). Paste the client's published-to-web CSV link and Save. Deleting a client permanently removes that practice and <b>all</b> of its data; this cannot be undone.</p>
+      <div class="syncnowrow">
+        <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
+        <span class="note" id="syncNowMsg">Pulls every active reporting sheet into Supabase immediately.</span>
+      </div>
       <div id="adminClientList" class="clientlist"></div>
       <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
     </section>

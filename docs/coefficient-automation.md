@@ -63,10 +63,29 @@ updates every refresh, past months stay put.
 ## Operating it
 
 **Trigger a sync immediately (don't wait for the hour):**
+
+Option A — **Admin tab → ↻ Sync now** (team login; no secret). Requires
+`sync-coefficient` deployed with JWT verification on (default).
+
+Option B — SQL / cron (`pg_net`, needs `x-sync-key` matching `SYNC_SECRET`):
+
 ```bash
 curl -s -X POST \
   "https://nchtmeqsjkpcvtuscxfy.supabase.co/functions/v1/sync-coefficient" \
-  -H "x-sync-key: <SYNC_SECRET>"
+  -H "x-sync-key: <your SYNC_SECRET value — no angle brackets>"
+```
+
+Or in the SQL editor (the returned number is a request id, not a status — see below):
+
+```sql
+select net.http_post(
+  url := 'https://nchtmeqsjkpcvtuscxfy.supabase.co/functions/v1/sync-coefficient',
+  headers := jsonb_build_object('Content-Type','application/json','x-sync-key','<SYNC_SECRET>'),
+  body := '{}'::jsonb
+);
+
+-- then read the actual HTTP result (status_code 200 = success, 401 = wrong secret):
+select status_code, left(content,300), created from net._http_response order by created desc limit 3;
 ```
 Returns JSON: `rows_seen`, `upserted`, `skipped_count`, and a `skipped` list with
 the reason for any skipped row (e.g. a bad `practice_id` or `period`).
