@@ -16,6 +16,9 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// header alias (lower-cased) -> kpi_monthly column. Accepts human labels (incl. the
+// common Meta/Coefficient variants) AND raw DB keys. CTR/CPM/CPC are derived in the
+// dashboard, so they're ignored here.
 const COLUMN_ALIASES: Record<string, string> = {
   "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend", "cost": "spend",
   "reach": "reach",
@@ -25,7 +28,8 @@ const COLUMN_ALIASES: Record<string, string> = {
   "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes",
   "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll",
 };
-// Daily rows in the sheet are rolled up to one month: these columns sum, others take max.
+// additive metrics are SUMmed when aggregating daily rows into a month; the rest
+// (unique-people / running totals) take the MAX day as the best monthly proxy.
 const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -78,6 +82,9 @@ interface MonthBucket {
   [metric: string]: string | number | null;
 }
 
+// Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
+// sheet has no practice_id column (per-client source). Supports both a monthly
+// `period` column and a daily `date` column (daily rows are aggregated per month).
 function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
                       skipped: unknown[], label: string): Record<string, unknown>[] {
   if (grid.length < 2) return [];
@@ -94,6 +101,7 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
     const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
     if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
 
+    // resolve the reporting month from a 'YYYY-MM' period or any parseable date
     let period: string | null = null;
     const raw = (r[dateIdx] ?? "").trim();
     if (hasPeriod && /^\d{4}-\d{2}(-\d{2})?$/.test(raw)) period = raw.slice(0, 7) + "-01";
