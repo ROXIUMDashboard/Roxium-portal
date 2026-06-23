@@ -2,37 +2,31 @@
 // sync-coefficient — pull each client's published Coefficient/Google-Sheet CSV
 // and upsert AD-PERFORMANCE metrics into kpi_monthly, then freeze past months.
 //
-// Source of truth = Supabase. The portal NEVER reads the sheet directly.
-//
 // Auth (either path):
 //   • x-sync-key header (or ?key=) matching SYNC_SECRET — for pg_cron / pg_net
 //   • Bearer JWT from a team user — for the Admin "Sync now" button in the portal
 //
-// Per-client sources:
-//   • Preferred: rows in `sheet_sources` (one per practice, each with its own
-//     csv_url — a tab in the master sheet or a per-client sheet). The sync loops
-//     every active source. practice_id comes from the row, so the sheet doesn't
-//     even need a practice_id column (but it's still accepted if present).
-//   • Fallback: the legacy single CSV_URL secret (one master sheet whose rows
-//     carry a practice_id column). Used only when no sheet_sources exist.
+// Sheet parsing:
+//   • Accepts period OR date/day/month columns (daily rows roll up to one month)
+//   • Extra header aliases for Coefficient/Meta exports (cost, outbound clicks, etc.)
+//   • spend/impr/clicks/lpv are summed per month; reach/foll/etc. take the max
 //
-// Env: SYNC_SECRET (required for cron), KPI_SOURCE (default 'marketing'),
-//      CSV_URL (legacy fallback), SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (auto).
-// Deploy:  supabase functions deploy sync-coefficient --no-verify-jwt   (cron)
-//          supabase functions deploy sync-coefficient                   (portal button)
+// Deploy:  supabase functions deploy sync-coefficient --no-verify-jwt
 // ============================================================
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const COLUMN_ALIASES: Record<string, string> = {
-  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend",
+  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend", "cost": "spend",
   "reach": "reach",
   "impressions": "impr", "impressions & reach": "impr", "impr": "impr",
-  "link clicks": "clicks", "clicks": "clicks",
+  "link clicks": "clicks", "clicks": "clicks", "clicks (all)": "clicks", "outbound clicks": "clicks",
   "landing page views": "lpv", "landing page visits": "lpv", "lpv": "lpv",
-  "page likes": "page_likes", "page_likes": "page_likes",
-  "followers": "foll", "qualified followers added": "foll", "foll": "foll",
+  "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes",
+  "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll",
 };
+// Daily rows in the sheet are rolled up to one month: these columns sum, others take max.
+const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const cors = {
@@ -78,37 +72,61 @@ const num = (v: string) => {
   return Number.isFinite(n) ? n : null;
 };
 
+interface MonthBucket {
+  practice_id: string;
+  period: string;
+  [metric: string]: string | number | null;
+}
+
 function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
                       skipped: unknown[], label: string): Record<string, unknown>[] {
   if (grid.length < 2) return [];
   const header = grid[0].map(h => h.trim().toLowerCase());
   const idxOf = (n: string) => header.indexOf(n);
   const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
-  if (idxOf("period") < 0) { skipped.push({ source: label, reason: "no period column" }); return []; }
+  const hasPeriod = idxOf("period") >= 0;
+  const dateIdx = ["period", "date", "day", "reporting date", "month"].map(idxOf).find(i => i >= 0) ?? -1;
+  if (dateIdx < 0) { skipped.push({ source: label, reason: "no period/date column" }); return []; }
 
-  const out: Record<string, unknown>[] = [];
+  const buckets = new Map<string, MonthBucket>();
   for (let i = 1; i < grid.length; i++) {
     const r = grid[i];
     const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
     if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
 
-    let period = cell(r, "period");
-    if (/^\d{4}-\d{2}$/.test(period)) period += "-01";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) { skipped.push({ source: label, row: i + 1, reason: "bad period", value: period }); continue; }
-    const py = Number(period.slice(0, 4));
-    const nowY = new Date().getUTCFullYear();
+    let period: string | null = null;
+    const raw = (r[dateIdx] ?? "").trim();
+    if (hasPeriod && /^\d{4}-\d{2}(-\d{2})?$/.test(raw)) period = raw.slice(0, 7) + "-01";
+    else {
+      const d = new Date(raw);
+      if (!isNaN(d.getTime())) period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    }
+    if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
+
+    const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
     if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
       skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
     }
 
-    const obj: Record<string, unknown> = { practice_id: pid, period, source };
+    const key = pid + "|" + period;
+    const b = buckets.get(key) || { practice_id: pid, period };
     for (let c = 0; c < header.length; c++) {
-      const col = COLUMN_ALIASES[header[c]];
-      if (col) obj[col] = num((r[c] ?? "").trim());
+      const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
+      const v = num((r[c] ?? "").trim()); if (v == null) continue;
+      if (ADDITIVE.has(col)) {
+        b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+      } else {
+        const prev = typeof b[col] === "number" ? b[col] as number : -Infinity;
+        b[col] = Math.max(prev, v);
+      }
     }
-    out.push(obj);
+    buckets.set(key, b);
   }
-  return out;
+
+  return [...buckets.values()].map(b => {
+    const { practice_id, period, ...metrics } = b;
+    return { practice_id, period, source, ...metrics };
+  });
 }
 
 async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
