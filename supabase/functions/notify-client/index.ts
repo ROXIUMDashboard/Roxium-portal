@@ -4,15 +4,21 @@
 // practice's client emails server-side (service role) and sends via Resend.
 //
 // Deploy:  supabase functions deploy notify-client --project-ref <ref>
-// Secrets: RESEND_API_KEY (required), EMAIL_FROM (e.g. "ROXIUM <updates@roxium.com>")
+// Secrets: RESEND_API_KEY (required to send), EMAIL_FROM (e.g. "ROXIUM <updates@roxium.com>")
 //          SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are auto-injected.
-// Requires the practice_member_emails() RPC (see migrations/2026-06-23_phase_d_email.sql).
+// Requires the practice_member_emails() RPC (migrations/2026-06-23_phase_d_email.sql).
+// If RESEND_API_KEY is absent it returns the intended recipient count (safe no-op).
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 const json = (b: unknown, s = 200) =>
-  new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
 const SUBJECTS: Record<string, string> = {
   deliverable: "A deliverable just shipped",
@@ -20,6 +26,10 @@ const SUBJECTS: Record<string, string> = {
   stats: "Your latest performance update is ready",
   video: "A new video is ready to watch",
 };
+
+function escapeHtml(s: string) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+}
 
 const emailHtml = (message: string) => `
   <div style="font-family:Arial,Helvetica,sans-serif;background:#0D0C10;padding:32px;color:#F2EDE3">
@@ -30,24 +40,22 @@ const emailHtml = (message: string) => `
     </div>
   </div>`;
 
-function escapeHtml(s: string) {
-  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
-}
-
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
   try {
     const { practice_id, message, kind } = await req.json();
     if (!practice_id || !message) return json({ ok: false, error: "practice_id and message required" }, 400);
 
     const RESEND = Deno.env.get("RESEND_API_KEY");
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
-    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 
     const { data: rows, error } = await sb.rpc("practice_member_emails", { p_id: practice_id });
     if (error) return json({ ok: false, error: error.message }, 500);
     const to = (rows || []).map((r: { email: string }) => r.email).filter(Boolean);
     if (!to.length) return json({ ok: true, emailed: 0, note: "no client emails on file" });
-    if (!RESEND) return json({ ok: false, error: "RESEND_API_KEY not configured" }, 500);
+    if (!RESEND) return json({ ok: true, emailed: 0, note: "RESEND_API_KEY not set — would have emailed " + to.length });
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

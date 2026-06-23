@@ -3,14 +3,19 @@
 // Called by the portal when the team posts a finished video URL ({ video_id }).
 //
 // Deploy:  supabase functions deploy notify-video-ready --project-ref <ref>
-// Secrets: RESEND_API_KEY (required), EMAIL_FROM. SUPABASE_URL / SERVICE_ROLE_KEY auto-injected.
+// Secrets: RESEND_API_KEY (required to send), EMAIL_FROM. SUPABASE_URL / SERVICE_ROLE_KEY auto-injected.
 // Requires practice_member_emails() RPC (migrations/2026-06-23_phase_d_email.sql).
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 const json = (b: unknown, s = 200) =>
-  new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
 function escapeHtml(s: string) {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -27,13 +32,15 @@ const emailHtml = (item: string, url: string) => `
   </div>`;
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
   try {
     const { video_id } = await req.json();
     if (!video_id) return json({ ok: false, error: "video_id required" }, 400);
 
     const RESEND = Deno.env.get("RESEND_API_KEY");
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
-    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 
     const { data: v, error: vErr } = await sb
       .from("video_pipeline").select("practice_id,item,video_url").eq("id", video_id).single();
@@ -44,7 +51,7 @@ Deno.serve(async (req) => {
     if (error) return json({ ok: false, error: error.message }, 500);
     const to = (rows || []).map((r: { email: string }) => r.email).filter(Boolean);
     if (!to.length) return json({ ok: true, emailed: 0, note: "no client emails on file" });
-    if (!RESEND) return json({ ok: false, error: "RESEND_API_KEY not configured" }, 500);
+    if (!RESEND) return json({ ok: true, emailed: 0, note: "RESEND_API_KEY not set — would have emailed " + to.length });
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
