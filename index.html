@@ -137,6 +137,9 @@
         <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
         <span class="note" id="syncNowMsg">Pulls every active reporting sheet into Supabase immediately.</span>
       </div>
+      <h4 class="syncstatus-h">Auto-sync status</h4>
+      <p class="note" style="margin-top:-2px">Confirms the every-2-hours automation is actually running: when it last ran, whether it succeeded, how many KPI rows it wrote, and which months it saw. Use “Sync now” above to trigger a manual run and watch this update.</p>
+      <div id="syncStatus" class="syncstatus"></div>
       <div id="adminClientList" class="clientlist"></div>
       <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
     </section>

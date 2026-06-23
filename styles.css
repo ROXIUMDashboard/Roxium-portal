@@ -120,9 +120,18 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 /* kpi cards + status */
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
 .card{background:var(--surface);border:1px solid var(--line);padding:18px 20px 14px}
-.card .k{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold)}
+.card .k{font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;gap:6px}
 .card .big{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:600;margin:6px 0 2px;font-variant-numeric:tabular-nums}
 .card .tgt{font-size:11px;color:var(--muted)}
+/* month-aware green sublabel under each KPI card ('this month' / 'in March') */
+.card .mnote{font-size:10.5px;letter-spacing:.04em;margin-top:3px;color:var(--muted)}
+.card .mnote.g{color:var(--green)}
+/* themed ⓘ info button on each metric card (no default browser tooltip styling) */
+.metricinfo{margin-left:auto;width:16px;height:16px;line-height:14px;padding:0;border:1px solid var(--line);
+  border-radius:50%;background:transparent;color:var(--muted);font-size:11px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;transition:color .15s ease,border-color .15s ease}
+.metricinfo:hover{color:var(--gold);border-color:var(--gold)}
+.metricinfo:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 .card .trend{margin-top:8px;font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .trend.up{color:#3aa76d}
 .trend.down{color:#c0573f}
@@ -356,6 +365,12 @@ h2{font-size:31px}
 .dlg-head{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:23px;color:var(--cream);margin-bottom:8px}
 .dlg-body{font-size:13.5px;line-height:1.6;color:var(--muted)}
 .dlg-body b{color:var(--cream);font-weight:500}
+/* metric explainer body inside the themed dialog (ⓘ popover content) */
+.metricdef{display:flex;flex-direction:column;gap:12px}
+.metricdef .mdrow{display:grid;grid-template-columns:96px 1fr;gap:12px;align-items:start}
+.metricdef .mdlabel{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);padding-top:2px}
+.metricdef .mdrow>div:last-child{color:var(--cream);font-size:13px;line-height:1.55}
+@media(max-width:520px){.metricdef .mdrow{grid-template-columns:1fr;gap:3px}}
 .dlg-input{width:100%;margin-top:16px;background:var(--ink);border:1px solid var(--line);color:var(--cream);
   padding:12px 13px;font-family:'Jost';font-size:14.5px;border-radius:3px;transition:border-color .16s ease, box-shadow .16s ease}
 .dlg-input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
@@ -443,9 +458,32 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
   padding:10px 12px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease}
 .clientrow2:hover{border-color:var(--gold)}
 .clientrow2 .ccol{display:flex;flex-direction:column;gap:2px;min-width:0}
-.clientrow2 .sheeturl{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);
+.clientrow2 .sheetcfg{display:flex;flex-direction:column;gap:6px;min-width:0}
+.clientrow2 .cellinput{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);
   padding:9px 11px;font-family:'Jost';font-size:12.5px;border-radius:3px}
-.clientrow2 .sheeturl:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.clientrow2 .cellinput:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.clientrow2 .cellinput::placeholder{color:var(--muted);opacity:.7}
+.clientrow2 .sheeturl{opacity:.75}
 .ssok{font-size:10.5px;color:var(--green);letter-spacing:.04em}
 .ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
 @media(max-width:640px){.clientrow2{grid-template-columns:1fr;gap:8px}}
+
+/* ---- sync observability: did the 2-hour automation run? status banner + audit table ---- */
+.syncstatus-h{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:17px;margin:26px 0 4px;color:var(--gold)}
+.syncstatus{margin:8px 0 6px}
+.syncbanner{border:1px solid var(--line);border-left-width:3px;background:var(--surface);padding:12px 15px;border-radius:3px}
+.syncbanner .sbtitle{font-size:10px;letter-spacing:.22em;text-transform:uppercase;margin-bottom:5px}
+.syncbanner .sbtext{font-size:12.5px;line-height:1.55;color:var(--muted)}
+.syncbanner .sbtext b{color:var(--cream);font-weight:500}
+.syncbanner.ok{border-left-color:var(--green)}
+.syncbanner.ok .sbtitle{color:var(--green)}
+.syncbanner.warn{border-left-color:var(--amber)}
+.syncbanner.warn .sbtitle{color:var(--amber)}
+.syncbanner.err{border-left-color:var(--red)}
+.syncbanner.err .sbtitle{color:var(--red)}
+.synctable{width:100%;border-collapse:collapse;margin-top:10px;border:1px solid var(--line)}
+.synctable th{background:var(--surface2);color:var(--gold);font-weight:400;font-size:9px;letter-spacing:.18em;
+  text-transform:uppercase;padding:8px 12px;text-align:left;border-bottom:1px solid var(--line)}
+.synctable td{padding:8px 12px;font-size:12px;color:var(--cream);border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.synctable tr:last-child td{border-bottom:none}
+.synctable td .ssok,.synctable td .ssbad{font-size:11px}

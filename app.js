@@ -39,6 +39,31 @@ const OPTIONAL_METRICS = [
 // value of a metric for a row: derived metrics compute (null if inputs absent),
 // raw metrics read the column (null if missing). null => the card is not rendered.
 const metricValue = (def, m)=> def.derive ? def.derive(m) : N(m, def.k);
+
+// Client-facing metric explanations. Each: what it measures, why it matters, and how
+// to read a higher / lower value. Surfaced via the ⓘ info button on each KPI card.
+const METRIC_INFO = {
+  reach:  {label:'Reach', what:'The number of unique people who saw your ads at least once.', why:'Tells you how wide your audience is — how many distinct individuals your campaign actually touched.', higher:'Higher reach means your message is spreading to more people.', lower:'Lower reach means a smaller, often more concentrated audience.'},
+  impr:   {label:'Impressions', what:'The total number of times your ads were shown, including repeat views by the same person.', why:'Measures total exposure and how often your audience sees you. Impressions ÷ reach = average frequency per person.', higher:'Higher impressions mean more total exposure (and possibly more repeat views).', lower:'Lower impressions mean less total on-screen time for your ads.'},
+  spend:  {label:'Amount Spent', what:'The total advertising budget actually spent in this period.', why:'It is the input every other efficiency metric (CPM, CPC) is measured against — your cost base.', higher:'Higher spend usually drives more reach and clicks, but watch efficiency.', lower:'Lower spend conserves budget; compare against the results it produced.'},
+  ctr:    {label:'CTR (Click-Through Rate)', what:'The share of impressions that resulted in a link click — link clicks ÷ impressions.', why:'A core measure of creative and targeting relevance: are people who see the ad acting on it?', higher:'Higher CTR means the ad resonates and the audience is engaged. Good.', lower:'Lower CTR can signal weak creative, fatigue, or off-target audience.'},
+  cpm:    {label:'CPM (Cost per 1,000 Impressions)', what:'How much you pay for every 1,000 times your ad is shown — spend ÷ (impressions ÷ 1,000).', why:'The standard way to compare how expensive it is to reach your audience across campaigns.', higher:'Higher CPM means each 1,000 views costs more — less efficient exposure.', lower:'Lower CPM is better: you are buying exposure more cheaply.'},
+  clicks: {label:'Link Clicks', what:'The number of times people clicked a link in your ad to go to your site or landing page.', why:'A direct signal of intent — the step between seeing the ad and becoming a lead or customer.', higher:'Higher clicks mean more people are taking action on your ads.', lower:'Lower clicks mean fewer people are acting; check CTR and creative.'},
+  cpc:    {label:'CPC (Cost per Link Click)', what:'The average cost of a single link click — spend ÷ link clicks.', why:'Shows how efficiently your budget converts into actual visits and intent.', higher:'Higher CPC means each click costs more — less efficient.', lower:'Lower CPC is better: you are paying less for each engaged visitor.'},
+};
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+// human month name from a period key ('YYYY-MM-01' -> 'March')
+function monthName(period){ if(!period) return ''; const mi=+String(period).slice(5,7)-1; return MONTH_NAMES[mi]||''; }
+// Month-aware green sublabel for a stat/card. Live current month => 'this month';
+// an archived snapshot => month-specific ('in March', or 'in March 2026' if not the
+// current calendar year). NEVER generic 'not this month' phrasing.
+function monthNote(period, isLive){
+  if(period==null) return 'awaiting data';
+  if(isLive) return 'this month';
+  const mn = monthName(period), yr = String(period).slice(0,4);
+  const curYr = String(new Date().getFullYear());
+  return yr===curYr ? `in ${mn}` : `in ${mn} ${yr}`;
+}
 const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
 // Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
@@ -308,10 +333,12 @@ function render(){
   // hero stats — real ad metrics (spend / reach / link clicks) + project progress
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
   const hv = (k)=> latest ? N(latest,k) : null;
+  // month-aware sublabels: 'this month' when live, else month-specific ('in March').
+  const mNote = latest ? monthNote(latest.period, isLive) : 'awaiting data';
   const heroes = [
-    {v: fmt$(hv('spend')),   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: latest? 'this month':'awaiting data'},
-    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: latest? 'people reached':'awaiting data'},
-    {v: fmtNum(hv('clicks')),l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: latest? 'this month':'awaiting data'},
+    {v: fmt$(hv('spend')),   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: mNote},
+    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: latest? `people reached ${mNote}`:'awaiting data'},
+    {v: fmtNum(hv('clicks')),l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: mNote},
     {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
   ];
   $('heroStats').innerHTML = heroes.map(h=>
@@ -345,15 +372,22 @@ function render(){
       const up = pct>0, good = opts.lowerBetter ? !up : up;
       return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}% vs ${periodLabel(prev.period)}</div>`;
     };
+    // month-aware green sublabel for each card: 'this month' (live) or 'in March' (snapshot)
+    const cardNote = latest ? monthNote(latest.period, isLive) : '';
     const cards = CORE_METRICS.map(def=>{
       const v = latest ? metricValue(def, latest) : null;
       if(v==null) return null;                                   // omit metrics with no source data
       const bv = prev ? metricValue(def, prev) : null;
-      return `<div class="card"><div class="k">${def.label}</div><div class="big">${def.fmt(v)}</div>`+
-        `<div class="tgt">${subtitles[def.k]||''}</div>${trend(v, bv, {lowerBetter:def.lowerBetter})}</div>`;
+      const info = METRIC_INFO[def.k]
+        ? `<button class="metricinfo" type="button" data-metric="${def.k}" title="What is ${def.label}?" aria-label="What is ${def.label}?">ⓘ</button>` : '';
+      return `<div class="card"><div class="k">${def.label}${info}</div><div class="big">${def.fmt(v)}</div>`+
+        `<div class="tgt">${subtitles[def.k]||''}</div><div class="mnote g">${cardNote}</div>${trend(v, bv, {lowerBetter:def.lowerBetter})}</div>`;
     }).filter(Boolean);
     $('kpiCards').innerHTML = cards.length ? cards.join('')
       : `<div class="note">No ad performance data for this month yet — it syncs automatically from the reporting sheet.</div>`;
+    // wire the ⓘ info buttons (client-facing metric explanations, themed popover)
+    $('kpiCards').querySelectorAll('.metricinfo').forEach(b=>
+      b.onclick = (e)=>{ e.stopPropagation(); openMetricInfo(b.dataset.metric); });
 
     // secondary: optional ad metrics, shown only when present
     const rows = (latest ? OPTIONAL_METRICS : []).map(def=>{
@@ -521,6 +555,20 @@ function uiDialog({title='', body='', input=null, confirmLabel='Confirm', cancel
 const uiConfirm = (title, body='', opts={}) => uiDialog({title, body, danger:opts.danger, confirmLabel:opts.confirmLabel||'Confirm', requireText:opts.requireText});
 const uiAlert   = (title, body='') => uiDialog({title, body, cancelLabel:'', confirmLabel:'OK'}).then(()=>{});
 const uiPrompt  = (title, body='', value='', placeholder='') => uiDialog({title, body, input:{value,placeholder}, confirmLabel:'Save'});
+
+// Client-facing metric explainer — opens the themed dialog (same look as the rest of
+// the portal, no default browser UI) describing what a metric is, why it matters, and
+// how to read higher vs lower values.
+function openMetricInfo(key){
+  const m = METRIC_INFO[key]; if(!m) return;
+  const body = `<div class="metricdef">
+    <div class="mdrow"><div class="mdlabel">What it is</div><div>${esc(m.what)}</div></div>
+    <div class="mdrow"><div class="mdlabel">Why it matters</div><div>${esc(m.why)}</div></div>
+    <div class="mdrow"><div class="mdlabel">Higher</div><div>${esc(m.higher)}</div></div>
+    <div class="mdrow"><div class="mdlabel">Lower</div><div>${esc(m.lower)}</div></div>
+  </div>`;
+  uiDialog({title:m.label, body, cancelLabel:'', confirmLabel:'Got it'});
+}
 
 /* ---- DELIVERABLES: grouped into draggable phase cards (team) / clean phase blocks (client) ---- */
 function phaseGroups(){
@@ -1187,11 +1235,75 @@ $('btnInvite').onclick = async ()=>{
 const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
 // per-client reporting-sheet sources (practice_id -> sheet_sources row)
 let sheetSources = {};
+let syncRuns = [];   // recent rows from the sync_runs audit table (newest first)
+
+// compact relative time ('3m ago', '2h ago', 'just now', 'yesterday') for sync recency
+function ago(ts){
+  if(!ts) return 'never';
+  const then = new Date(ts).getTime(); if(!isFinite(then)) return 'never';
+  const s = Math.max(0, Math.round((Date.now()-then)/1000));
+  if(s<45) return 'just now';
+  const m = Math.round(s/60); if(m<60) return `${m}m ago`;
+  const h = Math.round(m/60); if(h<24) return `${h}h ago`;
+  const d = Math.round(h/24); return d===1 ? 'yesterday' : `${d}d ago`;
+}
+// 'YYYY-MM-01'/'YYYY-MM' month keys -> 'Mar, Apr, May' for the synced-months chip
+function monthsList(arr){
+  if(!arr || !arr.length) return '';
+  return arr.slice().sort().map(p=> monthName(p+(String(p).length<=7?'-01':'')).slice(0,3)).filter(Boolean).join(', ');
+}
 async function loadSheetSources(){
   if(!isTeamView()) return;
   const { data } = await sb.from('sheet_sources').select('*');
   sheetSources = {}; (data||[]).forEach(s=> sheetSources[s.practice_id]=s);
+  // pull the recent sync-run audit log (may not exist until the observability
+  // migration is applied — fail soft so the admin panel still renders)
+  try{
+    const { data: runs } = await sb.from('sync_runs')
+      .select('*').order('ran_at',{ascending:false}).limit(10);
+    syncRuns = runs || [];
+  }catch(_){ syncRuns = []; }
+  renderSyncStatus();
   renderAdminClients();
+}
+
+// Sync observability banner: did the 2-hour automation run, when, how many rows,
+// and did anything fail? Reads the most recent sync_runs audit row.
+function renderSyncStatus(){
+  const el = $('syncStatus'); if(!el) return;
+  if(!isTeamView()){ el.innerHTML=''; return; }
+  const last = syncRuns[0];
+  const srcVals = Object.values(sheetSources);
+  const anyError = srcVals.some(s=> s.last_status==='error');
+  if(!last){
+    // no audit rows yet — fall back to the sheet_sources last_synced_at
+    const lastSheet = srcVals.map(s=>s.last_synced_at).filter(Boolean).sort().pop();
+    const cls = anyError ? 'err' : (lastSheet ? 'ok' : 'warn');
+    const txt = lastSheet
+      ? `Last sync ${ago(lastSheet)} (${new Date(lastSheet).toLocaleString()}).${anyError?' Some clients reported errors — see below.':''}`
+      : 'No sync has been recorded yet. The automation runs every 2 hours; use “Sync now” to test it.';
+    el.innerHTML = `<div class="syncbanner ${cls}">
+      <div class="sbtitle">Auto-sync ${lastSheet?'is configured':'not yet observed'}</div>
+      <div class="sbtext">${esc(txt)}</div></div>`;
+    return;
+  }
+  const cls = last.ok===false ? 'err' : (last.skipped_count? 'warn':'ok');
+  const when = `${ago(last.ran_at)} · ${new Date(last.ran_at).toLocaleString()}`;
+  const trig = last.trigger==='manual' ? 'manual (Sync now)' : (last.trigger || 'scheduled');
+  const months = monthsList(last.months_seen);
+  const rows = syncRuns.slice(0,5).map(r=>`<tr>
+      <td>${esc(ago(r.ran_at))}</td>
+      <td>${r.ok===false?'<span class="ssbad">failed</span>':'<span class="ssok">ok</span>'}</td>
+      <td>${esc(String(r.trigger||'scheduled'))}</td>
+      <td>${r.upserted ?? 0}</td>
+      <td>${r.skipped_count ?? 0}</td>
+      <td>${esc(monthsList(r.months_seen)||'—')}</td>
+    </tr>`).join('');
+  el.innerHTML = `<div class="syncbanner ${cls}">
+      <div class="sbtitle">${last.ok===false?'Last auto-sync FAILED':'Auto-sync is running'}</div>
+      <div class="sbtext">Last run <b>${esc(when)}</b> · trigger: ${esc(trig)} · wrote <b>${last.upserted ?? 0}</b> KPI row(s)${last.skipped_count?` · skipped ${last.skipped_count}`:''}${months?` · months: ${esc(months)}`:''}.${last.error?` Error: ${esc(last.error)}`:''}</div>
+    </div>
+    <table class="synctable"><thead><tr><th>When</th><th>Status</th><th>Trigger</th><th>Rows</th><th>Skipped</th><th>Months</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // Admin · pull every active sheet_sources CSV into kpi_monthly (team JWT auth).
@@ -1205,13 +1317,15 @@ $('btnSyncNow').onclick = async ()=>{
   btn.disabled = true;
   msg.textContent = 'Syncing…';
   try{
-    const { data, error } = await sb.functions.invoke('sync-coefficient', { body:{} });
+    const { data, error } = await sb.functions.invoke('sync-coefficient', { body:{ trigger:'manual' } });
     if(error) throw error;
     if(!data?.ok) throw new Error(data?.error || 'Sync failed');
     const skip = data.skipped_count || 0;
     const parts = [`Synced ${data.upserted ?? 0} row(s)`];
     if(skip) parts.push(`skipped ${skip}`);
-    if(data.rows_seen === 0) parts.push('no rows parsed — check CSV URLs and sheet headers');
+    const months = monthsList(data.months_seen);
+    if(months) parts.push(`months: ${months}`);
+    if(data.rows_seen === 0) parts.push('no rows parsed — check sheet sources and headers');
     msg.textContent = parts.join(' · ');
     row?.classList.add('ok');
     await loadSheetSources();
@@ -1233,12 +1347,26 @@ function renderAdminClients(){
   const list = practicesList || [];
   wrap.innerHTML = list.length ? list.map(p=>{
     const s = sheetSources[p.id]||{};
-    const status = s.last_status==='error' ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error</span>`
-      : s.last_synced_at ? `<span class="ssok">✓ synced ${new Date(s.last_synced_at).toLocaleDateString()}</span>`
+    // per-client sync detail: when, success/fail, rows written and months seen
+    const detail = [];
+    if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
+    const sm = monthsList(s.last_months); if(sm) detail.push(sm);
+    const dtxt = detail.length ? ` (${detail.join(' · ')})` : '';
+    const status = s.last_status==='error'
+        ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error · ${esc(ago(s.last_synced_at))}</span>`
+      : s.last_synced_at
+        ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ synced ${esc(ago(s.last_synced_at))}${dtxt}</span>`
       : (s.csv_url? `<span class="note">awaiting first sync</span>`:'');
+    // Preferred (secure) config is a private Sheet ID + tab — the sheet is shared only
+    // with the backend service account, so no public CSV link is needed or exposed.
+    // The legacy CSV field stays available but secondary.
     return `<div class="clientrow2">
       <div class="ccol"><span class="cname">${esc(p.name)}</span> ${status}</div>
-      <input class="cellinput sheeturl" data-pid="${p.id}" value="${esc(s.csv_url||'')}" placeholder="Published Google-Sheet CSV URL for this client…">
+      <div class="sheetcfg">
+        <input class="cellinput sheetid" data-pid="${p.id}" value="${esc(s.sheet_id||'')}" placeholder="Private Google Sheet ID (preferred — share with the backend service account)">
+        <input class="cellinput sheettab" data-pid="${p.id}" value="${esc(s.tab_name||'')}" placeholder="Tab name (optional)">
+        <input class="cellinput sheeturl" data-pid="${p.id}" value="${esc(s.csv_url||'')}" placeholder="Legacy published-CSV URL (being phased out)">
+      </div>
       <button class="btn ghost sm" data-savesheet="${p.id}">Save sheet</button>
       <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete</button>
     </div>`;
@@ -1250,10 +1378,14 @@ function renderAdminClients(){
 }
 async function saveSheetSource(pid){
   if(!isTeamView()) return;
-  const inp = document.querySelector(`.sheeturl[data-pid="${pid}"]`);
-  const csv_url = (inp?.value||'').trim();
+  const sheet_id = (document.querySelector(`.sheetid[data-pid="${pid}"]`)?.value||'').trim();
+  const tab_name = (document.querySelector(`.sheettab[data-pid="${pid}"]`)?.value||'').trim();
+  const csv_url  = (document.querySelector(`.sheeturl[data-pid="${pid}"]`)?.value||'').trim();
+  // a private Sheet ID is the secure source type; CSV remains for the legacy mode
+  const source_type = sheet_id ? 'google_sheet_private' : 'google_sheet_csv';
   const { error } = await sb.from('sheet_sources')
-    .upsert({ practice_id: pid, csv_url: csv_url||null, is_active:true, source_type:'google_sheet_csv' }, { onConflict:'practice_id' });
+    .upsert({ practice_id: pid, sheet_id: sheet_id||null, tab_name: tab_name||null, csv_url: csv_url||null,
+              is_active:true, source_type }, { onConflict:'practice_id' });
   adminDelFlash(error? 'Sheet save failed: '+error.message : 'Reporting sheet saved — it will sync on the next run.');
   if(!error) loadSheetSources();
 }
