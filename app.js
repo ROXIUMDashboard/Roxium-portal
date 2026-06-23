@@ -28,7 +28,11 @@ const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_
 let me = null;            // profile row
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
-let metricsPeriod = null; // null = follow latest reported month; or a 'YYYY-MM-01' period to view past data
+// Selected reporting month is scoped PER PRACTICE so one client's choice can never
+// leak into another's. Absent key = follow that practice's latest reported month.
+let selByPractice = {};   // practiceId -> 'YYYY-MM-01'
+const getSel = () => (practiceId && practiceId in selByPractice) ? selByPractice[practiceId] : null;
+const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[practiceId]; else selByPractice[practiceId]=p; };
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
 
 /* ---- KPI period helpers (period = first-of-month 'YYYY-MM-01' snapshot key) ---- */
@@ -116,8 +120,7 @@ function buildSwitcher(list){
       input.blur();
       // each practice defaults to ITS OWN latest reported month (don't carry a
       // selected/edited month across practices — that's the "stuck on old month" bug)
-      metricsPeriod = null; entryPeriod = null;
-      loadAll();
+      loadAll();   // month selection is per-practice (selByPractice), so nothing to reset
     });
   };
   input.addEventListener('focus', ()=>{ input.select(); draw(''); results.classList.remove('hidden'); });
@@ -269,19 +272,34 @@ function render(){
   // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
   const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));
   const latestPeriod = reported.length? reported[0].period : null;
-  // metricsPeriod null = follow latest; otherwise show the chosen past month's snapshot
-  const viewPeriod = (metricsPeriod!=null && data.kpi.some(x=>x.period===metricsPeriod)) ? metricsPeriod : latestPeriod;
-  const latest = viewPeriod!=null ? data.kpi.find(x=>x.period===viewPeriod) : null;
+  const hasData = p => p!=null && data.kpi.some(x=>x.period===p);
+  // Resolve the month to show (deterministic, per-practice):
+  //  • no selection            → that practice's latest reported month
+  //  • selection WITH data      → show it
+  //  • selection with NO data:
+  //      team  → sit on the empty month (so month switching always "moves", and you
+  //              can enter that month's data); label says it's empty
+  //      client → fall back to the latest archived snapshot (intended behaviour)
+  const sel = getSel();
+  let viewPeriod, emptySelected = false;
+  if(sel==null) viewPeriod = latestPeriod;
+  else if(hasData(sel)) viewPeriod = sel;
+  else if(isTeamView()){ viewPeriod = sel; emptySelected = true; }
+  else viewPeriod = latestPeriod;
+  const latest = (!emptySelected && viewPeriod!=null) ? data.kpi.find(x=>x.period===viewPeriod) : null;
   // the snapshot immediately before the viewed one — used for trend comparison
   const prev = latest ? reported.find(x=> x.period < latest.period) : null;
   const d = derive(latest);
-  const isLive = viewPeriod===latestPeriod;
-  $('updated').textContent = latest
-    ? `Showing ${periodLabel(latest.period)}${isLive?' (live)':' (archived snapshot)'} · KPI data live from Supabase`
-    : 'KPI data will appear here after the first month is reported.';
-  // build the month selector (latest + any reported months)
-  buildMetricsPicker(reported, viewPeriod, latestPeriod);
-  $('kpiSub').textContent = latest? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
+  const isLive = !emptySelected && viewPeriod===latestPeriod;
+  $('updated').textContent = emptySelected
+    ? `No KPI data for ${periodLabel(viewPeriod)} yet — enter it in the Team tab and Save.`
+    : latest
+      ? `Showing ${periodLabel(latest.period)}${isLive?' (live)':' (archived snapshot)'} · KPI data live from Supabase`
+      : 'KPI data will appear here after the first month is reported.';
+  // build the month selector (latest + any reported months, + the empty month if team is on one)
+  buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected);
+  $('kpiSub').textContent = emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
+    : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
   // hero stats
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
@@ -351,9 +369,9 @@ function render(){
     if(teamFeed){
       $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
       $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
-        if(!confirm('Delete this update?')) return;
+        if(!await uiConfirm('Delete this update?', 'This removes the posted update from the client feed.', {danger:true})) return;
         const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
-        if(error) alert('Delete failed: '+error.message); else loadAll();
+        if(error) uiAlert('Delete failed', esc(error.message)); else loadAll();
       });
     }
   });
@@ -369,62 +387,56 @@ function render(){
   });
 }
 
-/* Month selector for performance metrics: 'Latest (live)' + each reported month snapshot */
-function buildMetricsPicker(reported, viewPeriod, latestPeriod){
+/* Month selector for performance metrics: 'Latest (live)' + each reported month snapshot.
+   Drives the per-practice selection (setSel). emptySelected adds a transient option so
+   the dropdown stays in sync when the team sits on a month that has no data yet. */
+function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected){
   const sel = $('metricsPicker');
   if(!sel) return;
-  if(!reported.length){ sel.style.display='none'; return; }
+  if(!reported.length && !emptySelected){ sel.style.display='none'; return; }
   sel.style.display='';
   // oldest → newest in the dropdown
-  const opts = ['<option value="">Latest month (live)</option>']
+  let opts = ['<option value="">Latest month (live)</option>']
     .concat(reported.slice().sort((a,b)=> (a.period<b.period?-1:a.period>b.period?1:0)).map(r=>
       `<option value="${r.period}">${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}</option>`));
+  if(emptySelected) opts.push(`<option value="${viewPeriod}">${periodLabel(viewPeriod)} (no data yet)</option>`);
   sel.innerHTML = opts.join('');
-  sel.value = (metricsPeriod!=null) ? String(metricsPeriod) : '';
-  sel.onchange = ()=>{
-    metricsPeriod = sel.value===''? null : sel.value;
-    // keep the team entry month on the same reporting period as the view
-    entryPeriod = metricsPeriod || latestPeriod;
-    render();
-  };
+  const cur = getSel();
+  sel.value = (cur!=null) ? String(cur) : '';
+  sel.onchange = ()=>{ setSel(sel.value===''? null : sel.value); render(); };
 }
 
 /* ---------------- team controls ---------------- */
-let entryPeriod = null; // 'YYYY-MM-01' reporting month the team is viewing/editing
-// The team's reporting month is the SAME concept as the client's view month: one
-// source of truth drives the top label, the KPI cards and the entry form together.
+// The team's reporting month is the SAME per-practice selection that drives the
+// client view: the <input type="month"> below IS that selector, so the top label,
+// the KPI cards and the entry form always move together.
 function renderTeam(viewPeriod, latestPeriod){
   const inp = $('inMonth'); // an <input type="month"> — value is 'YYYY-MM'
-  // default to the month currently being VIEWED (data-driven), not today's date
-  if(!entryPeriod) entryPeriod = viewPeriod || latestPeriod || currentPeriod();
   if(!inp.dataset.wired){
     inp.dataset.wired = '1';
-    inp.onchange = ()=>{
-      entryPeriod = monthInputToPeriod(inp.value) || currentPeriod();
-      // if that month has data, drive the whole page (top label + cards) to it so
-      // team view stays in sync exactly like the client view; a brand-new month
-      // (no data yet) just targets the entry form and shows after Save.
-      if(data.kpi.some(x=>x.period===entryPeriod)) metricsPeriod = entryPeriod;
-      render();
-    };
+    inp.onchange = ()=>{ setSel(monthInputToPeriod(inp.value)); render(); };
   }
-  inp.value = periodToMonthInput(entryPeriod); // restore the month the team was on
+  // reflect the resolved view month (or today's, for a brand-new client with no data)
+  inp.value = periodToMonthInput(viewPeriod || latestPeriod || currentPeriod());
   const yr = $('inYear'); if(yr && !yr.value) yr.value = new Date().getFullYear();
   fillKpiForm();
 }
+function entryPeriod(){ return monthInputToPeriod($('inMonth').value); }   // the month the team form targets
 function fillKpiForm(){
-  const m = data.kpi.find(x=>x.period===entryPeriod) || {};
+  const m = data.kpi.find(x=>x.period===entryPeriod()) || {};
   $('entryFields').innerHTML = FIELDS.map(f=>
     `<div class="f"><label>${f.l}</label><input data-k="${f.k}" type="number" step="any" value="${m[f.k]??''}" placeholder="0"></div>`).join('');
 }
 const flash = t=>{ $('saveMsg').textContent=t; setTimeout(()=>$('saveMsg').textContent='',3500); };
 
 $('btnSaveKpi').onclick = async ()=>{
-  if(!entryPeriod){ flash('Pick a month first.'); return; }
-  const row = { practice_id: practiceId, period: entryPeriod, source: KPI_SOURCE };
+  const period = entryPeriod();
+  if(!period){ flash('Pick a month first.'); return; }
+  const row = { practice_id: practiceId, period, source: KPI_SOURCE };
   document.querySelectorAll('#entryFields input').forEach(i=>{ row[i.dataset.k] = i.value===''? null : +i.value; });
   const { error } = await sb.from('kpi_monthly').upsert(row, { onConflict:'practice_id,period,source' });
-  flash(error? error.message : `Saved ${periodLabel(entryPeriod)}.`); if(!error) loadAll();
+  if(!error) setSel(period);   // after saving a month, view it
+  flash(error? error.message : `Saved ${periodLabel(period)}.`); if(!error) loadAll();
 };
 
 $('xlsxFile').onchange = async (e)=>{
@@ -462,6 +474,46 @@ $('xlsxFile').onchange = async (e)=>{
 const STATUS_OPTS = [['promised','Promised'],['in_progress','In progress'],['delivered','Delivered']];
 const MILE_OPTS   = [['upcoming','Up next'],['current','You are here'],['done','Complete']];
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+/* ---------------- themed dialogs (replace native confirm/alert/prompt) ---------------- */
+// Promise-based, styled to match the portal. `body` may contain simple HTML.
+function uiDialog({title='', body='', input=null, confirmLabel='Confirm', cancelLabel='Cancel', danger=false, requireText=null}){
+  return new Promise(resolve=>{
+    const ov = document.createElement('div');
+    ov.className = 'dlg-overlay';
+    ov.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+      ${title?`<div class="dlg-head">${esc(title)}</div>`:''}
+      ${body?`<div class="dlg-body">${body}</div>`:''}
+      ${input!==null?`<input class="dlg-input" id="__dlgInput" placeholder="${esc(input.placeholder||'')}" value="${esc(input.value||'')}">`:''}
+      ${requireText?`<input class="dlg-input" id="__dlgReq" autocomplete="off" placeholder="Type the name to confirm">`:''}
+      <div class="dlg-actions">
+        ${cancelLabel?`<button class="btn ghost sm" id="__dlgCancel">${esc(cancelLabel)}</button>`:''}
+        <button class="btn sm ${danger?'danger':''}" id="__dlgOk">${esc(confirmLabel)}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(()=> ov.classList.add('show'));
+    const inputEl = ov.querySelector('#__dlgInput');
+    const reqEl = ov.querySelector('#__dlgReq');
+    const done = val => { ov.classList.remove('show'); setTimeout(()=>ov.remove(),160); document.removeEventListener('keydown', onKey); resolve(val); };
+    const cancelVal = () => input!==null ? null : false;
+    const ok = ()=>{
+      if(requireText && (reqEl.value.trim()!==requireText)){ reqEl.classList.add('bad'); reqEl.focus(); return; }
+      done(input!==null ? inputEl.value : true);
+    };
+    function onKey(e){
+      if(e.key==='Escape') done(cancelVal());
+      else if(e.key==='Enter' && document.activeElement?.tagName!=='TEXTAREA'){ e.preventDefault(); ok(); }
+    }
+    ov.querySelector('#__dlgOk').onclick = ok;
+    const cancelBtn = ov.querySelector('#__dlgCancel'); if(cancelBtn) cancelBtn.onclick = ()=> done(cancelVal());
+    ov.addEventListener('mousedown', e=>{ if(e.target===ov) done(cancelVal()); });
+    document.addEventListener('keydown', onKey);
+    setTimeout(()=> (inputEl||reqEl||ov.querySelector('#__dlgOk')).focus(), 30);
+  });
+}
+const uiConfirm = (title, body='', opts={}) => uiDialog({title, body, danger:opts.danger, confirmLabel:opts.confirmLabel||'Confirm', requireText:opts.requireText});
+const uiAlert   = (title, body='') => uiDialog({title, body, cancelLabel:'', confirmLabel:'OK'}).then(()=>{});
+const uiPrompt  = (title, body='', value='', placeholder='') => uiDialog({title, body, input:{value,placeholder}, confirmLabel:'Save'});
 
 /* ---- DELIVERABLES: grouped into draggable phase cards (team) / clean phase blocks (client) ---- */
 function phaseGroups(){
@@ -579,9 +631,9 @@ function wireDeliverables(){
     b.onclick = async (e)=>{
       e.stopPropagation();
       const phase = b.dataset.phase;
-      if(!confirm(`Delete the entire "${phase}" phase and all its deliverables?`)) return;
+      if(!await uiConfirm(`Delete the "${phase}" phase?`, 'This removes the phase and <b>all</b> of its deliverables.', {danger:true})) return;
       const { error } = await sb.from('deliverables').delete().eq('practice_id',practiceId).eq('phase',phase);
-      if(error){ alert('Delete failed: '+error.message); return; }
+      if(error){ uiAlert('Delete failed', esc(error.message)); return; }
       loadAll();
     };
   });
@@ -695,7 +747,7 @@ function statusSelect(kind, cur){
   return `<select class="statussel">`+STATUS_OPTS.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
 }
 async function addDeliverableTo(phase){
-  const name = prompt('New deliverable in "'+phase+'":'); if(name===null) return;
+  const name = await uiPrompt('New deliverable', `Adding to the "${esc(phase)}" phase.`, '', 'Deliverable name'); if(name===null) return;
   if(!name.trim()){ flash('Enter a name.'); return; }
   const po = data.deliv.find(d=>d.phase===phase)?.phase_order ?? 0;
   const sort = (Math.max(0,...data.deliv.filter(d=>d.phase===phase).map(d=>d.sort||0)))+1;
@@ -711,7 +763,7 @@ async function addPhase(){
 // team: set the client-facing explanation for a deliverable (the ⓘ info layer)
 async function editDeliverableInfo(id){
   const d = data.deliv.find(x=>x.id===id); if(!d) return;
-  const v = prompt(`Client explanation for "${d.name}"\n(what this deliverable means — shown to the client under an ⓘ icon). Leave blank to remove.`, d.description||'');
+  const v = await uiPrompt(`Client explanation`, `Shown to the client under an ⓘ icon for “${esc(d.name)}”. Leave blank to remove.`, d.description||'', 'What this deliverable means…');
   if(v===null) return;
   const { error } = await sb.from('deliverables').update({ description: v.trim()||null }).eq('id', id);
   flash(error? error.message : 'Saved.'); if(!error) loadAll();
@@ -814,7 +866,7 @@ function wirePipeline(wrap, isTeam){
 }
 
 async function addVideoTo(stage){
-  const item = prompt('Name of the new video asset:');
+  const item = await uiPrompt('New video asset', '', '', 'e.g. SEO video — facelift recovery');
   if(item===null) return;            // cancelled
   if(!item.trim()){ flash('Enter a name.'); return; }
   try{
@@ -822,11 +874,11 @@ async function addVideoTo(stage){
       // new assets default to 'planned' (backlog) unless added from a specific column
       .insert({ practice_id: practiceId, item: item.trim(), stage: stage || 'planned' })
       .select();
-    if(error){ flash('Add failed: '+error.message); alert('Add failed: '+error.message); return; }
+    if(error){ flash('Add failed: '+error.message); uiAlert('Add failed', esc(error.message)); return; }
     flash('Video added.');
     await loadAll();
   }catch(e){
-    flash('Add failed: '+e.message); alert('Add failed: '+e.message);
+    flash('Add failed: '+e.message); uiAlert('Add failed', esc(e.message));
   }
 }
 
@@ -908,10 +960,10 @@ function openVideoDetail(id){
   m.querySelectorAll('.histdel').forEach(b=>{
     b.onclick = async (e)=>{
       e.stopPropagation(); e.preventDefault();
-      if(!confirm('Delete this history entry?')) return;
+      if(!await uiConfirm('Delete this history entry?', 'Removes this stage-change record from the timeline.', {danger:true})) return;
       const { data: del, error } = await sb.from('video_history').delete().eq('id', b.dataset.hid).select();
-      if(error){ alert('Delete failed: '+error.message); return; }
-      if(!del || !del.length){ alert('Delete failed: no permission (row-level security). Run the latest migration.'); return; }
+      if(error){ uiAlert('Delete failed', esc(error.message)); return; }
+      if(!del || !del.length){ uiAlert('Delete failed', 'No permission (row-level security). Run the latest migration.'); return; }
       await loadAll();
       openVideoDetail(id);  // reopen so the history list refreshes
     };
@@ -998,7 +1050,7 @@ async function updateRow(table, id, patch){
   if(error){ flash(error.message); } else { flash('Saved.'); loadAll(); }
 }
 async function deleteRow(table, id, confirmMsg){
-  if(!confirm(confirmMsg)) return;
+  if(!await uiConfirm('Delete', esc(confirmMsg), {danger:true})) return;
   const { error } = await sb.from(table).delete().eq('id', id);
   flash(error? error.message : 'Deleted.'); if(!error) loadAll();
 }
@@ -1051,11 +1103,11 @@ function renderBanner(){
 
 async function editFeedItem(id){
   const f = data.feed.find(x=>x.id===id); if(!f) return;
-  const msg = prompt('Edit this update:', f.message);
+  const msg = await uiPrompt('Edit update', 'The client sees the latest version.', f.message, 'Update message');
   if(msg===null) return;
-  if(!msg.trim()){ alert('Message cannot be empty.'); return; }
+  if(!msg.trim()){ uiAlert('Message cannot be empty'); return; }
   const { error } = await sb.from('activity').update({ message: msg.trim(), edited_at: new Date().toISOString() }).eq('id', id);
-  if(error) alert('Edit failed: '+error.message); else loadAll();
+  if(error) uiAlert('Edit failed', esc(error.message)); else loadAll();
 }
 
 $('btnPost').onclick = async ()=>{
@@ -1078,7 +1130,7 @@ $('btnAddClient').onclick = async ()=>{
   // this name already exists, offer to switch to it instead of creating a clone.
   const dupe = practicesList.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
   if(dupe){
-    if(confirm(`"${dupe.name}" already exists. Switch to it instead of creating a duplicate?`)){
+    if(await uiConfirm('Practice already exists', `“${esc(dupe.name)}” already exists. Switch to it instead of creating a duplicate?`, {confirmLabel:'Switch to it'})){
       practiceId = dupe.id; $('newClientName').value=''; buildSwitcher(practicesList); loadAll();
     } else {
       onbFlash('No duplicate created. Rename if this is a different practice.');
@@ -1139,17 +1191,17 @@ function renderAdminClients(){
 }
 async function deletePractice(id, name){
   if(!isTeamView()) return;
-  // Step 1 — are you sure?
-  if(!confirm(`Delete "${name}"?\n\nThis permanently removes the practice and ALL of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins.\n\nThis CANNOT be undone.`)) return;
-  // Step 2 — type the name to confirm
-  const typed = prompt(`To confirm, type the practice name exactly:\n\n${name}`);
-  if(typed===null) return;
-  if(typed.trim()!==name){ alert('Name did not match — nothing was deleted.'); return; }
+  // single themed dialog: confirmation message + type-the-name-to-confirm guard
+  const ok = await uiConfirm(`Delete “${name}”?`,
+    `This permanently removes the practice and <b>all</b> of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins. This cannot be undone.`,
+    { danger:true, confirmLabel:'Delete practice', requireText:name });
+  if(!ok) return;
   adminDelFlash('Deleting…');
   try{
     const { error } = await sb.rpc('delete_practice', { p_id: id });
     if(error) throw error;
-    if(practiceId===id){ practiceId = null; metricsPeriod = null; entryPeriod = null; }  // we deleted the open one
+    delete selByPractice[id];
+    if(practiceId===id){ practiceId = null; }  // we deleted the open one
     await loadTeamPractices();
     if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;  // fall back to another practice
     renderAdminClients();
@@ -1165,13 +1217,11 @@ $('btnResetData').onclick = async ()=>{
   if(!practiceId){ resetFlash('No practice selected.'); return; }
   const name = (data.practice && data.practice.name) || 'this practice';
 
-  // Step 1 — "are you sure?"
-  if(!confirm(`Reset ALL data for "${name}"?\n\nThis permanently deletes:\n  • every KPI month\n  • the activity / updates feed\n  • all notifications\n  • all video stage history\n\nand resets all deliverables, milestones and videos to their starting state.\n\nThis CANNOT be undone.`)) return;
-
-  // Step 2 — type the practice name to confirm (guards against accidental wipes)
-  const typed = prompt(`To confirm, type the practice name exactly:\n\n${name}`);
-  if(typed === null) return;                    // cancelled
-  if(typed.trim() !== name){ alert('Name did not match — reset cancelled. Nothing was changed.'); return; }
+  // single themed dialog with a type-the-name guard against accidental wipes
+  const ok = await uiConfirm(`Reset all data for “${name}”?`,
+    `This permanently deletes every KPI month, the activity / updates feed, all notifications and video stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.`,
+    { danger:true, confirmLabel:'Reset everything', requireText:name });
+  if(!ok) return;
 
   const pid = practiceId;
   $('btnResetData').disabled = true;
@@ -1215,7 +1265,7 @@ $('btnResetData').onclick = async ()=>{
     await loadAll();
   } catch(e){
     resetFlash('Reset failed: '+e.message);
-    alert('Reset failed: '+e.message);
+    uiAlert('Reset failed', esc(e.message));
   } finally {
     $('btnResetData').disabled = false;
   }

@@ -315,3 +315,60 @@ a.btn{text-decoration:none;display:inline-block}
 
 /* edited-update marker */
 .edited{color:var(--gold);font-style:italic;letter-spacing:.04em}
+
+/* ============================================================
+   POLISH PASS · subtle size increase, smoother interactions,
+   themed dialogs + native controls (overrides earlier rules)
+   ============================================================ */
+
+/* --- 1) slightly larger, more spacious --- */
+.wrap{max-width:1240px}
+h2{font-size:31px}
+.sub{font-size:14px}
+.card{padding:21px 24px 17px}
+.tab{padding:15px 24px;font-size:12px}
+.picker,.f select{font-size:13px}
+.f input,.f select{font-size:14.5px;padding:12px 13px}
+.btn{font-size:11.5px;padding:13px 26px;border-radius:3px}
+.btn.sm{padding:9px 17px;font-size:10.5px;border-radius:3px}
+
+/* --- 2) smoother / more polished interactions --- */
+.btn{transition:background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .1s ease}
+.btn:hover{box-shadow:0 3px 14px rgba(201,168,76,.18)}
+.btn.ghost:hover{border-color:var(--gold);color:var(--gold);box-shadow:none}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.5;cursor:default;box-shadow:none;transform:none}
+.card{transition:border-color .18s ease, transform .18s ease, box-shadow .18s ease}
+.tab{transition:color .18s ease, border-color .18s ease}
+.switcher-item,.clientrow,.srow,.histrow,.fitem{transition:background .15s ease, border-color .15s ease}
+.clientrow:hover{border-color:var(--gold)}
+.noteclose,.modalx,.caret,.infobtn,.rowdel,.vdel,.phasedel,.histdel{transition:color .15s ease, opacity .15s ease, transform .12s ease}
+.modalx:hover,.noteclose:hover{transform:rotate(90deg)}
+
+/* --- 3) themed confirm/prompt dialogs (replace native confirm/alert/prompt) --- */
+.dlg-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:rgba(8,7,10,.66);backdrop-filter:blur(5px);opacity:0;transition:opacity .16s ease}
+.dlg-overlay.show{opacity:1}
+.dlg{width:min(440px,94vw);background:var(--surface);border:1px solid var(--gold);border-radius:6px;
+  box-shadow:0 24px 70px rgba(0,0,0,.55);padding:24px 24px 20px;
+  transform:translateY(8px) scale(.98);opacity:0;transition:transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s ease}
+.dlg-overlay.show .dlg{transform:none;opacity:1}
+.dlg-head{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:23px;color:var(--cream);margin-bottom:8px}
+.dlg-body{font-size:13.5px;line-height:1.6;color:var(--muted)}
+.dlg-body b{color:var(--cream);font-weight:500}
+.dlg-input{width:100%;margin-top:16px;background:var(--ink);border:1px solid var(--line);color:var(--cream);
+  padding:12px 13px;font-family:'Jost';font-size:14.5px;border-radius:3px;transition:border-color .16s ease, box-shadow .16s ease}
+.dlg-input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.dlg-input.bad{border-color:var(--red);box-shadow:0 0 0 1px var(--red)}
+.dlg-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+
+/* --- 4) themed native controls (selects + date/month pickers) --- */
+input,select,textarea{color-scheme:dark}                       /* dark native calendar / option popups */
+.f select,.picker{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:34px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23C9A84C' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 13px center;cursor:pointer}
+input[type=date]::-webkit-calendar-picker-indicator,
+input[type=month]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.65;
+  filter:invert(72%) sepia(38%) saturate(560%) hue-rotate(2deg) brightness(92%)}
+input[type=date]::-webkit-calendar-picker-indicator:hover,
+input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
