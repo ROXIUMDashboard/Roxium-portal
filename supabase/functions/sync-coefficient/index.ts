@@ -261,18 +261,30 @@ function parseWide(grid: string[][], pid: string, source: string,
 function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
                       skipped: unknown[], label: string): Record<string, unknown>[] {
   if (grid.length < 2) return [];
-  const header = grid[0].map(h => h.trim().toLowerCase());
+  // Find the REAL header row — ad exports (Meta/Coefficient) put title/"last updated"
+  // rows ABOVE the header, so we can't assume grid[0]. Pick the row that best matches
+  // a date column + known metric columns.
+  const DATE_COLS = ["period", "date", "day", "reporting date", "month"];
+  let hIdx = 0, hScore = -1;
+  for (let i = 0; i < Math.min(grid.length, 25); i++) {
+    const low = grid[i].map(c => (c ?? "").trim().toLowerCase());
+    let score = low.some(c => DATE_COLS.includes(c)) ? 2 : 0;
+    for (const c of low) if (COLUMN_ALIASES[c] || c === "practice_id") score += 1;
+    if (score > hScore) { hScore = score; hIdx = i; }
+  }
+  const header = grid[hIdx].map(h => h.trim().toLowerCase());
   const idxOf = (n: string) => header.indexOf(n);
   const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
-  const dateIdx = ["period", "date", "day", "reporting date", "month"].map(idxOf).find(i => i >= 0) ?? -1;
+  const dateIdx = DATE_COLS.map(idxOf).find(i => i >= 0) ?? -1;
 
   const buckets = new Map<string, MonthBucket>();
   if (dateIdx >= 0) {                                  // ---- TIDY layout (one row per date) ----
-    for (let i = 1; i < grid.length; i++) {
+    for (let i = hIdx + 1; i < grid.length; i++) {
       const r = grid[i];
       const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
       if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
       const raw = (r[dateIdx] ?? "").trim();
+      if (!raw) continue;                              // blank trailing row
       const period = resolvePeriod(raw);
       if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
       const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
