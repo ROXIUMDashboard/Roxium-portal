@@ -5,23 +5,40 @@
 
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
+// Team manual-entry fields = the real ad metrics the Coefficient sheet provides.
+// (CTR / CPM / CPC are DERIVED from spend·impr·clicks — not entered or stored.)
 const FIELDS = [
-  {k:'spend', l:'Ad spend ($)'}, {k:'impr', l:'Impressions'}, {k:'clicks', l:'Clicks'},
-  {k:'lpv', l:'Landing page visits'}, {k:'leads', l:'Leads captured'},
-  {k:'cons', l:'Booked consultations'}, {k:'proc', l:'Procedures booked'},
-  {k:'apv', l:'Avg procedure value ($)'}, {k:'price', l:'Pricing index (×)'},
-  {k:'sent', l:'Emails sent'}, {k:'opens', l:'Emails opened'}, {k:'eclk', l:'Email clicks'},
-  {k:'sms', l:'SMS reply rate (0–1)', pct:true}, {k:'vid', l:'Video view rate (0–1)', pct:true},
-  {k:'foll', l:'Qualified followers'}, {k:'rank', l:'Social rank index (×)'}, {k:'posts', l:'Cadence posts'},
+  {k:'spend', l:'Amount Spent ($)'}, {k:'reach', l:'Reach'}, {k:'impr', l:'Impressions'},
+  {k:'clicks', l:'Link Clicks'}, {k:'lpv', l:'Landing Page Views'},
+  {k:'page_likes', l:'Page Likes'}, {k:'foll', l:'Followers'},
 ];
 const XL_MAP = {
-  'Ad spend (all channels)':'spend','Impressions & reach':'impr','Clicks':'clicks',
-  'Landing page visits':'lpv','Leads captured (form + email)':'leads','Booked consultations':'cons',
-  'Procedures booked':'proc','Average procedure value':'apv','Surgery pricing index (baseline = 1.0x)':'price',
-  'Emails sent':'sent','Emails opened':'opens','Email clicks':'eclk','SMS reply rate (enter as %)':'sms',
-  'Video view rate (enter as %)':'vid','Qualified followers added':'foll',
-  'Social rankings index (baseline = 1.0x)':'rank','Cadence posts published':'posts',
+  'Amount Spent':'spend','Amount spent':'spend','Reach':'reach','Impressions':'impr',
+  'Link Clicks':'clicks','Clicks':'clicks','Landing Page Views':'lpv','Page Likes':'page_likes',
+  'Followers':'foll',
 };
+// Default dashboard metric model — grounded in the actual ad source. Raw metrics
+// come straight from the sheet; derived ones are computed and only shown when their
+// inputs exist. Cards/rows render ONLY for metrics that have a real value (no
+// broken "read doesn't exist" cards for data the source never provides).
+const N = (m,k)=> (m && m[k]!=null && m[k]!=='') ? +m[k] : null;
+const CORE_METRICS = [
+  {k:'spend',  label:'Amount Spent', fmt:v=>fmt$(v)},
+  {k:'reach',  label:'Reach',        fmt:v=>fmtNum(v)},
+  {k:'impr',   label:'Impressions',  fmt:v=>fmtNum(v)},
+  {k:'clicks', label:'Link Clicks',  fmt:v=>fmtNum(v)},
+  {k:'ctr',    label:'CTR',          fmt:v=>fmtP(v),  derive:m=>{const i=N(m,'impr'),c=N(m,'clicks');return i?c/i:null;}},
+  {k:'cpm',    label:'CPM',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),i=N(m,'impr');return i?s/(i/1000):null;}, lowerBetter:true},
+  {k:'cpc',    label:'CPC',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),c=N(m,'clicks');return c?s/c:null;}, lowerBetter:true},
+];
+const OPTIONAL_METRICS = [
+  {k:'lpv',        label:'Landing Page Views', fmt:v=>fmtNum(v)},
+  {k:'page_likes', label:'Page Likes',         fmt:v=>fmtNum(v)},
+  {k:'foll',       label:'Followers',          fmt:v=>fmtNum(v)},
+];
+// value of a metric for a row: derived metrics compute (null if inputs absent),
+// raw metrics read the column (null if missing). null => the card is not rendered.
+const metricValue = (def, m)=> def.derive ? def.derive(m) : N(m, def.k);
 const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
 // Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
@@ -71,7 +88,7 @@ function showView(name){
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();                              // re-apply chrome for the new view
-  if(name==='admin') renderAdminClients();   // Admin is global — refresh its client list on entry
+  if(name==='admin'){ renderAdminClients(); loadSheetSources(); }   // Admin is global — refresh clients + sheet sources
 }
 // Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
 // so when it's open we hide the whole practice context (hero, tabs, switcher,
@@ -248,22 +265,10 @@ function mergeKpiByPeriod(rows){
   return [...byPeriod.values()];
 }
 
-/* ---------------- derived metrics (same formulas as the workbook) ---------------- */
-function derive(m){
-  if(!m) return null;
-  const n = k => +m[k]||0;
-  return {
-    ctr: n('impr')? n('clicks')/n('impr'):0, cvr: n('lpv')? n('leads')/n('lpv'):0,
-    cpl: n('leads')? n('spend')/n('leads'):0, l2c: n('leads')? n('cons')/n('leads'):0,
-    cpc: n('cons')? n('spend')/n('cons'):0, close: n('cons')? n('proc')/n('cons'):0,
-    rev: n('proc')*n('apv'), roas: n('spend')? (n('proc')*n('apv'))/n('spend'):0,
-    cpp: n('proc')? n('spend')/n('proc'):0, orate: n('sent')? n('opens')/n('sent'):0,
-  };
-}
-const fmt$ = v=>'$'+Math.round(v).toLocaleString();
-const fmtP = v=>(v*100).toFixed(1)+'%';
-const statusCPL = v=> v===0?'i': v<=180?'g': v<=360?'a':'r';
-const statusGen = (v,t)=> v===0?'i': v>=t?'g': v>=t*0.8?'a':'r';
+/* ---------------- formatters ---------------- */
+const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
+const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
+const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
 /* ---------------- render ---------------- */
 function render(){
@@ -289,7 +294,6 @@ function render(){
   const latest = (!emptySelected && viewPeriod!=null) ? data.kpi.find(x=>x.period===viewPeriod) : null;
   // the snapshot immediately before the viewed one — used for trend comparison
   const prev = latest ? reported.find(x=> x.period < latest.period) : null;
-  const d = derive(latest);
   const isLive = !emptySelected && viewPeriod===latestPeriod;
   $('updated').textContent = emptySelected
     ? `No KPI data for ${periodLabel(viewPeriod)} yet — enter it in the Team tab and Save.`
@@ -301,13 +305,14 @@ function render(){
   $('kpiSub').textContent = emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
     : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
-  // hero stats
+  // hero stats — real ad metrics (spend / reach / link clicks) + project progress
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
+  const hv = (k)=> latest ? N(latest,k) : null;
   const heroes = [
-    {v: d? fmt$(d.cpl):'—', l:'Cost per lead', cls: statusCPL(d? d.cpl:0), note: latest? 'this month':'awaiting data'},
-    {v: latest? (+latest.cons||0).toLocaleString():'—', l:'Consults this month', cls: latest?'g':'i', note: d? fmt$(d.rev)+' est. revenue':'awaiting data'},
+    {v: fmt$(hv('spend')),   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: latest? 'this month':'awaiting data'},
+    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: latest? 'people reached':'awaiting data'},
+    {v: fmtNum(hv('clicks')),l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: latest? 'this month':'awaiting data'},
     {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
-    {v: latest&&latest.price? (+latest.price).toFixed(2)+'×':'—', l:'Pricing index', cls: latest&&+latest.price>=1.5?'g':'i', note: latest? 'vs. starting baseline':'awaiting data'},
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
@@ -327,9 +332,11 @@ function render(){
   // video pipeline
   safe('video pipeline', ()=> renderPipeline(isTeam));
 
-  // KPI cards + status board
+  // KPI cards + status board — driven by the real ad metric model; only metrics
+  // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
-    const dp = derive(prev);
+    const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
+      clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
     // delta vs the previous month's snapshot; lowerBetter flips colour for cost metrics
     const trend = (cur, before, opts={})=>{
       if(before==null || cur==null || !isFinite(+before) || !isFinite(+cur) || +before===0) return '';
@@ -338,23 +345,23 @@ function render(){
       const up = pct>0, good = opts.lowerBetter ? !up : up;
       return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}% vs ${periodLabel(prev.period)}</div>`;
     };
-    const cards = [
-      {k:'Leads captured', v: latest? (+latest.leads||0).toLocaleString():'—', t:'monthly volume', tr: trend(latest?+latest.leads||0:null, prev?+prev.leads||0:null)},
-      {k:'LP conversion', v: d? fmtP(d.cvr):'—', t:'leads ÷ page visits', tr: trend(d?d.cvr:null, dp?dp.cvr:null)},
-      {k:'Cost per consult', v: d? fmt$(d.cpc):'—', t:'spend ÷ consults', tr: trend(d?d.cpc:null, dp?dp.cpc:null, {lowerBetter:true})},
-      {k:'ROAS', v: d&&d.roas? d.roas.toFixed(1)+'×':'—', t:'revenue ÷ spend', tr: trend(d?d.roas:null, dp?dp.roas:null)},
-    ];
-    $('kpiCards').innerHTML = cards.map(c=>`<div class="card"><div class="k">${c.k}</div><div class="big">${c.v}</div><div class="tgt">${c.t}</div>${c.tr||''}</div>`).join('');
-    const rows = latest? [
-      ['Cost per lead', fmt$(d.cpl), statusCPL(d.cpl)],
-      ['LP conversion', fmtP(d.cvr), statusGen(d.cvr,.04)],
-      ['Ad CTR', fmtP(d.ctr), statusGen(d.ctr,.012)],
-      ['Email open rate', fmtP(d.orate), statusGen(d.orate,.28)],
-      ['Close rate', fmtP(d.close), statusGen(d.close,.35)],
-      ['Social rank index', (+latest.rank||0).toFixed(2)+'×', statusGen(+latest.rank||0,1.5)],
-    ]:[];
-    $('statusBoard').innerHTML = rows.map(r=>
-      `<div class="srow"><span class="n">${r[0]} · ${r[1]}</span><span class="s ${r[2]}">${({g:'On target',a:'Watch',r:'Action',i:'—'})[r[2]]}</span></div>`).join('');
+    const cards = CORE_METRICS.map(def=>{
+      const v = latest ? metricValue(def, latest) : null;
+      if(v==null) return null;                                   // omit metrics with no source data
+      const bv = prev ? metricValue(def, prev) : null;
+      return `<div class="card"><div class="k">${def.label}</div><div class="big">${def.fmt(v)}</div>`+
+        `<div class="tgt">${subtitles[def.k]||''}</div>${trend(v, bv, {lowerBetter:def.lowerBetter})}</div>`;
+    }).filter(Boolean);
+    $('kpiCards').innerHTML = cards.length ? cards.join('')
+      : `<div class="note">No ad performance data for this month yet — it syncs automatically from the reporting sheet.</div>`;
+
+    // secondary: optional ad metrics, shown only when present
+    const rows = (latest ? OPTIONAL_METRICS : []).map(def=>{
+      const v = metricValue(def, latest); if(v==null) return null;
+      return `<div class="srow"><span class="n">${def.label}</span><span class="s g">${def.fmt(v)}</span></div>`;
+    }).filter(Boolean);
+    $('statusBoard').innerHTML = rows.join('');
+    $('statusBoard').style.display = rows.length ? '' : 'none';
   });
 
   // feed (team can edit/delete each posted update)
@@ -1178,16 +1185,43 @@ $('btnInvite').onclick = async ()=>{
 
 // ---- Admin: list every practice with a delete control (global, one place) ----
 const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+// per-client reporting-sheet sources (practice_id -> sheet_sources row)
+let sheetSources = {};
+async function loadSheetSources(){
+  if(!isTeamView()) return;
+  const { data } = await sb.from('sheet_sources').select('*');
+  sheetSources = {}; (data||[]).forEach(s=> sheetSources[s.practice_id]=s);
+  renderAdminClients();
+}
 function renderAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
   if(!isTeamView()){ wrap.innerHTML=''; return; }
   const list = practicesList || [];
-  wrap.innerHTML = list.length
-    ? list.map(p=>`<div class="clientrow"><span class="cname">${esc(p.name)}</span>
-        <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete</button></div>`).join('')
-    : '<div class="note">No practices yet — add one above.</div>';
+  wrap.innerHTML = list.length ? list.map(p=>{
+    const s = sheetSources[p.id]||{};
+    const status = s.last_status==='error' ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error</span>`
+      : s.last_synced_at ? `<span class="ssok">✓ synced ${new Date(s.last_synced_at).toLocaleDateString()}</span>`
+      : (s.csv_url? `<span class="note">awaiting first sync</span>`:'');
+    return `<div class="clientrow2">
+      <div class="ccol"><span class="cname">${esc(p.name)}</span> ${status}</div>
+      <input class="cellinput sheeturl" data-pid="${p.id}" value="${esc(s.csv_url||'')}" placeholder="Published Google-Sheet CSV URL for this client…">
+      <button class="btn ghost sm" data-savesheet="${p.id}">Save sheet</button>
+      <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete</button>
+    </div>`;
+  }).join('') : '<div class="note">No practices yet — add one above.</div>';
   wrap.querySelectorAll('[data-delpractice]').forEach(b=>
     b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
+  wrap.querySelectorAll('[data-savesheet]').forEach(b=>
+    b.onclick = ()=> saveSheetSource(b.dataset.savesheet));
+}
+async function saveSheetSource(pid){
+  if(!isTeamView()) return;
+  const inp = document.querySelector(`.sheeturl[data-pid="${pid}"]`);
+  const csv_url = (inp?.value||'').trim();
+  const { error } = await sb.from('sheet_sources')
+    .upsert({ practice_id: pid, csv_url: csv_url||null, is_active:true, source_type:'google_sheet_csv' }, { onConflict:'practice_id' });
+  adminDelFlash(error? 'Sheet save failed: '+error.message : 'Reporting sheet saved — it will sync on the next run.');
+  if(!error) loadSheetSources();
 }
 async function deletePractice(id, name){
   if(!isTeamView()) return;

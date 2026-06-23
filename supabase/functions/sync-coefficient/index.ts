@@ -1,34 +1,44 @@
 // ============================================================
-// sync-coefficient — pull the published Coefficient Google Sheet (CSV) and
-// upsert it into kpi_monthly. One row per practice·month·source.
+// sync-coefficient — pull each client's published Coefficient/Google-Sheet CSV
+// and upsert AD-PERFORMANCE metrics into kpi_monthly, then freeze past months.
 //
-// Design (matches Phase B):
-//   • Keyed by (practice_id, period, source) → re-syncing a month only updates
-//     that month's snapshot; past months are never overwritten.
-//   • period 'YYYY-MM' (or 'YYYY-MM-01') → stored as first-of-month date.
-//   • month is auto-derived by the sync_kpi_month() DB trigger — we never send it.
-//   • Option A: every synced row is written as source = KPI_SOURCE (default
-//     'marketing') so the dashboard shows it immediately. The sheet's own
-//     `source` column is ignored on purpose. To separate sources later, change
-//     the KPI_SOURCE secret (and teach the app to read it).
+// Source of truth = Supabase. The portal NEVER reads the sheet directly.
 //
-// Env (Supabase function secrets):
-//   CSV_URL                  – published-to-web CSV link of the sheet (required)
-//   SYNC_SECRET              – shared secret; callers must send it as the
-//                              `x-sync-key` header or `?key=` query (required)
-//   KPI_SOURCE               – source tag to write (default 'marketing')
-//   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY – auto-injected by Supabase
+// Per-client sources:
+//   • Preferred: rows in `sheet_sources` (one per practice, each with its own
+//     csv_url — a tab in the master sheet or a per-client sheet). The sync loops
+//     every active source. practice_id comes from the row, so the sheet doesn't
+//     even need a practice_id column (but it's still accepted if present).
+//   • Fallback: the legacy single CSV_URL secret (one master sheet whose rows
+//     carry a practice_id column). Used only when no sheet_sources exist.
+//
+// Snapshots:
+//   • Each (practice_id, period, source) is one row. The CURRENT calendar month is
+//     live (finalized=false, keeps updating). After upserting, finalize_past_months()
+//     freezes every earlier month; a DB trigger makes finalized rows immutable.
+//
+// Metrics mapped (header → column): the real ad fields. CTR/CPM/CPC are derived
+// in the dashboard from spend·impr·clicks, so they aren't stored.
+//
+// Env: SYNC_SECRET (required), KPI_SOURCE (default 'marketing'),
+//      CSV_URL (legacy fallback), SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (auto).
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const METRIC_KEYS = [
-  "spend","impr","clicks","lpv","leads","cons","proc","apv","price",
-  "sent","opens","eclk","sms","vid","foll","rank","posts",
-];
+// header alias (lower-cased) -> kpi_monthly column. Accepts both human labels and
+// the raw DB keys, so either a tidy Coefficient export or our template works.
+const COLUMN_ALIASES: Record<string, string> = {
+  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend",
+  "reach": "reach",
+  "impressions": "impr", "impressions & reach": "impr", "impr": "impr",
+  "link clicks": "clicks", "clicks": "clicks",
+  "landing page views": "lpv", "landing page visits": "lpv", "lpv": "lpv",
+  "page likes": "page_likes", "page_likes": "page_likes",
+  "followers": "foll", "qualified followers added": "foll", "foll": "foll",
+};
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// First-of-month for "one month from now" — periods past this are rejected as future.
 function nextMonthCutoff(): string {
   const d = new Date();
   d.setUTCDate(1);
@@ -37,12 +47,8 @@ function nextMonthCutoff(): string {
 }
 
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body, null, 2), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+  new Response(JSON.stringify(body, null, 2), { status, headers: { "content-type": "application/json" } });
 
-// Minimal RFC-4180-ish CSV parser (handles quotes, commas, CRLF).
 function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [], field = "", inQ = false;
@@ -61,84 +67,99 @@ function parseCSV(text: string): string[][] {
   return rows.filter(r => r.length && !r.every(c => (c ?? "").trim() === ""));
 }
 
+const num = (v: string) => {
+  if (v === "") return null;
+  const n = Number(v.replace(/[$,%\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+// Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
+// sheet has no practice_id column (per-client source).
+function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
+                      skipped: unknown[], label: string): Record<string, unknown>[] {
+  if (grid.length < 2) return [];
+  const header = grid[0].map(h => h.trim().toLowerCase());
+  const idxOf = (n: string) => header.indexOf(n);
+  const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
+  if (idxOf("period") < 0) { skipped.push({ source: label, reason: "no period column" }); return []; }
+
+  const out: Record<string, unknown>[] = [];
+  for (let i = 1; i < grid.length; i++) {
+    const r = grid[i];
+    const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
+    if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
+
+    let period = cell(r, "period");
+    if (/^\d{4}-\d{2}$/.test(period)) period += "-01";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) { skipped.push({ source: label, row: i + 1, reason: "bad period", value: period }); continue; }
+    const py = Number(period.slice(0, 4));
+    const nowY = new Date().getUTCFullYear();
+    if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
+      skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
+    }
+
+    const obj: Record<string, unknown> = { practice_id: pid, period, source };
+    for (let c = 0; c < header.length; c++) {
+      const col = COLUMN_ALIASES[header[c]];
+      if (col) obj[col] = num((r[c] ?? "").trim());
+    }
+    out.push(obj);
+  }
+  return out;
+}
+
 Deno.serve(async (req) => {
   try {
-    // ---- auth: shared secret (header or query) ----
     const secret = Deno.env.get("SYNC_SECRET");
     if (!secret) return json({ ok: false, error: "SYNC_SECRET not configured" }, 500);
     const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
     if (got !== secret) return json({ ok: false, error: "unauthorized" }, 401);
 
-    const CSV_URL = Deno.env.get("CSV_URL");
-    if (!CSV_URL) return json({ ok: false, error: "CSV_URL not configured" }, 500);
     const SOURCE = Deno.env.get("KPI_SOURCE") || "marketing";
+    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // ---- fetch + parse the published sheet ----
-    const res = await fetch(CSV_URL, { redirect: "follow" });
-    if (!res.ok) return json({ ok: false, error: `CSV fetch failed (${res.status})` }, 502);
-    const grid = parseCSV(await res.text());
-    if (grid.length < 2) return json({ ok: false, error: "sheet has no data rows" }, 400);
+    // gather the sources to pull: per-client sheet_sources, else the legacy CSV_URL
+    const { data: sources } = await sb.from("sheet_sources")
+      .select("practice_id,csv_url,is_active").eq("is_active", true);
+    const jobs: { pid: string | null; url: string; label: string }[] = [];
+    if (sources && sources.length) {
+      for (const s of sources) if (s.csv_url) jobs.push({ pid: s.practice_id, url: s.csv_url, label: s.practice_id });
+    } else if (Deno.env.get("CSV_URL")) {
+      jobs.push({ pid: null, url: Deno.env.get("CSV_URL")!, label: "legacy CSV_URL" });
+    }
+    if (!jobs.length) return json({ ok: false, error: "no active sheet sources and no CSV_URL" }, 400);
 
-    const header = grid[0].map(h => h.trim().toLowerCase());
-    const idxOf = (name: string) => header.indexOf(name);
-    const cell = (r: string[], name: string) => {
-      const i = idxOf(name);
-      return i >= 0 ? (r[i] ?? "").trim() : "";
-    };
-    if (idxOf("practice_id") < 0 || idxOf("period") < 0)
-      return json({ ok: false, error: "sheet must have practice_id and period columns" }, 400);
-
+    const skipped: unknown[] = [];
     const upserts: Record<string, unknown>[] = [];
-    const skipped: { row: number; reason: string; value?: string }[] = [];
+    const perSource: Record<string, { ok: boolean; rows?: number; error?: string }> = {};
 
-    for (let i = 1; i < grid.length; i++) {
-      const r = grid[i];
-      const pid = cell(r, "practice_id");
-      if (!UUID_RE.test(pid)) { skipped.push({ row: i + 1, reason: "practice_id not a UUID", value: pid }); continue; }
-
-      let period = cell(r, "period");
-      if (/^\d{4}-\d{2}$/.test(period)) period += "-01";
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) { skipped.push({ row: i + 1, reason: "bad period", value: period }); continue; }
-      // Reject implausible periods (typos / placeholders like 2030) so they can't
-      // create future "your <month> update is ready" rows. Allow up to next month.
-      const py = Number(period.slice(0, 4));
-      const nowY = new Date().getUTCFullYear();
-      if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
-        skipped.push({ row: i + 1, reason: "implausible/future period", value: period }); continue;
+    for (const job of jobs) {
+      try {
+        const res = await fetch(job.url, { redirect: "follow" });
+        if (!res.ok) throw new Error(`fetch ${res.status}`);
+        const rows = rowsFromGrid(parseCSV(await res.text()), SOURCE, job.pid, skipped, job.label);
+        upserts.push(...rows);
+        perSource[job.label] = { ok: true, rows: rows.length };
+        if (job.pid) await sb.from("sheet_sources").update({ last_synced_at: new Date().toISOString(), last_status: "ok", last_error: null }).eq("practice_id", job.pid);
+      } catch (e) {
+        const msg = String((e as Error)?.message || e);
+        perSource[job.label] = { ok: false, error: msg };
+        if (job.pid) await sb.from("sheet_sources").update({ last_synced_at: new Date().toISOString(), last_status: "error", last_error: msg }).eq("practice_id", job.pid);
       }
-
-      const obj: Record<string, unknown> = { practice_id: pid, period, source: SOURCE };
-      for (const k of METRIC_KEYS) {
-        const v = cell(r, k);
-        if (v === "") { obj[k] = null; continue; }
-        const n = Number(v.replace(/[$,%]/g, ""));   // tolerate $ , % in cells
-        obj[k] = Number.isFinite(n) ? n : null;
-      }
-      upserts.push(obj);
     }
 
     let upserted = 0, error: string | null = null;
     if (upserts.length) {
-      const sb = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      );
-      const { data, error: e } = await sb
-        .from("kpi_monthly")
-        .upsert(upserts, { onConflict: "practice_id,period,source" })
-        .select("id");
+      // finalized rows are protected by a DB trigger, so upserting them is a safe no-op
+      const { data, error: e } = await sb.from("kpi_monthly")
+        .upsert(upserts, { onConflict: "practice_id,period,source" }).select("id");
       if (e) error = e.message; else upserted = data?.length ?? upserts.length;
     }
+    // freeze every month before the current one (idempotent)
+    await sb.rpc("finalize_past_months");
 
-    return json({
-      ok: !error,
-      source: SOURCE,
-      rows_seen: grid.length - 1,
-      upserted,
-      skipped_count: skipped.length,
-      skipped: skipped.slice(0, 25),
-      error,
-    }, error ? 500 : 200);
+    return json({ ok: !error, sources: perSource, rows_seen: upserts.length, upserted,
+      skipped_count: skipped.length, skipped: skipped.slice(0, 25), error }, error ? 500 : 200);
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
   }
