@@ -33,6 +33,7 @@
         <input id="practiceSearch" class="picker switcher-input" type="text" placeholder="Switch client…" autocomplete="off" spellcheck="false">
         <div id="practiceResults" class="switcher-results hidden"></div>
       </div>
+      <button class="btn ghost sm teamonly hidden" id="btnAdmin">⚙ Admin</button>
       <button class="btn ghost sm teamonly hidden" id="btnPreview">Preview as client</button>
       <span class="practice" id="whoami"></span>
       <button class="btn ghost sm" id="btnLogout">Sign out</button>
@@ -57,7 +58,6 @@
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
-      <a href="#admin"        class="tab teamonly hidden" data-view="admin">Admin</a>
     </nav>
 
     <!-- Milestone timeline -->
@@ -108,8 +108,9 @@
 
     <!-- ADMIN-ONLY · global client / access management (NOT tied to one practice) -->
     <section id="adminPanel" class="view teamonly hidden" data-view="admin">
+      <a href="#roadmap" class="adminback" id="btnAdminBack">← Back to client portal</a>
       <h2>Admin · <em>client management</em></h2>
-      <div class="sub">Global controls for the whole portal — create clients, invite users and manage access in one place. These are not specific to the practice currently open.</div>
+      <div class="sub">Global controls for the whole portal — create clients, invite users and manage access in one place. This area is not part of any single client's portal.</div>
 
       <h3>Add a client practice</h3>
       <p class="note" style="margin-top:-2px">A new practice is seeded with the standard deliverables, roadmap and pipeline. Duplicate names are blocked.</p>
@@ -129,6 +130,11 @@
         <div class="f" style="align-self:end"><button class="btn" id="btnInvite">Send invite</button></div>
       </div>
       <p class="note" id="onbMsg" style="margin-top:6px"></p>
+
+      <h3 class="danger-title">Manage / remove clients</h3>
+      <p class="note" style="margin-top:-2px">Every practice in the portal. Deleting a client permanently removes that practice and <b>all</b> of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins. This cannot be undone.</p>
+      <div id="adminClientList" class="clientlist"></div>
+      <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
     </section>
 
     <!-- TEAM-ONLY · controls for the practice currently open -->
