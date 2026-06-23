@@ -192,6 +192,69 @@ interface MonthBucket {
   [metric: string]: string | number | null;
 }
 
+// Bare month name (no year) → current year first-of-month. resolvePeriod requires a
+// year, so this covers wide sheets whose column headers are just "Jan"/"March".
+const MONTHS_BARE = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+function bareMonth(s: string): string | null {
+  const t = (s || "").trim().toLowerCase();
+  const i = MONTHS_BARE.findIndex(m => t === m || (t.startsWith(m) && t.length <= 9 && !/\d/.test(t)));
+  return i >= 0 ? `${new Date().getUTCFullYear()}-${String(i + 1).padStart(2, "0")}-01` : null;
+}
+
+// WIDE / transposed "month-block" layout: metric labels run DOWN a column (e.g. col A
+// rows 3-6: Reach, Impressions, Amount Spent…) and months run ACROSS the columns
+// (Jan, Feb, Mar 2026…). Reads each (metric-row × month-column) cell and writes ONE
+// snapshot per month. Empty months are dropped (so blank Jan/Feb don't appear).
+// Returns [] when the sheet isn't this shape (caller then keeps the tidy result).
+function parseWide(grid: string[][], pid: string, source: string,
+                   skipped: unknown[], label: string): Record<string, unknown>[] {
+  const nCols = Math.max(...grid.map(r => r.length));
+  const monthAt = (s: string) => resolvePeriod(s) || bareMonth(s);
+  // metric-label column = left-most column with the most metric-alias matches
+  let labelCol = -1, bestHits = 0;
+  for (let c = 0; c < Math.min(nCols, 4); c++) {
+    let hits = 0;
+    for (let r = 0; r < grid.length; r++) if (COLUMN_ALIASES[(grid[r][c] ?? "").trim().toLowerCase()]) hits++;
+    if (hits > bestHits) { bestHits = hits; labelCol = c; }
+  }
+  if (bestHits < 2) return [];
+  // month-header row = the row with the most month-parseable cells (excluding label col)
+  let headerRow = -1, bestMonths = 0;
+  for (let r = 0; r < Math.min(grid.length, 10); r++) {
+    let hits = 0;
+    for (let c = 0; c < nCols; c++) if (c !== labelCol && monthAt(grid[r][c] ?? "")) hits++;
+    if (hits > bestMonths) { bestMonths = hits; headerRow = r; }
+  }
+  if (bestMonths < 1) return [];
+  const colPeriod: Record<number, string> = {};
+  for (let c = 0; c < nCols; c++) {
+    if (c === labelCol) continue;
+    const p = monthAt(grid[headerRow][c] ?? "");
+    if (!p) continue;
+    const py = +p.slice(0, 4), nowY = new Date().getUTCFullYear();
+    if (py >= 2020 && py <= nowY + 1 && p <= nextMonthCutoff()) colPeriod[c] = p;
+  }
+  const buckets = new Map<string, MonthBucket>();
+  for (let r = 0; r < grid.length; r++) {
+    if (r === headerRow) continue;
+    const col = COLUMN_ALIASES[(grid[r][labelCol] ?? "").trim().toLowerCase()];
+    if (!col) continue;
+    for (const cs of Object.keys(colPeriod)) {
+      const c = +cs, period = colPeriod[c];
+      const v = num((grid[r][c] ?? "").trim()); if (v == null) continue;
+      const b = buckets.get(period) || { practice_id: pid, period };
+      if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+      else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
+      buckets.set(period, b);
+    }
+  }
+  const rows = [...buckets.values()]
+    .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
+    .map(b => { const { practice_id, period, ...m } = b; return { practice_id, period, source, ...m }; });
+  if (rows.length) skipped.push({ source: label, info: "parsed as WIDE month-block", label_column: labelCol, header_row: headerRow + 1, months: Object.values(colPeriod) });
+  return rows;
+}
+
 // Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
 // sheet has no practice_id column (per-client source). Supports both a monthly
 // `period` column and a daily `date` column (daily rows are aggregated per month).
@@ -202,43 +265,42 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
   const idxOf = (n: string) => header.indexOf(n);
   const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
   const dateIdx = ["period", "date", "day", "reporting date", "month"].map(idxOf).find(i => i >= 0) ?? -1;
-  if (dateIdx < 0) { skipped.push({ source: label, reason: "no period/date column" }); return []; }
 
   const buckets = new Map<string, MonthBucket>();
-  for (let i = 1; i < grid.length; i++) {
-    const r = grid[i];
-    const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
-    if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
-
-    // resolve the reporting month deterministically (no `new Date()` — see resolvePeriod)
-    const raw = (r[dateIdx] ?? "").trim();
-    const period = resolvePeriod(raw);
-    if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
-
-    const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
-    if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
-      skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
-    }
-
-    const key = pid + "|" + period;
-    const b = buckets.get(key) || { practice_id: pid, period };
-    for (let c = 0; c < header.length; c++) {
-      const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
-      const v = num((r[c] ?? "").trim()); if (v == null) continue;
-      if (ADDITIVE.has(col)) {
-        b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
-      } else {
-        const prev = typeof b[col] === "number" ? b[col] as number : -Infinity;
-        b[col] = Math.max(prev, v);
+  if (dateIdx >= 0) {                                  // ---- TIDY layout (one row per date) ----
+    for (let i = 1; i < grid.length; i++) {
+      const r = grid[i];
+      const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
+      if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
+      const raw = (r[dateIdx] ?? "").trim();
+      const period = resolvePeriod(raw);
+      if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
+      const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
+      if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
+        skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
       }
+      const key = pid + "|" + period;
+      const b = buckets.get(key) || { practice_id: pid, period };
+      for (let c = 0; c < header.length; c++) {
+        const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
+        const v = num((r[c] ?? "").trim()); if (v == null) continue;
+        if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+        else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
+      }
+      buckets.set(key, b);
     }
-    buckets.set(key, b);
   }
 
-  return [...buckets.values()].map(b => {
-    const { practice_id, period, ...metrics } = b;
-    return { practice_id, period, source, ...metrics };
-  });
+  let rows = [...buckets.values()]
+    .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
+    .map(b => { const { practice_id, period, ...metrics } = b; return { practice_id, period, source, ...metrics }; });
+
+  // ---- fall back to the WIDE month-block layout if tidy found nothing usable ----
+  if (!rows.length && defaultPid && UUID_RE.test(defaultPid)) {
+    rows = parseWide(grid, defaultPid, source, skipped, label);
+  }
+  if (!rows.length && dateIdx < 0) skipped.push({ source: label, reason: "no period/date column and not a recognizable wide month-block sheet" });
+  return rows;
 }
 
 async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
