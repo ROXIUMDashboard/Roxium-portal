@@ -13,6 +13,7 @@ create table if not exists practices (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   go_live date,
+  workbook_sheet_id text,   -- the client's ONE master reporting workbook; every source is a TAB inside it
   created_at timestamptz default now()
 );
 -- One practice per name (trimmed, case-insensitive) — prevents duplicate "Balikians".
@@ -57,13 +58,16 @@ create table if not exists sheet_sources (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   source_type text not null default 'google_sheet_csv',
-  source text not null default 'marketing',   -- ad channel: 'marketing' (Meta) | 'google_ads'
+  source text not null default 'marketing',   -- channel: 'marketing' (Meta) | 'google_ads' | 'organic' | 'seo' | …
   label text,                                 -- display name for the channel
-  csv_url text, sheet_id text, tab_name text,
+  -- A source = one TAB in the client's master workbook (practices.workbook_sheet_id):
+  --   tab_name (+ optional gid) selects the tab; sheet_id is a legacy per-row fallback;
+  --   csv_url is the legacy published-CSV-per-tab path (csv ingestion mode only).
+  csv_url text, sheet_id text, tab_name text, gid text,
   is_active boolean not null default true,
   last_synced_at timestamptz, last_status text, last_error text,
   created_at timestamptz default now(),
-  unique (practice_id, source)                 -- one reporting sheet per channel per practice
+  unique (practice_id, source)                 -- one source tab per channel per practice
 );
 
 -- "Progress on the things we promised them" — the deliverables tracker.

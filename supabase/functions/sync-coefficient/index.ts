@@ -100,8 +100,8 @@ function nextMonthCutoff(): string {
 // retired. The sheet is shared (viewer) with the service-account email; the JSON
 // key lives in the Supabase secret GOOGLE_SA_KEY and never touches the frontend.
 //
-//   • Per-client config moves from `csv_url` -> `sheet_id` (+ optional `tab_name`),
-//     columns that already exist on sheet_sources.
+//   • Each client has ONE master workbook (practices.workbook_sheet_id); every
+//     source is a TAB inside it, configured per-source via sheet_sources.tab_name.
 //   • INGESTION_MODE = 'sheets_api' turns this path on; 'csv' (default) keeps the
 //     legacy public-CSV behaviour so the migration is safe and incremental.
 // ============================================================
@@ -354,24 +354,37 @@ Deno.serve(async (req) => {
     // 'sheets_api' = private Google Sheets API (Option B); 'csv' (default) = legacy public CSV.
     const MODE = (Deno.env.get("INGESTION_MODE") || "csv").toLowerCase();
 
+    // Each client has ONE master reporting workbook (practices.workbook_sheet_id);
+    // every source is a TAB inside it. Pull the per-client workbook id up front so a
+    // source row only needs to name its tab.
+    const { data: pracs } = await sb.from("practices").select("id,workbook_sheet_id");
+    const workbookByPid: Record<string, string> = {};
+    for (const p of pracs || []) {
+      const w = (p.workbook_sheet_id ?? "").toString().trim();
+      if (w) workbookByPid[p.id] = w;
+    }
+
     const { data: sources } = await sb.from("sheet_sources")
       .select("practice_id,csv_url,sheet_id,tab_name,is_active,source").eq("is_active", true);
-    // a job either reads a private sheet (sheet_id) or a public CSV (url), per MODE.
-    // Each job carries its own ad-channel `source` (e.g. 'marketing' = Meta, 'google_ads')
-    // so one practice can have several sheets, each landing under its own kpi source.
+    // One job per active source TAB. In sheets_api mode the sheet id is the client's
+    // master workbook (with the source's tab_name selecting the tab); the legacy
+    // per-row sheet_id is kept as a fallback. Each job carries its own `source`
+    // (e.g. 'marketing' = Meta, 'google_ads', 'organic', 'seo') so every tab lands
+    // under its own kpi source and new sources need no importer changes.
     const jobs: { pid: string | null; url?: string; sheetId?: string; tab?: string | null; label: string; source: string }[] = [];
     if (sources && sources.length) {
       for (const s of sources) {
         const src = s.source || SOURCE;
         const lbl = `${s.practice_id} · ${src}`;
-        if (MODE === "sheets_api" && s.sheet_id) jobs.push({ pid: s.practice_id, sheetId: s.sheet_id, tab: s.tab_name, label: lbl, source: src });
+        const workbook = workbookByPid[s.practice_id] || s.sheet_id;   // client master sheet (fallback: legacy per-row sheet)
+        if (MODE === "sheets_api" && workbook) jobs.push({ pid: s.practice_id, sheetId: workbook, tab: s.tab_name, label: lbl, source: src });
         else if (s.csv_url) jobs.push({ pid: s.practice_id, url: s.csv_url, label: lbl, source: src });
       }
     } else if (MODE !== "sheets_api" && Deno.env.get("CSV_URL")) {
       jobs.push({ pid: null, url: Deno.env.get("CSV_URL")!, label: "legacy CSV_URL", source: SOURCE });
     }
     if (!jobs.length) return json({ ok: false, error: MODE === "sheets_api"
-      ? "no active sheet sources with a sheet_id (INGESTION_MODE=sheets_api)"
+      ? "no active source tabs to sync — set each client's master workbook (practices.workbook_sheet_id) and add at least one source tab (INGESTION_MODE=sheets_api)"
       : "no active sheet sources and no CSV_URL" }, 400);
 
     const skipped: unknown[] = [];

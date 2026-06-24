@@ -489,7 +489,17 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .clientrow2:hover{border-color:var(--gold)}
 .clientrow2 .ccol{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .clientrow2 .ccol .cname{font-size:15px;letter-spacing:.02em}
-/* one sheet-config block per ad channel (Meta + Google) */
+/* master workbook (one per client) + one config block per source TAB inside it */
+.workbookcfg{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:4px;
+  padding:10px 11px;background:var(--ink);margin-bottom:12px}
+.workbookcfg .chanlabel{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.workbookcfg .btn{align-self:flex-start}
+.wbhint{font-size:11px;opacity:.7}
+.addsource{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;
+  padding-top:12px;border-top:1px dashed var(--line)}
+.addsource .addsourcesel{max-width:180px}
+.addsource .addsourcekey,.addsource .addsourcetab{max-width:220px}
+.btn.xs{padding:2px 8px;font-size:10.5px;margin-left:auto}
 .sheetchans{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .sheetchan{border:1px solid var(--line);border-radius:4px;padding:10px 11px;background:var(--ink)}
 .sheetchan-h{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
