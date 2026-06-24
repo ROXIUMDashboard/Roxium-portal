@@ -17,7 +17,7 @@
   <div class="login-card">
     <div class="mark big">ROX<b>I</b>UM</div>
     <div class="eyebrow">Practice Growth Portal</div>
-    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed.</p>
+    <p class="note">Enter your email — we'll send a secure sign-in link. Access is invite-only: your email must be on the practice roster.</p>
     <input id="loginEmail" type="email" placeholder="you@practice.com">
     <button class="btn" id="btnLogin">Send sign-in link</button>
     <p class="note" id="loginMsg"></p>
@@ -57,6 +57,7 @@
       <a href="#video"        class="tab" data-view="video">Video</a>
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
+      <a href="#access"       class="tab accessonly hidden" data-view="access">Team access</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
 
@@ -106,42 +107,59 @@
       <div id="feed"></div>
     </section>
 
-    <!-- ADMIN-ONLY · global client / access management (NOT tied to one practice) -->
+    <!-- ADMIN-ONLY · global controls (not tied to one practice) -->
     <section id="adminPanel" class="view teamonly hidden" data-view="admin">
       <a href="#roadmap" class="adminback" id="btnAdminBack">← Back to client portal</a>
-      <h2>Admin · <em>client management</em></h2>
-      <div class="sub">Global controls for the whole portal — create clients, invite users and manage access in one place. This area is not part of any single client's portal.</div>
+      <h2>Admin · <em>portal controls</em></h2>
+      <div class="sub">One global area for the whole site — create clients, manage who can sign in, configure KPI sources, and monitor sync. Not part of any single client's dashboard.</div>
 
-      <h3>Add a client practice</h3>
-      <p class="note" style="margin-top:-2px">A new practice is seeded with the standard deliverables, roadmap and pipeline. Duplicate names are blocked.</p>
+      <h3>1 · New client onboarding</h3>
+      <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline, plus an empty reporting-sheet slot. Next: allowlist emails, configure the sheet, sync runs automatically every 2 hours.</p>
       <div class="entry">
-        <div class="f"><label>New practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
+        <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
         <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
-        <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Add client</button></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
       </div>
-
-      <h3>Invite a surgeon / client user</h3>
-      <p class="note" style="margin-top:-2px">Invited users get a sign-in link by email; access is invite-only — nobody can self-register. Pick any practice — invites aren't limited to the one you currently have open.</p>
-      <div class="entry">
-        <div class="f"><label>Invite email</label><input id="inviteeEmail" type="email" placeholder="surgeon@practice.com"></div>
-        <div class="f"><label>Name (optional)</label><input id="inviteeName" placeholder="Dr. Jane Smith"></div>
-        <div class="f"><label>Practice</label><select id="inviteePractice"></select></div>
-        <div class="f"><label>Role</label><select id="inviteeRole"><option value="member">Member</option><option value="owner">Owner</option></select></div>
-        <div class="f" style="align-self:end"><button class="btn" id="btnInvite">Send invite</button></div>
-      </div>
+      <div id="onboardChecklist" class="onboard-check hidden"></div>
       <p class="note" id="onbMsg" style="margin-top:6px"></p>
 
-      <h3>Clients &amp; reporting sheets</h3>
-      <p class="note" style="margin-top:-2px">Each client has its own published Google-Sheet CSV URL — Coefficient feeds that sheet, and the portal syncs it into Supabase every 2 hours (current month live, past months frozen). Paste the client's published-to-web CSV link and Save. Deleting a client permanently removes that practice and <b>all</b> of its data; this cannot be undone.</p>
+      <h3>2 · Access &amp; invites</h3>
+      <p class="note" style="margin-top:-2px">Allowlist emails first (they can sign up with that address), or send an invite email immediately. Owners you invite can add their own team members from the <b>Team access</b> tab.</p>
+      <div class="entry">
+        <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
+        <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
+        <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
+        <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
+        <div class="f access-btns" style="align-self:end">
+          <button class="btn ghost sm" id="btnAllowlist">Allowlist only</button>
+          <button class="btn sm" id="btnInvite">Send invite</button>
+        </div>
+      </div>
+      <div id="accessRoster" class="roster"></div>
+
+      <h3>3 · Reporting sheets &amp; KPI sync</h3>
+      <p class="note" style="margin-top:-2px">Each client has its own Google Sheet (Coefficient feeds it). Paste the Sheet ID or legacy CSV URL, Save, then sync pulls ad metrics into Supabase every 2 hours.</p>
       <div class="syncnowrow">
         <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
         <span class="note" id="syncNowMsg">Pulls every active reporting sheet into Supabase immediately.</span>
       </div>
       <h4 class="syncstatus-h">Auto-sync status</h4>
-      <p class="note" style="margin-top:-2px">Confirms the every-2-hours automation is actually running: when it last ran, whether it succeeded, how many KPI rows it wrote, and which months it saw. Use “Sync now” above to trigger a manual run and watch this update.</p>
       <div id="syncStatus" class="syncstatus"></div>
       <div id="adminClientList" class="clientlist"></div>
       <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
+    </section>
+
+    <!-- CLIENT OWNER · invite their own team (not global admin) -->
+    <section id="accessPanel" class="view accessonly hidden" data-view="access">
+      <h2>Team <em>access</em></h2>
+      <div class="sub">Invite colleagues at your practice. Each person gets their own login and sees only this practice's portal.</div>
+      <div class="entry">
+        <div class="f"><label>Email</label><input id="clientInviteEmail" type="email" placeholder="colleague@practice.com"></div>
+        <div class="f"><label>Name (optional)</label><input id="clientInviteName" placeholder="Office manager"></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnClientInvite">Invite team member</button></div>
+      </div>
+      <p class="note" id="clientAccessMsg" style="margin-top:6px"></p>
+      <div id="clientRoster" class="roster"></div>
     </section>
 
     <!-- TEAM-ONLY · controls for the practice currently open -->

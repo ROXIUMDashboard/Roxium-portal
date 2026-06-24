@@ -161,6 +161,22 @@ create table if not exists memberships (
   unique (user_id, practice_id)
 );
 
+-- Pre-approved emails per practice (allowlist). Login checks pending/sent rows;
+-- claim_invites_for_user() wires profile + membership on first sign-in.
+create table if not exists practice_invites (
+  id uuid primary key default gen_random_uuid(),
+  practice_id uuid not null references practices(id) on delete cascade,
+  email text not null,
+  full_name text,
+  role text not null default 'member' check (role in ('owner','member')),
+  status text not null default 'pending' check (status in ('pending','sent','accepted','revoked')),
+  invited_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz default now(),
+  accepted_at timestamptz
+);
+create unique index if not exists practice_invites_practice_email_uq
+  on practice_invites (practice_id, lower(btrim(email)));
+
 -- ---------- ROW LEVEL SECURITY ----------
 -- Clients see ONLY their own practice. Team sees and edits everything.
 
@@ -174,6 +190,7 @@ alter table video_history  enable row level security;
 alter table activity       enable row level security;
 alter table notifications  enable row level security;
 alter table memberships    enable row level security;
+alter table practice_invites enable row level security;
 alter table sheet_sources  enable row level security;
 drop policy if exists "team sheet sources" on sheet_sources;
 create policy "team sheet sources" on sheet_sources for all using (is_team()) with check (is_team());
@@ -199,6 +216,19 @@ language sql stable security definer set search_path = public as $$
   );
 $$;
 
+create or replace function is_practice_owner(p_practice uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from memberships
+    where user_id = auth.uid() and practice_id = p_practice and role = 'owner'
+  );
+$$;
+
+create or replace function can_invite_to_practice(p_practice uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select is_team() or is_practice_owner(p_practice);
+$$;
+
 -- profiles: users read their own row; team reads all; team manages rows.
 drop policy if exists "own profile" on profiles;
 create policy "own profile"   on profiles for select using (id = auth.uid() or is_team());
@@ -210,6 +240,13 @@ drop policy if exists "read memberships" on memberships;
 create policy "read memberships" on memberships for select using (is_team() or user_id = auth.uid());
 drop policy if exists "team memberships" on memberships;
 create policy "team memberships" on memberships for all using (is_team()) with check (is_team());
+
+drop policy if exists "team practice invites" on practice_invites;
+create policy "team practice invites" on practice_invites
+  for all using (is_team()) with check (is_team());
+drop policy if exists "owner practice invites" on practice_invites;
+create policy "owner practice invites" on practice_invites
+  for all using (is_practice_owner(practice_id)) with check (is_practice_owner(practice_id));
 
 -- practices
 drop policy if exists "read own practice" on practices;
@@ -420,6 +457,92 @@ language sql security definer set search_path = public, auth as $$
 $$;
 revoke all on function practice_member_emails(uuid) from public, anon, authenticated;
 
+create or replace function email_is_invited(p_email text)
+returns boolean language sql stable security definer set search_path = public, auth as $$
+  select exists (
+    select 1 from practice_invites
+    where lower(btrim(email)) = lower(btrim(p_email)) and status in ('pending','sent')
+  ) or exists (
+    select 1 from auth.users u where lower(u.email) = lower(btrim(p_email))
+  );
+$$;
+grant execute on function email_is_invited(text) to anon, authenticated;
+
+create or replace function claim_invites_for_user()
+returns jsonb language plpgsql security definer set search_path = public, auth as $$
+declare uid uuid := auth.uid(); em text; inv record; claimed int := 0; first_practice uuid; disp_name text;
+begin
+  if uid is null then return jsonb_build_object('ok', false, 'error', 'not authenticated'); end if;
+  select lower(email) into em from auth.users where id = uid;
+  if em is null then return jsonb_build_object('ok', false, 'error', 'no email'); end if;
+  for inv in select * from practice_invites where lower(btrim(email)) = em and status in ('pending','sent') order by created_at
+  loop
+    insert into memberships (user_id, practice_id, role) values (uid, inv.practice_id, inv.role)
+    on conflict (user_id, practice_id) do update set role = excluded.role;
+    update practice_invites set status = 'accepted', accepted_at = now() where id = inv.id;
+    if first_practice is null then first_practice := inv.practice_id; disp_name := inv.full_name; end if;
+    claimed := claimed + 1;
+  end loop;
+  if claimed > 0 then
+    insert into profiles (id, role, practice_id, full_name) values (uid, 'client', first_practice, disp_name)
+    on conflict (id) do update set practice_id = coalesce(profiles.practice_id, excluded.practice_id),
+      full_name = coalesce(profiles.full_name, excluded.full_name);
+  end if;
+  return jsonb_build_object('ok', true, 'claimed', claimed, 'practice_id', first_practice);
+end $$;
+grant execute on function claim_invites_for_user() to authenticated;
+
+create or replace function add_practice_invite(p_practice uuid, p_email text, p_full_name text default null, p_role text default 'member')
+returns uuid language plpgsql security definer set search_path = public as $$
+declare rid uuid; r text := case when p_role = 'owner' then 'owner' else 'member' end;
+begin
+  if not can_invite_to_practice(p_practice) then raise exception 'Not allowed' using errcode = 'insufficient_privilege'; end if;
+  select id into rid from practice_invites where practice_id = p_practice and lower(btrim(email)) = lower(btrim(p_email));
+  if rid is null then
+    insert into practice_invites (practice_id, email, full_name, role, status, invited_by)
+    values (p_practice, lower(btrim(p_email)), nullif(btrim(p_full_name), ''), r, 'pending', auth.uid()) returning id into rid;
+  else
+    update practice_invites set full_name = coalesce(nullif(btrim(p_full_name), ''), full_name), role = r,
+      status = case when status = 'revoked' then 'pending' else status end, invited_by = auth.uid() where id = rid;
+  end if;
+  return rid;
+end $$;
+grant execute on function add_practice_invite(uuid, text, text, text) to authenticated;
+
+create or replace function revoke_practice_invite(p_invite uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare pr uuid;
+begin
+  select practice_id into pr from practice_invites where id = p_invite;
+  if not can_invite_to_practice(pr) then raise exception 'Not allowed' using errcode = 'insufficient_privilege'; end if;
+  update practice_invites set status = 'revoked' where id = p_invite and status in ('pending','sent');
+end $$;
+grant execute on function revoke_practice_invite(uuid) to authenticated;
+
+create or replace function remove_practice_member(p_practice uuid, p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not can_invite_to_practice(p_practice) then raise exception 'Not allowed' using errcode = 'insufficient_privilege'; end if;
+  if p_user = auth.uid() then raise exception 'Cannot remove yourself'; end if;
+  delete from memberships where practice_id = p_practice and user_id = p_user;
+end $$;
+grant execute on function remove_practice_member(uuid, uuid) to authenticated;
+
+create or replace function get_practice_roster(p_practice uuid)
+returns jsonb language plpgsql security definer set search_path = public, auth as $$
+declare members jsonb; invites jsonb;
+begin
+  if not can_invite_to_practice(p_practice) then raise exception 'Not allowed' using errcode = 'insufficient_privilege'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('user_id', m.user_id, 'email', u.email, 'full_name', p.full_name,
+    'role', m.role, 'joined_at', m.created_at) order by m.created_at), '[]'::jsonb) into members
+  from memberships m join auth.users u on u.id = m.user_id left join profiles p on p.id = m.user_id where m.practice_id = p_practice;
+  select coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'email', i.email, 'full_name', i.full_name,
+    'role', i.role, 'status', i.status, 'created_at', i.created_at) order by i.created_at), '[]'::jsonb) into invites
+  from practice_invites i where i.practice_id = p_practice and i.status in ('pending','sent');
+  return jsonb_build_object('members', members, 'invites', invites);
+end $$;
+grant execute on function get_practice_roster(uuid) to authenticated;
+
 create or replace function seed_practice(p_name text, p_kickoff date)
 returns uuid language plpgsql as $$
 declare pid uuid;
@@ -493,6 +616,10 @@ begin
     (pid,'Patient testimonial #2','planned'),
     (pid,'Patient testimonial #3','planned'),
     (pid,'Office walkthrough B-roll package','planned');
+
+  insert into sheet_sources (practice_id, is_active, source_type)
+  values (pid, true, 'google_sheet_csv')
+  on conflict (practice_id) do nothing;
 
   return pid;
 end $$;

@@ -54,11 +54,14 @@ sending from your own domain, wire Resend in **Phase D** (Auth → SMTP, or a cu
 email hook) — no code change needed here.
 
 ## Using it (team)
-1. Sign in as a team user → **Team** tab → *Clients & access*.
-2. **Add client**: name + kickoff → seeds a fully-loaded practice and selects it.
-3. **Send invite**: email + practice + role (Owner/Member) → the user gets a
-   sign-in link and is linked to that practice. Invite multiple people to the same
-   practice to get multi-user accounts.
+1. Sign in as a team user → header **⚙ Admin**.
+2. **Create client** → onboarding checklist appears.
+3. **Allowlist only** or **Send invite** for doctor emails.
+4. Configure reporting sheet + sync (section 3).
+
+Client owners invite their own staff from the **Team access** tab (not Admin).
+
+See `docs/phase-e-access-onboarding.md` for the full access model.
 
 ## Env vars summary
 | Name | Where | Purpose |

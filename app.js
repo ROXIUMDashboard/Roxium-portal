@@ -68,6 +68,7 @@ const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_
 // Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
 let me = null;            // profile row
+let myMembership = null;    // current practice membership { role: owner|member }
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
 // Selected reporting month is scoped PER PRACTICE so one client's choice can never
@@ -101,19 +102,23 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['roadmap','deliverables','video','metrics','updates','team','admin'];
-const TEAM_ONLY_VIEWS = ['team','admin'];   // require a real team user (not client/preview)
+const VIEWS = ['roadmap','deliverables','video','metrics','updates','access','team','admin'];
+const TEAM_ONLY_VIEWS = ['team','admin'];
+function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
+function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
 function currentView(){
   const h = (location.hash||'').replace('#','');
   return VIEWS.includes(h) ? h : 'roadmap';
 }
 function showView(name){
   if(!VIEWS.includes(name)) name = 'roadmap';
-  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';   // clients/preview can't open Team/Admin
+  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
+  if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
-  syncChrome();                              // re-apply chrome for the new view
-  if(name==='admin'){ renderAdminClients(); loadSheetSources(); }   // Admin is global — refresh clients + sheet sources
+  syncChrome();
+  if(name==='admin'){ renderAdminClients(); loadSheetSources(); loadAccessRoster($('accessPractice')?.value); }
+  if(name==='access') loadClientAccessRoster();
 }
 // Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
 // so when it's open we hide the whole practice context (hero, tabs, switcher,
@@ -127,6 +132,8 @@ function syncChrome(){
   $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
   document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
   $('tabnav').classList.toggle('hidden', adminMode);
+  document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
+  document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   TEAM_ONLY_VIEWS.forEach(v=>{
     const tab = document.querySelector(`.tab[data-view="${v}"]`);
     if(tab) tab.classList.toggle('hidden', !teamView);
@@ -134,9 +141,11 @@ function syncChrome(){
     if(panel) panel.classList.toggle('hidden', !teamView);
   });
   if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
+  if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
 $('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };
+$('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#roadmap'; });
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -171,17 +180,23 @@ function buildSwitcher(list){
   document.addEventListener('click', e=>{ if(!$('practiceSwitcher').contains(e.target)) results.classList.add('hidden'); });
 }
 
-// Team: (re)load every practice and refresh the switcher + the invite dropdown.
+// Team: (re)load every practice and refresh the switcher + admin access dropdown.
 async function loadTeamPractices(){
   const { data: prax } = await sb.from('practices').select('*').order('name');
   const list = prax || [];
+  practicesList = list;
   buildSwitcher(list);
-  const sel = $('inviteePractice');
+  const sel = $('accessPractice');
   if(sel){
     const keep = sel.value;
     sel.innerHTML = list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
     if(list.some(p=>p.id===keep)) sel.value = keep;
     else if(practiceId && list.some(p=>p.id===practiceId)) sel.value = practiceId;
+    else if(list[0]) sel.value = list[0].id;
+    if(!sel.dataset.wired){
+      sel.dataset.wired = '1';
+      sel.onchange = ()=> loadAccessRoster(sel.value);
+    }
   }
   return list;
 }
@@ -208,25 +223,44 @@ sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
   if(!email) return;
-  // Invite-only: shouldCreateUser:false means a magic link is only sent to users
-  // who already exist (i.e. were invited by the team). Random emails get nothing.
+  // Allowlisted emails (practice_invites) or existing auth users may sign in / sign up.
+  const { data: allowed } = await sb.rpc('email_is_invited', { p_email: email });
   const { error } = await sb.auth.signInWithOtp({
-    email, options:{ emailRedirectTo: location.origin, shouldCreateUser: false }
+    email, options:{ emailRedirectTo: location.origin, shouldCreateUser: !!allowed }
   });
   $('loginMsg').textContent = error
     ? (/not.*found|signups?.*disabled|user/i.test(error.message)
         ? "We couldn't find an invite for that email. Ask your ROXIUM lead to add you."
         : error.message)
-    : 'Check your email for the sign-in link.';
+    : allowed
+      ? 'Check your email for the sign-in link.'
+      : "If this email was invited, you'll receive a link shortly.";
 };
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 
+async function loadMyMembership(){
+  if(!me || !practiceId) { myMembership = null; return; }
+  const { data } = await sb.from('memberships').select('role')
+    .eq('user_id', me.id).eq('practice_id', practiceId).maybeSingle();
+  myMembership = data;
+}
+
 async function afterLogin(){
-  const { data: prof, error } = await sb.from('profiles').select('*').eq('id', (await sb.auth.getUser()).data.user.id).single();
+  const uid = (await sb.auth.getUser()).data.user?.id;
+  let { data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single();
   if(error || !prof){
-    $('login').classList.remove('hidden');
-    $('loginMsg').textContent = 'Signed in, but no profile exists yet. Ask your ROXIUM lead to add you.';
-    return;
+    const { data: claim, error: cErr } = await sb.rpc('claim_invites_for_user');
+    if(cErr || !claim?.claimed){
+      $('login').classList.remove('hidden');
+      $('loginMsg').textContent = 'Signed in, but no invite was found for this email. Ask your ROXIUM lead to add you.';
+      return;
+    }
+    ({ data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single());
+    if(error || !prof){
+      $('login').classList.remove('hidden');
+      $('loginMsg').textContent = 'Account created, but setup failed. Contact ROXIUM support.';
+      return;
+    }
   }
   me = prof;
   $('login').classList.add('hidden');
@@ -247,6 +281,7 @@ async function afterLogin(){
     };
   } else {
     practiceId = me.practice_id;
+    await loadMyMembership();
   }
   syncChrome();
   showView(currentView());
@@ -1171,25 +1206,103 @@ $('btnPost').onclick = async ()=>{
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
 };
 
-/* ---- ONBOARDING (team): add a client/practice, invite surgeon/client users ---- */
-const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+/* ---- ONBOARDING & ACCESS (admin + client owners) ---- */
+const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
+const accessFlash = t=>{ const el=$('clientAccessMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
 
-// Add a new client practice — reuses the seed_practice() RPC so it lands fully loaded
-// with the standard deliverables / roadmap / pipeline. Then jump to it.
+function showOnboardChecklist(pid, name){
+  const el = $('onboardChecklist'); if(!el) return;
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="onboard-title">Next steps for <b>${esc(name)}</b></div>
+    <ol class="onboard-steps">
+      <li>Allowlist or invite the doctor's email (section 2 below)</li>
+      <li>Paste their Google Sheet ID / CSV URL and Save (section 3)</li>
+      <li>Connect Coefficient to that sheet tab</li>
+      <li>Click <b>Sync now</b> — cron handles it every 2 hours after that</li>
+    </ol>`;
+  const ap = $('accessPractice'); if(ap) ap.value = pid;
+  loadAccessRoster(pid);
+}
+
+async function sendPracticeInvite(practice_id, email, full_name, role){
+  const { data, error } = await sb.functions.invoke('invite-user', {
+    body: { email, practice_id, full_name, role }
+  });
+  if(error) throw error;
+  if(data && data.error) throw new Error(data.error);
+  return data;
+}
+
+function renderRoster(wrap, roster, opts){
+  if(!wrap) return;
+  const members = roster?.members || [];
+  const invites = roster?.invites || [];
+  if(!members.length && !invites.length){
+    wrap.innerHTML = '<div class="note">No team members yet — add an email above.</div>';
+    return;
+  }
+  const memRows = members.map(m=>`<div class="rosterrow">
+    <span class="rosteremail">${esc(m.email||'—')}</span>
+    <span class="rosterrole">${esc(m.role)}</span>
+    <span class="rosterstatus ok">active</span>
+    ${opts.canRemove ? `<button class="btn ghost sm danger" data-rmuser="${m.user_id}">Remove</button>` : ''}
+  </div>`).join('');
+  const invRows = invites.map(i=>`<div class="rosterrow pending">
+    <span class="rosteremail">${esc(i.email)}</span>
+    <span class="rosterrole">${esc(i.role)}</span>
+    <span class="rosterstatus">${esc(i.status)}</span>
+    ${opts.canRevoke ? `<button class="btn ghost sm" data-revoke="${i.id}">Revoke</button>` : ''}
+  </div>`).join('');
+  wrap.innerHTML = `<div class="rosterhead"><span>Email</span><span>Role</span><span>Status</span><span></span></div>`
+    + memRows + invRows;
+  if(opts.canRemove){
+    wrap.querySelectorAll('[data-rmuser]').forEach(b=> b.onclick = async ()=>{
+      if(!await uiConfirm('Remove member', `Remove access for this user?`, {danger:true})) return;
+      const { error } = await sb.rpc('remove_practice_member', { p_practice: opts.practiceId, p_user: b.dataset.rmuser });
+      if(error) onbFlash('Remove failed: '+error.message);
+      else { onbFlash('Member removed.'); opts.reload(); }
+    });
+  }
+  if(opts.canRevoke){
+    wrap.querySelectorAll('[data-revoke]').forEach(b=> b.onclick = async ()=>{
+      const { error } = await sb.rpc('revoke_practice_invite', { p_invite: b.dataset.revoke });
+      if(error) onbFlash('Revoke failed: '+error.message);
+      else { onbFlash('Invite revoked.'); opts.reload(); }
+    });
+  }
+}
+
+async function loadAccessRoster(pid){
+  const wrap = $('accessRoster'); if(!wrap || !pid) return;
+  const { data, error } = await sb.rpc('get_practice_roster', { p_practice: pid });
+  if(error){ wrap.innerHTML = `<div class="note">Could not load roster — run migration 2026-06-24_practice_invites_and_access.sql</div>`; return; }
+  renderRoster(wrap, data, {
+    practiceId: pid, canRemove: true, canRevoke: true,
+    reload: ()=> loadAccessRoster(pid),
+  });
+}
+
+async function loadClientAccessRoster(){
+  const wrap = $('clientRoster'); if(!wrap || !practiceId) return;
+  const { data, error } = await sb.rpc('get_practice_roster', { p_practice: practiceId });
+  if(error){ wrap.innerHTML = '<div class="note">Could not load team list.</div>'; return; }
+  renderRoster(wrap, data, {
+    practiceId, canRemove: true, canRevoke: true,
+    reload: ()=> loadClientAccessRoster(),
+  });
+}
+
 $('btnAddClient').onclick = async ()=>{
   if(!isTeamView()) return;
   const name = $('newClientName').value.trim();
   const kickoff = $('newClientKickoff').value || new Date().toISOString().slice(0,10);
   if(!name){ onbFlash('Enter a practice name.'); return; }
-  // Guard against duplicates (e.g. a second empty "Balikian"): if a practice with
-  // this name already exists, offer to switch to it instead of creating a clone.
   const dupe = practicesList.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
   if(dupe){
-    if(await uiConfirm('Practice already exists', `“${esc(dupe.name)}” already exists. Switch to it instead of creating a duplicate?`, {confirmLabel:'Switch to it'})){
+    if(await uiConfirm('Practice already exists', `“${esc(dupe.name)}” already exists. Switch to it instead?`, {confirmLabel:'Switch to it'})){
       practiceId = dupe.id; $('newClientName').value=''; buildSwitcher(practicesList); loadAll();
-    } else {
-      onbFlash('No duplicate created. Rename if this is a different practice.');
-    }
+      showOnboardChecklist(dupe.id, dupe.name);
+    } else onbFlash('No duplicate created.');
     return;
   }
   $('btnAddClient').disabled = true; onbFlash('Creating…');
@@ -1198,40 +1311,70 @@ $('btnAddClient').onclick = async ()=>{
     if(error) throw error;
     $('newClientName').value = '';
     await loadTeamPractices();
-    renderAdminClients();                      // refresh the admin client list
-    if(data){ practiceId = data; }            // RPC returns the new practice id
-    onbFlash(`Added "${name}". Now invite their users below.`);
+    renderAdminClients();
+    if(data){ practiceId = data; showOnboardChecklist(data, name); }
+    onbFlash(`Created "${name}". Complete the checklist below.`);
     loadAll();
   }catch(e){ onbFlash('Could not add client: '+e.message); }
   finally{ $('btnAddClient').disabled = false; }
 };
 
-// Invite a surgeon/client user — calls the invite-user Edge Function (service role)
-// which creates/links the auth user + profile + membership and emails the invite.
+$('btnAllowlist').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const practice_id = $('accessPractice').value;
+  const email = $('accessEmail').value.trim();
+  const full_name = $('accessName').value.trim();
+  const role = $('accessRole').value || 'member';
+  if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
+  $('btnAllowlist').disabled = true;
+  try{
+    const { error } = await sb.rpc('add_practice_invite', {
+      p_practice: practice_id, p_email: email, p_full_name: full_name||null, p_role: role
+    });
+    if(error) throw error;
+    $('accessEmail').value=''; $('accessName').value='';
+    onbFlash(`${email} allowlisted — they can sign up with that address.`);
+    loadAccessRoster(practice_id);
+  }catch(e){ onbFlash('Allowlist failed: '+e.message); }
+  finally{ $('btnAllowlist').disabled = false; }
+};
+
 $('btnInvite').onclick = async ()=>{
   if(!isTeamView()) return;
-  const email = $('inviteeEmail').value.trim();
-  const practice_id = $('inviteePractice').value;
-  const full_name = $('inviteeName').value.trim();
-  const role = $('inviteeRole').value || 'member';
+  const practice_id = $('accessPractice').value;
+  const email = $('accessEmail').value.trim();
+  const full_name = $('accessName').value.trim();
+  const role = $('accessRole').value || 'member';
   if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
   $('btnInvite').disabled = true; onbFlash('Sending invite…');
   try{
-    const { data, error } = await sb.functions.invoke('invite-user', {
-      body: { email, practice_id, full_name, role }
-    });
-    if(error) throw error;
-    if(data && data.error) throw new Error(data.error);
-    $('inviteeEmail').value=''; $('inviteeName').value='';
-    onbFlash(data && data.invited===false
+    const data = await sendPracticeInvite(practice_id, email, full_name, role);
+    $('accessEmail').value=''; $('accessName').value='';
+    onbFlash(data?.invited===false
       ? `${email} already had an account — linked to this practice.`
       : `Invite sent to ${email}.`);
+    loadAccessRoster(practice_id);
   }catch(e){
-    onbFlash('Invite failed: '+(e.message||e)+' (is the invite-user function deployed?)');
+    onbFlash('Invite failed: '+(e.message||e)+' (is invite-user deployed?)');
   }finally{ $('btnInvite').disabled = false; }
 };
 
-// ---- Admin: list every practice with a delete control (global, one place) ----
+$('btnClientInvite').onclick = async ()=>{
+  if(!canSeeAccessTab() || !practiceId) return;
+  const email = $('clientInviteEmail').value.trim();
+  const full_name = $('clientInviteName').value.trim();
+  if(!email){ accessFlash('Enter an email.'); return; }
+  $('btnClientInvite').disabled = true; accessFlash('Sending invite…');
+  try{
+    const data = await sendPracticeInvite(practiceId, email, full_name, 'member');
+    $('clientInviteEmail').value=''; $('clientInviteName').value='';
+    accessFlash(data?.invited===false ? `${email} linked.` : `Invite sent to ${email}.`);
+    loadClientAccessRoster();
+  }catch(e){ accessFlash('Invite failed: '+(e.message||e)); }
+  finally{ $('btnClientInvite').disabled = false; }
+};
+
+// ---- Admin: per-client sheet config + delete ----
 const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
 // per-client reporting-sheet sources (practice_id -> sheet_sources row)
 let sheetSources = {};
