@@ -453,6 +453,24 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .syncnowrow.ok #syncNowMsg{color:var(--green)}
 .syncnowrow.err #syncNowMsg{color:var(--red)}
 
+/* Admin onboarding checklist */
+.onboard-check{margin:12px 0 18px;padding:14px 16px;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.25);border-radius:4px}
+.onboard-title{font-size:13px;margin-bottom:8px}
+.onboard-steps{margin:0;padding-left:20px;font-size:12.5px;line-height:1.7;color:var(--muted)}
+.access-btns{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Access roster (admin + client owners) */
+.roster{margin:12px 0 24px;border:1px solid var(--line);background:var(--surface)}
+.rosterhead,.rosterrow{display:grid;grid-template-columns:2fr 80px 90px auto;gap:10px;align-items:center;padding:8px 12px;font-size:12px}
+.rosterhead{color:var(--muted);border-bottom:1px solid var(--line);letter-spacing:.04em;text-transform:uppercase;font-size:10.5px}
+.rosterrow{border-bottom:1px solid var(--line)}
+.rosterrow:last-child{border-bottom:none}
+.rosterrow.pending{opacity:.85}
+.rosteremail{overflow:hidden;text-overflow:ellipsis}
+.rosterstatus{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase}
+.rosterstatus.ok{color:var(--green)}
+@media(max-width:640px){.rosterhead,.rosterrow{grid-template-columns:1fr;gap:4px}}
+
 /* Phase C · per-client reporting-sheet rows in Admin */
 .clientrow2{display:grid;grid-template-columns:minmax(160px,1fr) 2fr auto auto;gap:10px;align-items:center;
   padding:10px 12px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease}
