@@ -86,6 +86,16 @@ let previewMode = false;  // team viewing the client-side version
 let selByPractice = {};   // practiceId -> 'YYYY-MM-01'
 const getSel = () => (practiceId && practiceId in selByPractice) ? selByPractice[practiceId] : null;
 const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[practiceId]; else selByPractice[practiceId]=p; };
+// Ad channel (kpi source) selection, also scoped per-practice. 'all' = every channel
+// summed together. Absent = 'all'.
+let chanByPractice = {};   // practiceId -> 'all' | 'marketing' | 'google_ads' | …
+const getChan = () => (practiceId && practiceId in chanByPractice) ? chanByPractice[practiceId] : 'all';
+const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete chanByPractice[practiceId]; else chanByPractice[practiceId]=c; };
+// known ad channels (Meta = the legacy 'marketing' source). Extendable later.
+const CHANNELS = [{ source:'marketing', label:'Meta Ads' }, { source:'google_ads', label:'Google Ads' }];
+const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
+  ? 'Meta Ads'
+  : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
 
 /* ---- KPI period helpers (period = first-of-month 'YYYY-MM-01' snapshot key) ---- */
@@ -323,13 +333,35 @@ async function loadAll(){
     sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
     sb.from('notifications').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(10),
   ]);
-  data = { practice:p.data, kpi:mergeKpiByPeriod(k.data||[]), deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
+  data = { practice:p.data, kpiRaw:(k.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
+  data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
   render();
 }
 
-// Collapse multiple source rows for the same month into one effective snapshot.
-// Non-null fields win; if two sources set the same field, the more recently
-// updated row wins. Keeps the period model intact (one row per period downstream).
+// Additive ad metrics — SUMmed when combining channels (Meta + Google) for one month.
+// Everything else (cumulative followers, page likes, rates) takes the latest value.
+const KPI_ADDITIVE = new Set(['spend','impr','clicks','lpv','reach','page_engagement','leads','cons','proc','sent','opens','eclk','sms','vid','posts']);
+
+// Build the per-period rows the dashboard renders, honoring the selected channel.
+// 'all' sums every channel together; a specific channel filters to just its rows.
+function computeKpi(){
+  const rows = data.kpiRaw || [];
+  const chan = getChan();
+  const scoped = chan==='all' ? rows : rows.filter(r => (r.source||'marketing') === chan);
+  return mergeKpiByPeriod(scoped);
+}
+
+// Distinct channels present in the raw data, in CHANNELS order then any extras.
+function channelsPresent(){
+  const present = new Set((data.kpiRaw||[]).map(r => r.source || 'marketing'));
+  const ordered = CHANNELS.map(c=>c.source).filter(s=> present.has(s));
+  for(const s of present) if(!ordered.includes(s)) ordered.push(s);
+  return ordered;
+}
+
+// Collapse source rows for the same month into one effective snapshot. Additive
+// metrics SUM across channels; the rest take the most-recently-updated value.
+// Keeps the period model intact (one row per period downstream).
 function mergeKpiByPeriod(rows){
   const byPeriod = new Map();
   const ordered = [...rows].sort((a,b)=> new Date(a.updated_at||0) - new Date(b.updated_at||0));
@@ -338,7 +370,12 @@ function mergeKpiByPeriod(rows){
     for(const key of Object.keys(r)){
       if(key==='id' || key==='source') continue;
       const val = r[key];
-      if(val!==null && val!==undefined && val!=='') cur[key] = val;
+      if(val===null || val===undefined || val==='') continue;
+      if(KPI_ADDITIVE.has(key) && typeof val==='number'){
+        cur[key] = (typeof cur[key]==='number' ? cur[key] : 0) + val;
+      } else {
+        cur[key] = val;
+      }
     }
     byPeriod.set(r.period, cur);
   }
@@ -382,6 +419,8 @@ function render(){
       : 'KPI data will appear here after the first month is reported.';
   // build the month selector (latest + any reported months, + the empty month if team is on one)
   buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected);
+  // build the channel selector (only when this practice has more than one ad channel)
+  buildChannelPicker();
   $('kpiSub').textContent = emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
     : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
@@ -502,6 +541,19 @@ function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected){
   sel.onchange = ()=>{ setSel(sel.value===''? null : sel.value); render(); };
 }
 
+// Channel selector: shown only when a practice reports under more than one ad
+// channel. 'All channels' sums Meta + Google; each option filters to one channel.
+function buildChannelPicker(){
+  const sel = $('channelPicker'); if(!sel) return;
+  const chans = channelsPresent();
+  if(chans.length < 2){ sel.classList.add('hidden'); setChan('all'); return; }
+  sel.classList.remove('hidden');
+  sel.innerHTML = ['<option value="all">All channels</option>']
+    .concat(chans.map(s=> `<option value="${esc(s)}">${esc(channelLabel(s))}</option>`)).join('');
+  sel.value = getChan();
+  sel.onchange = ()=>{ setChan(sel.value); data.kpi = computeKpi(); render(); };
+}
+
 /* ---------------- team controls ---------------- */
 // The team's reporting month is the SAME per-practice selection that drives the
 // client view: the <input type="month"> below IS that selector, so the top label,
@@ -519,7 +571,9 @@ function renderTeam(viewPeriod, latestPeriod){
 }
 function entryPeriod(){ return monthInputToPeriod($('inMonth').value); }   // the month the team form targets
 function fillKpiForm(){
-  const m = data.kpi.find(x=>x.period===entryPeriod()) || {};
+  // the manual entry form edits the primary (Meta / 'marketing') channel directly,
+  // independent of the dashboard's channel selector / summed view
+  const m = (data.kpiRaw||[]).find(x=> x.period===entryPeriod() && (x.source||'marketing')===KPI_SOURCE) || {};
   $('entryFields').innerHTML = FIELDS.map(f=>
     `<div class="f"><label>${f.l}</label><input data-k="${f.k}" type="number" step="any" value="${m[f.k]??''}" placeholder="0"></div>`).join('');
 }
@@ -1487,8 +1541,9 @@ $('btnClientInvite').onclick = async ()=>{
 
 // ---- Admin: per-client sheet config + delete ----
 const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
-// per-client reporting-sheet sources (practice_id -> sheet_sources row)
+// per-client reporting-sheet sources, keyed 'practiceId::source' (one per ad channel)
 let sheetSources = {};
+const ssKey = (pid, source)=> `${pid}::${source||'marketing'}`;
 let syncRuns = [];   // recent rows from the sync_runs audit table (newest first)
 
 // compact relative time ('3m ago', '2h ago', 'just now', 'yesterday') for sync recency
@@ -1509,7 +1564,8 @@ function monthsList(arr){
 async function loadSheetSources(){
   if(!isTeamView()) return;
   const { data } = await sb.from('sheet_sources').select('*');
-  sheetSources = {}; (data||[]).forEach(s=> sheetSources[s.practice_id]=s);
+  // keyed per practice+channel now that a practice can have several sheets
+  sheetSources = {}; (data||[]).forEach(s=> sheetSources[ssKey(s.practice_id, s.source||'marketing')]=s);
   // pull the recent sync-run audit log (may not exist until the observability
   // migration is applied — fail soft so the admin panel still renders)
   try{
@@ -1597,52 +1653,60 @@ $('btnSyncNow').onclick = async ()=>{
     btn.disabled = false;
   }
 };
+// One reporting-sheet config block for a single (practice, channel) pair.
+function sheetChannelBlock(pid, source){
+  const s = sheetSources[ssKey(pid, source)] || {};
+  const detail = [];
+  if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
+  const sm = monthsList(s.last_months); if(sm) detail.push(sm);
+  const dtxt = detail.length ? ` (${detail.join(' · ')})` : '';
+  const status = s.last_status==='error'
+      ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error · ${esc(ago(s.last_synced_at))}</span>`
+    : s.last_synced_at
+      ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ synced ${esc(ago(s.last_synced_at))}${dtxt}</span>`
+    : ((s.sheet_id||s.csv_url)? `<span class="note">awaiting first sync</span>` : `<span class="note">no sheet yet</span>`);
+  const a = `data-pid="${pid}" data-source="${esc(source)}"`;
+  return `<div class="sheetchan">
+    <div class="sheetchan-h"><span class="chanlabel">${esc(channelLabel(source))}</span> ${status}</div>
+    <div class="sheetcfg">
+      <input class="cellinput sheetid" ${a} value="${esc(s.sheet_id||'')}" placeholder="Private Google Sheet ID (preferred — share with the backend service account)">
+      <input class="cellinput sheettab" ${a} value="${esc(s.tab_name||'')}" placeholder="Tab name (optional)">
+      <input class="cellinput sheeturl" ${a} value="${esc(s.csv_url||'')}" placeholder="Legacy published-CSV URL (being phased out)">
+    </div>
+    <button class="btn ghost sm" data-savesheet="${pid}" data-savesource="${esc(source)}">Save ${esc(channelLabel(source))} sheet</button>
+  </div>`;
+}
 function renderAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
   if(!isTeamView()){ wrap.innerHTML=''; return; }
   const list = practicesList || [];
   wrap.innerHTML = list.length ? list.map(p=>{
-    const s = sheetSources[p.id]||{};
-    // per-client sync detail: when, success/fail, rows written and months seen
-    const detail = [];
-    if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
-    const sm = monthsList(s.last_months); if(sm) detail.push(sm);
-    const dtxt = detail.length ? ` (${detail.join(' · ')})` : '';
-    const status = s.last_status==='error'
-        ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error · ${esc(ago(s.last_synced_at))}</span>`
-      : s.last_synced_at
-        ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ synced ${esc(ago(s.last_synced_at))}${dtxt}</span>`
-      : (s.csv_url? `<span class="note">awaiting first sync</span>`:'');
-    // Preferred (secure) config is a private Sheet ID + tab — the sheet is shared only
-    // with the backend service account, so no public CSV link is needed or exposed.
-    // The legacy CSV field stays available but secondary.
+    // each practice gets one sheet block per ad channel (Meta + Google Ads)
+    const blocks = CHANNELS.map(c=> sheetChannelBlock(p.id, c.source)).join('');
     return `<div class="clientrow2">
-      <div class="ccol"><span class="cname">${esc(p.name)}</span> ${status}</div>
-      <div class="sheetcfg">
-        <input class="cellinput sheetid" data-pid="${p.id}" value="${esc(s.sheet_id||'')}" placeholder="Private Google Sheet ID (preferred — share with the backend service account)">
-        <input class="cellinput sheettab" data-pid="${p.id}" value="${esc(s.tab_name||'')}" placeholder="Tab name (optional)">
-        <input class="cellinput sheeturl" data-pid="${p.id}" value="${esc(s.csv_url||'')}" placeholder="Legacy published-CSV URL (being phased out)">
-      </div>
-      <button class="btn ghost sm" data-savesheet="${p.id}">Save sheet</button>
-      <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete</button>
+      <div class="ccol"><span class="cname">${esc(p.name)}</span>
+        <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete client</button></div>
+      <div class="sheetchans">${blocks}</div>
     </div>`;
   }).join('') : '<div class="note">No practices yet — add one above.</div>';
   wrap.querySelectorAll('[data-delpractice]').forEach(b=>
     b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
   wrap.querySelectorAll('[data-savesheet]').forEach(b=>
-    b.onclick = ()=> saveSheetSource(b.dataset.savesheet));
+    b.onclick = ()=> saveSheetSource(b.dataset.savesheet, b.dataset.savesource));
 }
-async function saveSheetSource(pid){
+async function saveSheetSource(pid, source='marketing'){
   if(!isTeamView()) return;
-  const sheet_id = (document.querySelector(`.sheetid[data-pid="${pid}"]`)?.value||'').trim();
-  const tab_name = (document.querySelector(`.sheettab[data-pid="${pid}"]`)?.value||'').trim();
-  const csv_url  = (document.querySelector(`.sheeturl[data-pid="${pid}"]`)?.value||'').trim();
+  const pick = cls => (document.querySelector(`.${cls}[data-pid="${pid}"][data-source="${source}"]`)?.value||'').trim();
+  const sheet_id = pick('sheetid');
+  const tab_name = pick('sheettab');
+  const csv_url  = pick('sheeturl');
   // a private Sheet ID is the secure source type; CSV remains for the legacy mode
   const source_type = sheet_id ? 'google_sheet_private' : 'google_sheet_csv';
   const { error } = await sb.from('sheet_sources')
-    .upsert({ practice_id: pid, sheet_id: sheet_id||null, tab_name: tab_name||null, csv_url: csv_url||null,
-              is_active:true, source_type }, { onConflict:'practice_id' });
-  adminDelFlash(error? 'Sheet save failed: '+error.message : 'Reporting sheet saved — it will sync on the next run.');
+    .upsert({ practice_id: pid, source, label: channelLabel(source),
+              sheet_id: sheet_id||null, tab_name: tab_name||null, csv_url: csv_url||null,
+              is_active:true, source_type }, { onConflict:'practice_id,source' });
+  adminDelFlash(error? 'Sheet save failed: '+error.message : `${channelLabel(source)} sheet saved — it will sync on the next run.`);
   if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
 }
 async function deletePractice(id, name){

@@ -57,11 +57,13 @@ create table if not exists sheet_sources (
   id uuid primary key default gen_random_uuid(),
   practice_id uuid not null references practices(id) on delete cascade,
   source_type text not null default 'google_sheet_csv',
+  source text not null default 'marketing',   -- ad channel: 'marketing' (Meta) | 'google_ads'
+  label text,                                 -- display name for the channel
   csv_url text, sheet_id text, tab_name text,
   is_active boolean not null default true,
   last_synced_at timestamptz, last_status text, last_error text,
   created_at timestamptz default now(),
-  unique (practice_id)
+  unique (practice_id, source)                 -- one reporting sheet per channel per practice
 );
 
 -- "Progress on the things we promised them" — the deliverables tracker.
