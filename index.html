@@ -123,21 +123,22 @@
       <div id="onboardChecklist" class="onboard-check hidden"></div>
       <p class="note" id="onbMsg" style="margin-top:6px"></p>
 
-      <h3>2 · Access &amp; invites</h3>
-      <p class="note" style="margin-top:-2px">Allowlist emails first (they can sign up with that address), or send an invite email immediately. Owners you invite can add their own team members from the <b>Team access</b> tab.</p>
+      <h3>2 · Platform administrators</h3>
+      <p class="note" style="margin-top:-2px">Who can open this Admin panel (<code>profiles.role = team</code>). The last administrator cannot remove themselves — promote another admin in Supabase if you are locked out.</p>
+      <div id="platformAdminRoster" class="roster roster-compact"></div>
+
+      <h3>3 · Practice access &amp; invites</h3>
+      <p class="note" style="margin-top:-2px">Send an invite email and add the address to the allowlist in one step. Practice owners can invite their own staff from the <b>Team access</b> tab.</p>
       <div class="entry">
         <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
         <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
         <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
         <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
-        <div class="f access-btns" style="align-self:end">
-          <button class="btn ghost sm" id="btnAllowlist">Allowlist only</button>
-          <button class="btn sm" id="btnInvite">Send invite</button>
-        </div>
+        <div class="f" style="align-self:end"><button class="btn sm" id="btnInvite">Send invite</button></div>
       </div>
       <div id="accessRoster" class="roster"></div>
 
-      <h3>3 · Reporting sheets &amp; KPI sync</h3>
+      <h3>4 · Reporting sheets &amp; KPI sync</h3>
       <p class="note" style="margin-top:-2px">Each client has its own Google Sheet (Coefficient feeds it). Paste the Sheet ID or legacy CSV URL, Save, then sync pulls ad metrics into Supabase every 2 hours.</p>
       <div class="syncnowrow">
         <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
@@ -152,7 +153,7 @@
     <!-- CLIENT OWNER · invite their own team (not global admin) -->
     <section id="accessPanel" class="view accessonly hidden" data-view="access">
       <h2>Team <em>access</em></h2>
-      <div class="sub">Invite colleagues at your practice. Each person gets their own login and sees only this practice's portal.</div>
+      <div class="sub">Invite colleagues at your practice. Each person gets their own login and sees only this practice's portal. Send invite also adds them to the allowlist.</div>
       <div class="entry">
         <div class="f"><label>Email</label><input id="clientInviteEmail" type="email" placeholder="colleague@practice.com"></div>
         <div class="f"><label>Name (optional)</label><input id="clientInviteName" placeholder="Office manager"></div>
