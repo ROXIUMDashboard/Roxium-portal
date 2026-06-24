@@ -1643,7 +1643,12 @@ $('btnSyncNow').onclick = async ()=>{
     if(skip) parts.push(`skipped ${skip}`);
     const months = monthsList(data.months_seen);
     if(months) parts.push(`months: ${months}`);
-    if(data.rows_seen === 0) parts.push('no rows parsed — check sheet sources and headers');
+    if(data.rows_seen === 0){
+      // surface the first concrete skip reason (e.g. "no tab configured") so the
+      // admin knows exactly what to fix instead of a generic "check headers".
+      const why = (data.skipped||[]).map(s=> s && s.reason).find(Boolean);
+      parts.push(why ? `no rows parsed — ${why}` : 'no rows parsed — check the source tab names and headers');
+    }
     msg.textContent = parts.join(' · ');
     row?.classList.add('ok');
     await loadSheetSources();
@@ -1667,9 +1672,9 @@ function clientWorkbookBlock(p){
   return `<div class="workbookcfg">
     <span class="chanlabel">Master reporting workbook</span>
     <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
-      placeholder="Google Sheet ID for this client's master workbook (share it with the backend service account)">
+      placeholder="Paste the client's master Google Sheet link or ID (shared with the backend service account)">
     <button class="btn ghost sm" data-saveworkbook="${p.id}">Save workbook</button>
-    <div class="note wbhint">One sheet per client — each source below maps to a tab inside it.</div>
+    <div class="note wbhint">One sheet per client. Each source below reads one <b>tab</b> inside it — set the tab name on each source.</div>
   </div>`;
 }
 // One config row for a single source TAB (practice, channel) inside the master workbook.
@@ -1745,7 +1750,12 @@ function renderAdminClients(){
 // Save the client's master workbook id (the one sheet every source tab reads from).
 async function saveWorkbook(pid){
   if(!isTeamView()) return;
-  const v = (document.querySelector(`.workbookid[data-pid="${pid}"]`)?.value||'').trim();
+  const inp = document.querySelector(`.workbookid[data-pid="${pid}"]`);
+  const raw = (inp?.value||'').trim();
+  // accept a pasted full Google Sheets URL or a bare ID — store just the ID
+  const m = raw.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  const v = m ? m[1] : raw;
+  if(inp && v!==raw) inp.value = v;   // reflect the cleaned id back to the field
   const { error } = await sb.from('practices').update({ workbook_sheet_id: v||null }).eq('id', pid);
   adminDelFlash(error ? 'Workbook save failed: '+error.message
     : (v ? 'Master workbook saved — its source tabs will sync on the next run.' : 'Master workbook cleared.'));

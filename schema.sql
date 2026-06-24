@@ -810,9 +810,12 @@ begin
     (pid,'Patient testimonial #3','planned'),
     (pid,'Office walkthrough B-roll package','planned');
 
-  insert into sheet_sources (practice_id, is_active, source_type)
-  values (pid, true, 'google_sheet_csv')
-  on conflict (practice_id) do nothing;
+  -- Seed the default Meta source row (no tab yet — it stays inert until an admin
+  -- sets the master workbook + tab name). Conflict target matches the per-channel
+  -- unique index (practice_id, source); the old (practice_id)-only index is gone.
+  insert into sheet_sources (practice_id, source, label, is_active, source_type)
+  values (pid, 'marketing', 'Meta Ads', true, 'google_sheet_private')
+  on conflict (practice_id, source) do nothing;
 
   return pid;
 end $$;
