@@ -92,9 +92,28 @@ create table if not exists milestones (
   name text not null,             -- 'Milestone I — Foundation' etc.
   detail text,
   status text not null default 'upcoming' check (status in ('done','current','upcoming')),
-  target_date date,
+  target_date date,                -- planned date (de-emphasized in the UI)
+  completed_on date,               -- auto-stamped when status becomes 'done'
   sort int default 0
 );
+
+-- Stamp the real completion date when a milestone lands on 'done' (clears if re-opened).
+create or replace function stamp_milestone_completion()
+returns trigger language plpgsql as $$
+begin
+  if new.status = 'done' then
+    if (tg_op = 'INSERT' or old.status is distinct from 'done') and new.completed_on is null then
+      new.completed_on := current_date;
+    end if;
+  else
+    new.completed_on := null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_stamp_milestone_completion on milestones;
+create trigger trg_stamp_milestone_completion
+  before insert or update on milestones
+  for each row execute function stamp_milestone_completion();
 
 -- Video production pipeline — makes the cinematography bottleneck visible.
 -- stage_since drives "days in stage"; shot_date/posted_date are auto-stamped

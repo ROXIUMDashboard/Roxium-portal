@@ -56,6 +56,14 @@ const METRIC_INFO = {
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 // human month name from a period key ('YYYY-MM-01' -> 'March')
 function monthName(period){ if(!period) return ''; const mi=+String(period).slice(5,7)-1; return MONTH_NAMES[mi]||''; }
+// pretty calendar date from 'YYYY-MM-DD'. style 'month' -> 'Mar 2026'; default -> 'Mar 15, 2026'.
+function prettyDate(d, style){
+  if(!d) return '';
+  const [y,m,day] = String(d).slice(0,10).split('-').map(Number);
+  if(!y||!m) return '';
+  const mn = (MONTH_NAMES[m-1]||'').slice(0,3);
+  return style==='month' ? `${mn} ${y}` : `${mn} ${day}, ${y}`;
+}
 // Month-aware green sublabel for a stat/card. Live current month => 'this month';
 // an archived snapshot => month-specific ('in March', or 'in March 2026' if not the
 // current calendar year). NEVER generic 'not this month' phrasing.
@@ -1121,14 +1129,24 @@ function renderTimeline(isTeam){
   if(!data.miles.length){ wrap.innerHTML = '<p class="note">Roadmap milestones will appear here at kickoff.</p>'; return; }
   wrap.innerHTML = data.miles.map(m=>{
     const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
-    const dateBit = m.target_date? ' · '+m.target_date : '';
-    // status is auto-advanced by deliverable %; team can still edit only the target date
+    // Done → show the real completion date prominently. Not-done → show the planned
+    // month, de-emphasized (it's a projection, not a commitment).
+    let dateEl = '';
+    if(m.status==='done'){
+      const dd = m.completed_on || m.target_date;
+      if(dd) dateEl = `<span class="tldate-done">✓ Completed ${esc(prettyDate(dd))}</span>`;
+    } else if(m.target_date){
+      dateEl = `<span class="tldate-plan">Planned · ${esc(prettyDate(m.target_date,'month'))}</span>`;
+    }
+    // status is auto-advanced by deliverable %; team can still edit only the planned date
+    const doneBadge = (m.status==='done' && m.completed_on)
+      ? `<span class="tldate-done sm">✓ ${esc(prettyDate(m.completed_on))}</span>` : '';
     const teamCtl = isTeam
-      ? `<div class="tldate"><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}"></div>`
+      ? `<div class="tldate"><label class="tldate-lbl">Planned date</label><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}">${doneBadge}</div>`
       : '';
     return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>
-       <span class="tag">${tagLabel}${isTeam?'':dateBit}</span>${teamCtl}</div>`;
+       <span class="tag">${tagLabel}</span>${isTeam?'':dateEl}${teamCtl}</div>`;
   }).join('');
   if(isTeam){
     wrap.querySelectorAll('.dateedit').forEach(inp=>{
