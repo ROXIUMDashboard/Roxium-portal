@@ -485,19 +485,25 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 @media(max-width:640px){.rosterhead,.rosterrow{grid-template-columns:1fr;gap:4px}}
 
 /* Phase C · per-client reporting-sheet rows in Admin */
-.clientrow2{display:grid;grid-template-columns:minmax(160px,1fr) 2fr auto auto;gap:10px;align-items:center;
-  padding:10px 12px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease}
+.clientrow2{display:block;padding:12px 14px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease;margin-bottom:10px}
 .clientrow2:hover{border-color:var(--gold)}
-.clientrow2 .ccol{display:flex;flex-direction:column;gap:2px;min-width:0}
-.clientrow2 .sheetcfg{display:flex;flex-direction:column;gap:6px;min-width:0}
-.clientrow2 .cellinput{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);
+.clientrow2 .ccol{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.clientrow2 .ccol .cname{font-size:15px;letter-spacing:.02em}
+/* one sheet-config block per ad channel (Meta + Google) */
+.sheetchans{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sheetchan{border:1px solid var(--line);border-radius:4px;padding:10px 11px;background:var(--ink)}
+.sheetchan-h{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.sheetchan-h .chanlabel{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.sheetcfg{display:flex;flex-direction:column;gap:6px;min-width:0;margin-bottom:8px}
+.clientrow2 .cellinput{width:100%;background:var(--surface);border:1px solid var(--line);color:var(--cream);
   padding:9px 11px;font-family:'Jost';font-size:12.5px;border-radius:3px}
 .clientrow2 .cellinput:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 .clientrow2 .cellinput::placeholder{color:var(--muted);opacity:.7}
 .clientrow2 .sheeturl{opacity:.75}
 .ssok{font-size:10.5px;color:var(--green);letter-spacing:.04em}
 .ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
-@media(max-width:640px){.clientrow2{grid-template-columns:1fr;gap:8px}}
+.metricpickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+@media(max-width:640px){.sheetchans{grid-template-columns:1fr}}
 
 /* ---- sync observability: did the 2-hour automation run? status banner + audit table ---- */
 .syncstatus-h{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:17px;margin:26px 0 4px;color:var(--gold)}

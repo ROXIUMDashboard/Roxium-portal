@@ -355,16 +355,20 @@ Deno.serve(async (req) => {
     const MODE = (Deno.env.get("INGESTION_MODE") || "csv").toLowerCase();
 
     const { data: sources } = await sb.from("sheet_sources")
-      .select("practice_id,csv_url,sheet_id,tab_name,is_active").eq("is_active", true);
-    // a job either reads a private sheet (sheet_id) or a public CSV (url), per MODE
-    const jobs: { pid: string | null; url?: string; sheetId?: string; tab?: string | null; label: string }[] = [];
+      .select("practice_id,csv_url,sheet_id,tab_name,is_active,source").eq("is_active", true);
+    // a job either reads a private sheet (sheet_id) or a public CSV (url), per MODE.
+    // Each job carries its own ad-channel `source` (e.g. 'marketing' = Meta, 'google_ads')
+    // so one practice can have several sheets, each landing under its own kpi source.
+    const jobs: { pid: string | null; url?: string; sheetId?: string; tab?: string | null; label: string; source: string }[] = [];
     if (sources && sources.length) {
       for (const s of sources) {
-        if (MODE === "sheets_api" && s.sheet_id) jobs.push({ pid: s.practice_id, sheetId: s.sheet_id, tab: s.tab_name, label: s.practice_id });
-        else if (s.csv_url) jobs.push({ pid: s.practice_id, url: s.csv_url, label: s.practice_id });
+        const src = s.source || SOURCE;
+        const lbl = `${s.practice_id} · ${src}`;
+        if (MODE === "sheets_api" && s.sheet_id) jobs.push({ pid: s.practice_id, sheetId: s.sheet_id, tab: s.tab_name, label: lbl, source: src });
+        else if (s.csv_url) jobs.push({ pid: s.practice_id, url: s.csv_url, label: lbl, source: src });
       }
     } else if (MODE !== "sheets_api" && Deno.env.get("CSV_URL")) {
-      jobs.push({ pid: null, url: Deno.env.get("CSV_URL")!, label: "legacy CSV_URL" });
+      jobs.push({ pid: null, url: Deno.env.get("CSV_URL")!, label: "legacy CSV_URL", source: SOURCE });
     }
     if (!jobs.length) return json({ ok: false, error: MODE === "sheets_api"
       ? "no active sheet sources with a sheet_id (INGESTION_MODE=sheets_api)"
@@ -389,22 +393,22 @@ Deno.serve(async (req) => {
           if (!res.ok) throw new Error(`fetch ${res.status}`);
           grid = parseCSV(await res.text());
         }
-        const rows = rowsFromGrid(grid, SOURCE, job.pid, skipped, job.label);
+        const rows = rowsFromGrid(grid, job.source, job.pid, skipped, job.label);
         upserts.push(...rows);
         const months = monthsOf(rows);
         months.forEach(m => allMonths.add(m));
         perSource[job.label] = { ok: true, rows: rows.length, months };
-        // per-client observability: when, status, rows written, and which months were seen
+        // per-channel observability: scope the status update to this practice + source
         if (job.pid) await sb.from("sheet_sources").update({
           last_synced_at: ranAt, last_status: "ok", last_error: null,
           last_rows: rows.length, last_months: months,
-        }).eq("practice_id", job.pid);
+        }).eq("practice_id", job.pid).eq("source", job.source);
       } catch (e) {
         const msg = String((e as Error)?.message || e);
         perSource[job.label] = { ok: false, error: msg };
         if (job.pid) await sb.from("sheet_sources").update({
           last_synced_at: ranAt, last_status: "error", last_error: msg,
-        }).eq("practice_id", job.pid);
+        }).eq("practice_id", job.pid).eq("source", job.source);
       }
     }
 
