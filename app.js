@@ -117,7 +117,12 @@ function showView(name){
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
-  if(name==='admin'){ renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAccessRoster($('accessPractice')?.value); }
+  if(name==='admin'){
+    renderAdminClients(); loadSheetSources(); loadPlatformAdmins();
+    const pid = $('accessPractice')?.value;
+    loadAccessRoster(pid);
+    if(pid) refreshOnboardChecklist(pid);
+  }
   if(name==='access') loadClientAccessRoster();
 }
 // Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
@@ -247,10 +252,13 @@ async function loadMyMembership(){
 
 async function afterLogin(){
   const uid = (await sb.auth.getUser()).data.user?.id;
+
+  // Claim any pending allowlist invites on every sign-in (first signup or added to another practice).
+  const { data: claim } = await sb.rpc('claim_invites_for_user');
+
   let { data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single();
   if(error || !prof){
-    const { data: claim, error: cErr } = await sb.rpc('claim_invites_for_user');
-    if(cErr || !claim?.claimed){
+    if(!claim?.claimed){
       $('login').classList.remove('hidden');
       $('loginMsg').textContent = 'Signed in, but no invite was found for this email. Ask your ROXIUM lead to add you.';
       return;
@@ -261,6 +269,8 @@ async function afterLogin(){
       $('loginMsg').textContent = 'Account created, but setup failed. Contact ROXIUM support.';
       return;
     }
+  } else if(claim?.claimed > 0){
+    ({ data: prof } = await sb.from('profiles').select('*').eq('id', uid).single());
   }
   me = prof;
   $('login').classList.add('hidden');
@@ -1213,24 +1223,54 @@ const accessFlash = t=>{ const el=$('clientAccessMsg'); if(el){ el.textContent=t
 function showOnboardChecklist(pid, name){
   const el = $('onboardChecklist'); if(!el) return;
   el.classList.remove('hidden');
-  el.innerHTML = `<div class="onboard-title">Next steps for <b>${esc(name)}</b></div>
-    <ol class="onboard-steps">
-      <li>Send an invite to the doctor's email (section 3 below)</li>
-      <li>Paste their Google Sheet ID / CSV URL and Save (section 4)</li>
-      <li>Connect Coefficient to that sheet tab</li>
-      <li>Click <b>Sync now</b> — cron handles it every 2 hours after that</li>
-    </ol>`;
+  el.dataset.practiceId = pid;
+  el.innerHTML = `<div class="onboard-title">Onboarding · <b>${esc(name)}</b></div>
+    <ol class="onboard-steps" id="onboardSteps">
+      <li data-step="access" class="onboard-pending">Add doctor / team access (section 3)</li>
+      <li data-step="sheet" class="onboard-pending">Configure reporting sheet (section 4)</li>
+      <li data-step="coefficient" class="onboard-pending">Connect Coefficient to that sheet tab</li>
+      <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
+    </ol>
+    <p class="note onboard-hint">Complete each step — status updates automatically.</p>`;
   const ap = $('accessPractice'); if(ap) ap.value = pid;
   loadAccessRoster(pid);
+  refreshOnboardChecklist(pid);
 }
 
-async function sendPracticeInvite(practice_id, email, full_name, role){
-  const { data, error } = await sb.functions.invoke('invite-user', {
-    body: { email, practice_id, full_name, role }
+async function refreshOnboardChecklist(pid){
+  const el = $('onboardChecklist'); if(!el || !pid) return;
+  const steps = el.querySelector('#onboardSteps'); if(!steps) return;
+  const { data, error } = await sb.rpc('get_practice_onboarding_status', { p_practice: pid });
+  if(error) return; // migration not applied yet — static checklist still shows
+  const mark = (step, done)=> {
+    const li = steps.querySelector(`[data-step="${step}"]`);
+    if(!li) return;
+    li.classList.toggle('onboard-done', done);
+    li.classList.toggle('onboard-pending', !done);
+  };
+  mark('access', !!data?.has_access);
+  mark('sheet', !!data?.has_sheet);
+  mark('coefficient', !!data?.has_sheet); // manual step — sheet config is the gate
+  mark('sync', !!data?.has_sync);
+}
+
+async function sendPracticeInvite(practice_id, email, full_name, role, { sendEmail = true } = {}){
+  if(sendEmail){
+    const { data, error } = await sb.functions.invoke('invite-user', {
+      body: { email, practice_id, full_name, role }
+    });
+    if(error) throw error;
+    if(data && data.error) throw new Error(data.error);
+    return data;
+  }
+  const { data, error } = await sb.rpc('add_practice_invite', {
+    p_practice: practice_id,
+    p_email: email,
+    p_full_name: full_name || null,
+    p_role: role,
   });
   if(error) throw error;
-  if(data && data.error) throw new Error(data.error);
-  return data;
+  return { ok: true, allowlisted: true, invite_id: data };
 }
 
 function renderRoster(wrap, roster, opts){
@@ -1376,17 +1416,21 @@ $('btnInvite').onclick = async ()=>{
   const email = $('accessEmail').value.trim();
   const full_name = $('accessName').value.trim();
   const role = $('accessRole').value || 'member';
+  const sendEmail = $('accessSendEmail')?.checked !== false;
   if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
-  $('btnInvite').disabled = true; onbFlash('Sending invite…');
+  $('btnInvite').disabled = true; onbFlash(sendEmail ? 'Sending invite…' : 'Adding to allowlist…');
   try{
-    const data = await sendPracticeInvite(practice_id, email, full_name, role);
+    const data = await sendPracticeInvite(practice_id, email, full_name, role, { sendEmail });
     $('accessEmail').value=''; $('accessName').value='';
-    onbFlash(data?.invited===false
-      ? `${email} already had an account — linked and allowlisted.`
-      : `Invite sent to ${email} (allowlisted).`);
+    onbFlash(sendEmail
+      ? (data?.invited===false
+          ? `${email} already had an account — linked and allowlisted.`
+          : `Invite sent to ${email} (allowlisted).`)
+      : `${email} allowlisted — they can sign up with that email anytime.`);
     loadAccessRoster(practice_id);
+    refreshOnboardChecklist(practice_id);
   }catch(e){
-    onbFlash('Invite failed: '+(e.message||e)+' (is invite-user deployed?)');
+    onbFlash('Invite failed: '+(e.message||e)+(sendEmail ? ' (is invite-user deployed?)' : ''));
   }finally{ $('btnInvite').disabled = false; }
 };
 
@@ -1503,6 +1547,8 @@ $('btnSyncNow').onclick = async ()=>{
     msg.textContent = parts.join(' · ');
     row?.classList.add('ok');
     await loadSheetSources();
+    const pid = $('onboardChecklist')?.dataset?.practiceId || $('accessPractice')?.value;
+    if(pid) refreshOnboardChecklist(pid);
     if(practiceId) loadAll();
   }catch(e){
     const m = e?.message || String(e);
@@ -1561,7 +1607,7 @@ async function saveSheetSource(pid){
     .upsert({ practice_id: pid, sheet_id: sheet_id||null, tab_name: tab_name||null, csv_url: csv_url||null,
               is_active:true, source_type }, { onConflict:'practice_id' });
   adminDelFlash(error? 'Sheet save failed: '+error.message : 'Reporting sheet saved — it will sync on the next run.');
-  if(!error) loadSheetSources();
+  if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
 }
 async function deletePractice(id, name){
   if(!isTeamView()) return;

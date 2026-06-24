@@ -17,7 +17,7 @@
   <div class="login-card">
     <div class="mark big">ROX<b>I</b>UM</div>
     <div class="eyebrow">Practice Growth Portal</div>
-    <p class="note">Enter your email — we'll send a secure sign-in link. Access is invite-only: your email must be on the practice roster.</p>
+    <p class="note">Enter your email — we'll send a secure sign-in link. If your practice invited you (or you're on the roster), signing up is automatic — no manual approval needed.</p>
     <input id="loginEmail" type="email" placeholder="you@practice.com">
     <button class="btn" id="btnLogin">Send sign-in link</button>
     <p class="note" id="loginMsg"></p>
@@ -57,7 +57,7 @@
       <a href="#video"        class="tab" data-view="video">Video</a>
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
-      <a href="#access"       class="tab accessonly hidden" data-view="access">Team access</a>
+      <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
 
@@ -128,13 +128,16 @@
       <div id="platformAdminRoster" class="roster roster-compact"></div>
 
       <h3>3 · Practice access &amp; invites</h3>
-      <p class="note" style="margin-top:-2px">Send an invite email and add the address to the allowlist in one step. Practice owners can invite their own staff from the <b>Team access</b> tab.</p>
+      <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite staff from the <b>Invite team</b> tab.</p>
       <div class="entry">
         <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
         <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
         <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
         <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
-        <div class="f" style="align-self:end"><button class="btn sm" id="btnInvite">Send invite</button></div>
+        <div class="f invite-actions">
+          <label class="checklabel"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
+          <button class="btn sm" id="btnInvite">Send invite</button>
+        </div>
       </div>
       <div id="accessRoster" class="roster"></div>
 
@@ -152,12 +155,12 @@
 
     <!-- CLIENT OWNER · invite their own team (not global admin) -->
     <section id="accessPanel" class="view accessonly hidden" data-view="access">
-      <h2>Team <em>access</em></h2>
-      <div class="sub">Invite colleagues at your practice. Each person gets their own login and sees only this practice's portal. Send invite also adds them to the allowlist.</div>
+      <h2>Invite <em>team members</em></h2>
+      <div class="sub">Add as many colleagues as you need — each gets their own login scoped to this practice only. Send invite also adds them to the allowlist automatically.</div>
       <div class="entry">
         <div class="f"><label>Email</label><input id="clientInviteEmail" type="email" placeholder="colleague@practice.com"></div>
         <div class="f"><label>Name (optional)</label><input id="clientInviteName" placeholder="Office manager"></div>
-        <div class="f" style="align-self:end"><button class="btn" id="btnClientInvite">Invite team member</button></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnClientInvite">Send invite</button></div>
       </div>
       <p class="note" id="clientAccessMsg" style="margin-top:6px"></p>
       <div id="clientRoster" class="roster"></div>
