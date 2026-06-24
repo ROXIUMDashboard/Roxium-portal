@@ -30,6 +30,7 @@ const CORE_METRICS = [
   {k:'ctr',    label:'CTR',          fmt:v=>fmtP(v),  derive:m=>{const i=N(m,'impr'),c=N(m,'clicks');return i?c/i:null;}},
   {k:'cpm',    label:'CPM',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),i=N(m,'impr');return i?s/(i/1000):null;}, lowerBetter:true},
   {k:'cpc',    label:'CPC',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),c=N(m,'clicks');return c?s/c:null;}, lowerBetter:true},
+  {k:'page_engagement', label:'Page Engagement', fmt:v=>fmtNum(v)},   // only renders when the source provides it
 ];
 const OPTIONAL_METRICS = [
   {k:'lpv',        label:'Landing Page Views', fmt:v=>fmtNum(v)},
@@ -50,6 +51,7 @@ const METRIC_INFO = {
   cpm:    {label:'CPM (Cost per 1,000 Impressions)', what:'How much you pay for every 1,000 times your ad is shown — spend ÷ (impressions ÷ 1,000).', why:'The standard way to compare how expensive it is to reach your audience across campaigns.', higher:'Higher CPM means each 1,000 views costs more — less efficient exposure.', lower:'Lower CPM is better: you are buying exposure more cheaply.'},
   clicks: {label:'Link Clicks', what:'The number of times people clicked a link in your ad to go to your site or landing page.', why:'A direct signal of intent — the step between seeing the ad and becoming a lead or customer.', higher:'Higher clicks mean more people are taking action on your ads.', lower:'Lower clicks mean fewer people are acting; check CTR and creative.'},
   cpc:    {label:'CPC (Cost per Link Click)', what:'The average cost of a single link click — spend ÷ link clicks.', why:'Shows how efficiently your budget converts into actual visits and intent.', higher:'Higher CPC means each click costs more — less efficient.', lower:'Lower CPC is better: you are paying less for each engaged visitor.'},
+  page_engagement: {label:'Page Engagement', what:'Total interactions with your page and posts (reactions, comments, shares, saves, clicks) driven by the ads this period.', why:'Shows how much your content sparks action beyond a passive view — a signal of brand resonance.', higher:'Higher engagement means the audience is interacting more with your brand.', lower:'Lower engagement means fewer interactions; the creative may not be prompting action.'},
 };
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 // human month name from a period key ('YYYY-MM-01' -> 'March')

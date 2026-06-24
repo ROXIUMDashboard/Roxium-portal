@@ -42,7 +42,7 @@ create table if not exists kpi_monthly (
   -- ad-performance metrics (the real Coefficient/Meta source). CTR/CPM/CPC are
   -- derived in the dashboard from spend·impr·clicks, so they aren't stored.
   spend numeric, reach numeric, impr numeric, clicks numeric, lpv numeric,
-  page_likes numeric, foll numeric,
+  page_likes numeric, page_engagement numeric, foll numeric,
   -- legacy business columns kept for back-compat (not shown on the default dashboard)
   leads numeric, cons numeric, proc numeric, apv numeric, price numeric,
   sent numeric, opens numeric, eclk numeric, sms numeric, vid numeric,
