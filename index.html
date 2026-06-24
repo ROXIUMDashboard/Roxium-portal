@@ -124,7 +124,12 @@
       <p class="note" id="onbMsg" style="margin-top:6px"></p>
 
       <h3>2 · Platform administrators</h3>
-      <p class="note" style="margin-top:-2px">Who can open this Admin panel (<code>profiles.role = team</code>). The last administrator cannot remove themselves — promote another admin in Supabase if you are locked out.</p>
+      <p class="note" style="margin-top:-2px">Who can open this Admin panel. <b>Make admin</b> grants full portal-admin access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
+      <div class="entry">
+        <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
+        <div class="f" style="align-self:end"><button class="btn sm" id="btnPromoteAdmin">Make admin</button></div>
+      </div>
+      <p class="note" id="promoteMsg" style="margin-top:6px"></p>
       <div id="platformAdminRoster" class="roster roster-compact"></div>
 
       <h3>3 · Practice access &amp; invites</h3>

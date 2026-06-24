@@ -1363,6 +1363,22 @@ async function loadPlatformAdmins(){
   renderPlatformAdmins(data);
 }
 
+const promoteFlash = t=>{ const el=$('promoteMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 7000); } };
+$('btnPromoteAdmin').onclick = async ()=>{
+  if(!isTeamView()) return;
+  const email = $('promoteEmail').value.trim();
+  if(!email){ promoteFlash('Enter an email to promote.'); return; }
+  $('btnPromoteAdmin').disabled = true; promoteFlash('Granting admin access…');
+  try{
+    const { error } = await sb.rpc('promote_platform_admin', { p_email: email });
+    if(error) throw error;
+    $('promoteEmail').value = '';
+    promoteFlash(`${email} is now a platform administrator.`);
+    loadPlatformAdmins();
+  }catch(e){ promoteFlash(e.message || String(e)); }
+  finally{ $('btnPromoteAdmin').disabled = false; }
+};
+
 async function loadAccessRoster(pid){
   const wrap = $('accessRoster'); if(!wrap || !pid) return;
   const { data, error } = await sb.rpc('get_practice_roster', { p_practice: pid });
