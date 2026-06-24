@@ -9,7 +9,7 @@
 // Sheet parsing:
 //   • Accepts period OR date/day/month columns (daily rows roll up to one month)
 //   • Extra header aliases for Coefficient/Meta exports (cost, outbound clicks, etc.)
-//   • spend/impr/clicks/lpv are summed per month; reach/foll/etc. take the max
+//   • daily metrics (spend/impr/clicks/lpv/reach/page_engagement) summed per month
 //
 // Deploy:  supabase functions deploy sync-coefficient --no-verify-jwt
 // ============================================================
@@ -26,11 +26,13 @@ const COLUMN_ALIASES: Record<string, string> = {
   "link clicks": "clicks", "clicks": "clicks", "clicks (all)": "clicks", "outbound clicks": "clicks",
   "landing page views": "lpv", "landing page visits": "lpv", "lpv": "lpv",
   "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes",
+  "page engagement": "page_engagement", "page_engagement": "page_engagement", "engagement": "page_engagement",
   "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll",
 };
-// additive metrics are SUMmed when aggregating daily rows into a month; the rest
-// (unique-people / running totals) take the MAX day as the best monthly proxy.
-const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv"]);
+// Daily-export metrics are SUMMED into a month so portal values match the sheet column
+// total (reach summed = total monthly exposures — what adding the column gives). Running
+// totals (followers, cumulative page likes) take the latest/max day.
+const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv", "reach", "page_engagement"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // month-name lookup for the deterministic period parser (handles 'Mar', 'March', etc.)
