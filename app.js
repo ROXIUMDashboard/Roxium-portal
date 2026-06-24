@@ -117,7 +117,7 @@ function showView(name){
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
-  if(name==='admin'){ renderAdminClients(); loadSheetSources(); loadAccessRoster($('accessPractice')?.value); }
+  if(name==='admin'){ renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAccessRoster($('accessPractice')?.value); }
   if(name==='access') loadClientAccessRoster();
 }
 // Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
@@ -1215,8 +1215,8 @@ function showOnboardChecklist(pid, name){
   el.classList.remove('hidden');
   el.innerHTML = `<div class="onboard-title">Next steps for <b>${esc(name)}</b></div>
     <ol class="onboard-steps">
-      <li>Allowlist or invite the doctor's email (section 2 below)</li>
-      <li>Paste their Google Sheet ID / CSV URL and Save (section 3)</li>
+      <li>Send an invite to the doctor's email (section 3 below)</li>
+      <li>Paste their Google Sheet ID / CSV URL and Save (section 4)</li>
       <li>Connect Coefficient to that sheet tab</li>
       <li>Click <b>Sync now</b> — cron handles it every 2 hours after that</li>
     </ol>`;
@@ -1238,38 +1238,87 @@ function renderRoster(wrap, roster, opts){
   const members = roster?.members || [];
   const invites = roster?.invites || [];
   if(!members.length && !invites.length){
-    wrap.innerHTML = '<div class="note">No team members yet — add an email above.</div>';
+    wrap.innerHTML = '<div class="note">No team members yet — send an invite above.</div>';
     return;
   }
-  const memRows = members.map(m=>`<div class="rosterrow">
-    <span class="rosteremail">${esc(m.email||'—')}</span>
-    <span class="rosterrole">${esc(m.role)}</span>
-    <span class="rosterstatus ok">active</span>
-    ${opts.canRemove ? `<button class="btn ghost sm danger" data-rmuser="${m.user_id}">Remove</button>` : ''}
-  </div>`).join('');
-  const invRows = invites.map(i=>`<div class="rosterrow pending">
-    <span class="rosteremail">${esc(i.email)}</span>
-    <span class="rosterrole">${esc(i.role)}</span>
-    <span class="rosterstatus">${esc(i.status)}</span>
-    ${opts.canRevoke ? `<button class="btn ghost sm" data-revoke="${i.id}">Revoke</button>` : ''}
-  </div>`).join('');
+  const memRows = members.map(m=>{
+    const plat = m.is_platform_admin ? ' <span class="badge-plat">ROXIUM</span>' : '';
+    const self = m.is_self ? ' <span class="badge-self">you</span>' : '';
+    const rmBtn = m.can_remove
+      ? `<button class="btn ghost sm danger" data-rmuser="${m.user_id}">Remove</button>`
+      : `<span class="note" title="${esc(m.is_self ? 'Cannot remove yourself' : 'Protected')}">—</span>`;
+    return `<div class="rosterrow">
+      <span class="rosteremail">${esc(m.email||'—')}${plat}${self}</span>
+      <span class="rosterrole">${esc(m.role)}</span>
+      <span class="rosterstatus ok">active</span>
+      ${opts.canRemove ? rmBtn : ''}
+    </div>`;
+  }).join('');
+  const invRows = invites.map(i=>{
+    const revokeBtn = (opts.canRevoke && i.can_revoke !== false)
+      ? `<button class="btn ghost sm" data-revoke="${i.id}">Revoke</button>`
+      : `<span class="note" title="Cannot revoke the last owner invite">—</span>`;
+    return `<div class="rosterrow pending">
+      <span class="rosteremail">${esc(i.email)}</span>
+      <span class="rosterrole">${esc(i.role)}</span>
+      <span class="rosterstatus">${esc(i.status)}</span>
+      ${revokeBtn}
+    </div>`;
+  }).join('');
   wrap.innerHTML = `<div class="rosterhead"><span>Email</span><span>Role</span><span>Status</span><span></span></div>`
     + memRows + invRows;
   if(opts.canRemove){
     wrap.querySelectorAll('[data-rmuser]').forEach(b=> b.onclick = async ()=>{
-      if(!await uiConfirm('Remove member', `Remove access for this user?`, {danger:true})) return;
+      if(!await uiConfirm('Remove member', 'Remove this person\'s access to the practice?', {danger:true})) return;
       const { error } = await sb.rpc('remove_practice_member', { p_practice: opts.practiceId, p_user: b.dataset.rmuser });
-      if(error) onbFlash('Remove failed: '+error.message);
-      else { onbFlash('Member removed.'); opts.reload(); }
+      if(error) uiAlert('Cannot remove', esc(error.message));
+      else { opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload(); }
     });
   }
   if(opts.canRevoke){
     wrap.querySelectorAll('[data-revoke]').forEach(b=> b.onclick = async ()=>{
       const { error } = await sb.rpc('revoke_practice_invite', { p_invite: b.dataset.revoke });
-      if(error) onbFlash('Revoke failed: '+error.message);
-      else { onbFlash('Invite revoked.'); opts.reload(); }
+      if(error) uiAlert('Cannot revoke', esc(error.message));
+      else { opts.flash?.('Invite revoked.') || onbFlash('Invite revoked.'); opts.reload(); }
     });
   }
+}
+
+function renderPlatformAdmins(data){
+  const wrap = $('platformAdminRoster'); if(!wrap) return;
+  const admins = data?.admins || [];
+  if(!admins.length){ wrap.innerHTML = '<div class="note">No platform administrators found.</div>'; return; }
+  const cnt = data?.admin_count ?? admins.length;
+  wrap.innerHTML = `<div class="rosterhead"><span>Email</span><span></span><span></span><span></span></div>`
+    + admins.map(a=>{
+      const self = a.is_self ? ' <span class="badge-self">you</span>' : '';
+      const demote = a.can_demote
+        ? `<button class="btn ghost sm danger" data-demote="${a.user_id}">Remove admin</button>`
+        : `<span class="note" title="${a.is_self ? 'Cannot remove your own admin access' : 'Cannot remove the only administrator'}">—</span>`;
+      return `<div class="rosterrow">
+        <span class="rosteremail">${esc(a.email||'—')}${self}</span>
+        <span class="rosterrole">platform</span>
+        <span class="rosterstatus ok">active</span>
+        ${demote}
+      </div>`;
+    }).join('')
+    + (cnt <= 1 ? `<p class="note" style="padding:8px 12px">Only administrator — self-removal is blocked.</p>` : '');
+  wrap.querySelectorAll('[data-demote]').forEach(b=> b.onclick = async ()=>{
+    if(!await uiConfirm('Remove platform admin', 'This person will lose access to the Admin panel. Continue?', {danger:true})) return;
+    const { error } = await sb.rpc('demote_platform_admin', { p_user: b.dataset.demote });
+    if(error) uiAlert('Cannot remove admin', esc(error.message));
+    else { onbFlash('Administrator access removed.'); loadPlatformAdmins(); }
+  });
+}
+
+async function loadPlatformAdmins(){
+  const wrap = $('platformAdminRoster'); if(!wrap || !isTeamView()) return;
+  const { data, error } = await sb.rpc('get_platform_admins');
+  if(error){
+    wrap.innerHTML = '<div class="note">Run migration 2026-06-24_access_guardrails.sql to enable platform admin controls.</div>';
+    return;
+  }
+  renderPlatformAdmins(data);
 }
 
 async function loadAccessRoster(pid){
@@ -1279,6 +1328,7 @@ async function loadAccessRoster(pid){
   renderRoster(wrap, data, {
     practiceId: pid, canRemove: true, canRevoke: true,
     reload: ()=> loadAccessRoster(pid),
+    flash: onbFlash,
   });
 }
 
@@ -1289,6 +1339,7 @@ async function loadClientAccessRoster(){
   renderRoster(wrap, data, {
     practiceId, canRemove: true, canRevoke: true,
     reload: ()=> loadClientAccessRoster(),
+    flash: accessFlash,
   });
 }
 
@@ -1319,26 +1370,6 @@ $('btnAddClient').onclick = async ()=>{
   finally{ $('btnAddClient').disabled = false; }
 };
 
-$('btnAllowlist').onclick = async ()=>{
-  if(!isTeamView()) return;
-  const practice_id = $('accessPractice').value;
-  const email = $('accessEmail').value.trim();
-  const full_name = $('accessName').value.trim();
-  const role = $('accessRole').value || 'member';
-  if(!email || !practice_id){ onbFlash('Email and practice are required.'); return; }
-  $('btnAllowlist').disabled = true;
-  try{
-    const { error } = await sb.rpc('add_practice_invite', {
-      p_practice: practice_id, p_email: email, p_full_name: full_name||null, p_role: role
-    });
-    if(error) throw error;
-    $('accessEmail').value=''; $('accessName').value='';
-    onbFlash(`${email} allowlisted — they can sign up with that address.`);
-    loadAccessRoster(practice_id);
-  }catch(e){ onbFlash('Allowlist failed: '+e.message); }
-  finally{ $('btnAllowlist').disabled = false; }
-};
-
 $('btnInvite').onclick = async ()=>{
   if(!isTeamView()) return;
   const practice_id = $('accessPractice').value;
@@ -1351,8 +1382,8 @@ $('btnInvite').onclick = async ()=>{
     const data = await sendPracticeInvite(practice_id, email, full_name, role);
     $('accessEmail').value=''; $('accessName').value='';
     onbFlash(data?.invited===false
-      ? `${email} already had an account — linked to this practice.`
-      : `Invite sent to ${email}.`);
+      ? `${email} already had an account — linked and allowlisted.`
+      : `Invite sent to ${email} (allowlisted).`);
     loadAccessRoster(practice_id);
   }catch(e){
     onbFlash('Invite failed: '+(e.message||e)+' (is invite-user deployed?)');
@@ -1368,9 +1399,9 @@ $('btnClientInvite').onclick = async ()=>{
   try{
     const data = await sendPracticeInvite(practiceId, email, full_name, 'member');
     $('clientInviteEmail').value=''; $('clientInviteName').value='';
-    accessFlash(data?.invited===false ? `${email} linked.` : `Invite sent to ${email}.`);
+    accessFlash(data?.invited===false ? `${email} linked and allowlisted.` : `Invite sent to ${email}.`);
     loadClientAccessRoster();
-  }catch(e){ accessFlash('Invite failed: '+(e.message||e)); }
+  }catch(e){ uiAlert('Invite failed', esc(e.message||String(e))); }
   finally{ $('btnClientInvite').disabled = false; }
 };
 
