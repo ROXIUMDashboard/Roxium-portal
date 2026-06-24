@@ -91,8 +91,16 @@ const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[p
 let chanByPractice = {};   // practiceId -> 'all' | 'marketing' | 'google_ads' | …
 const getChan = () => (practiceId && practiceId in chanByPractice) ? chanByPractice[practiceId] : 'all';
 const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete chanByPractice[practiceId]; else chanByPractice[practiceId]=c; };
-// known ad channels (Meta = the legacy 'marketing' source). Extendable later.
-const CHANNELS = [{ source:'marketing', label:'Meta Ads' }, { source:'google_ads', label:'Google Ads' }];
+// Known source presets (Meta = the legacy 'marketing' source). Each is one TAB in a
+// client's master workbook; the list seeds the admin "add source" picker and channel
+// labels. Sources are open-ended — a custom key works too, this is just the menu.
+const CHANNELS = [
+  { source:'marketing',       label:'Meta Ads' },
+  { source:'google_ads',      label:'Google Ads' },
+  { source:'organic',         label:'Organic / Social' },
+  { source:'seo',             label:'SEO / Website' },
+  { source:'page_engagement', label:'Page Engagement' },
+];
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
   : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
@@ -1653,9 +1661,20 @@ $('btnSyncNow').onclick = async ()=>{
     btn.disabled = false;
   }
 };
-// One reporting-sheet config block for a single (practice, channel) pair.
-function sheetChannelBlock(pid, source){
-  const s = sheetSources[ssKey(pid, source)] || {};
+// The client's ONE master workbook (shared once with the service account); every
+// source below is a TAB inside this sheet.
+function clientWorkbookBlock(p){
+  return `<div class="workbookcfg">
+    <span class="chanlabel">Master reporting workbook</span>
+    <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
+      placeholder="Google Sheet ID for this client's master workbook (share it with the backend service account)">
+    <button class="btn ghost sm" data-saveworkbook="${p.id}">Save workbook</button>
+    <div class="note wbhint">One sheet per client — each source below maps to a tab inside it.</div>
+  </div>`;
+}
+// One config row for a single source TAB (practice, channel) inside the master workbook.
+function sourceTabRow(pid, s){
+  const source = s.source || 'marketing';
   const detail = [];
   if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
   const sm = monthsList(s.last_months); if(sm) detail.push(sm);
@@ -1664,49 +1683,117 @@ function sheetChannelBlock(pid, source){
       ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ sync error · ${esc(ago(s.last_synced_at))}</span>`
     : s.last_synced_at
       ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ synced ${esc(ago(s.last_synced_at))}${dtxt}</span>`
-    : ((s.sheet_id||s.csv_url)? `<span class="note">awaiting first sync</span>` : `<span class="note">no sheet yet</span>`);
+    : `<span class="note">awaiting first sync</span>`;
   const a = `data-pid="${pid}" data-source="${esc(source)}"`;
   return `<div class="sheetchan">
-    <div class="sheetchan-h"><span class="chanlabel">${esc(channelLabel(source))}</span> ${status}</div>
+    <div class="sheetchan-h"><span class="chanlabel">${esc(channelLabel(source))}</span> ${status}
+      <button class="btn ghost xs danger" data-delsource="${pid}" data-source="${esc(source)}" title="Remove this source">Remove</button></div>
     <div class="sheetcfg">
-      <input class="cellinput sheetid" ${a} value="${esc(s.sheet_id||'')}" placeholder="Private Google Sheet ID (preferred — share with the backend service account)">
-      <input class="cellinput sheettab" ${a} value="${esc(s.tab_name||'')}" placeholder="Tab name (optional)">
-      <input class="cellinput sheeturl" ${a} value="${esc(s.csv_url||'')}" placeholder="Legacy published-CSV URL (being phased out)">
+      <input class="cellinput sheettab" ${a} value="${esc(s.tab_name||'')}" placeholder="Tab name inside the master workbook (e.g. ${esc(channelLabel(source))})">
+      <input class="cellinput sheeturl" ${a} value="${esc(s.csv_url||'')}" placeholder="Legacy published-CSV URL (optional — CSV mode only)">
     </div>
-    <button class="btn ghost sm" data-savesheet="${pid}" data-savesource="${esc(source)}">Save ${esc(channelLabel(source))} sheet</button>
+    <button class="btn ghost sm" data-savesheet="${pid}" data-savesource="${esc(source)}">Save ${esc(channelLabel(source))} tab</button>
+  </div>`;
+}
+// "Add a source tab" picker — presets the client doesn't have yet, plus a custom key.
+function addSourceRow(pid){
+  const taken = new Set(Object.values(sheetSources).filter(s=> s.practice_id===pid).map(s=> s.source||'marketing'));
+  const opts = CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
+    + '<option value="__custom">Custom source…</option>';
+  return `<div class="addsource">
+    <select class="cellinput addsourcesel" data-pid="${pid}">${opts}</select>
+    <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="Custom key (e.g. tiktok_ads)" style="display:none">
+    <input class="cellinput addsourcetab" data-pid="${pid}" placeholder="Tab name in the master workbook">
+    <button class="btn ghost sm" data-addsource="${pid}">+ Add source</button>
   </div>`;
 }
 function renderAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
   if(!isTeamView()){ wrap.innerHTML=''; return; }
   const list = practicesList || [];
+  const order = CHANNELS.map(c=> c.source);
   wrap.innerHTML = list.length ? list.map(p=>{
-    // each practice gets one sheet block per ad channel (Meta + Google Ads)
-    const blocks = CHANNELS.map(c=> sheetChannelBlock(p.id, c.source)).join('');
+    // this client's configured source tabs, in preset order then any custom extras
+    const present = Object.values(sheetSources).filter(s=> s.practice_id===p.id)
+      .sort((a,b)=> ((order.indexOf(a.source)+1)||99) - ((order.indexOf(b.source)+1)||99));
+    const tabs = present.length ? present.map(s=> sourceTabRow(p.id, s)).join('')
+                                : '<div class="note">No source tabs yet — add one below.</div>';
     return `<div class="clientrow2">
       <div class="ccol"><span class="cname">${esc(p.name)}</span>
         <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete client</button></div>
-      <div class="sheetchans">${blocks}</div>
+      ${clientWorkbookBlock(p)}
+      <div class="sheetchans">${tabs}</div>
+      ${addSourceRow(p.id)}
     </div>`;
   }).join('') : '<div class="note">No practices yet — add one above.</div>';
   wrap.querySelectorAll('[data-delpractice]').forEach(b=>
     b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
+  wrap.querySelectorAll('[data-saveworkbook]').forEach(b=>
+    b.onclick = ()=> saveWorkbook(b.dataset.saveworkbook));
   wrap.querySelectorAll('[data-savesheet]').forEach(b=>
     b.onclick = ()=> saveSheetSource(b.dataset.savesheet, b.dataset.savesource));
+  wrap.querySelectorAll('[data-delsource]').forEach(b=>
+    b.onclick = ()=> removeSource(b.dataset.delsource, b.dataset.source));
+  wrap.querySelectorAll('[data-addsource]').forEach(b=>
+    b.onclick = ()=> addSource(b.dataset.addsource));
+  // reveal the custom-key field only when "Custom source…" is chosen
+  wrap.querySelectorAll('.addsourcesel').forEach(sel=> sel.onchange = ()=>{
+    const k = sel.parentElement.querySelector('.addsourcekey');
+    if(k) k.style.display = sel.value==='__custom' ? '' : 'none';
+  });
 }
+// Save the client's master workbook id (the one sheet every source tab reads from).
+async function saveWorkbook(pid){
+  if(!isTeamView()) return;
+  const v = (document.querySelector(`.workbookid[data-pid="${pid}"]`)?.value||'').trim();
+  const { error } = await sb.from('practices').update({ workbook_sheet_id: v||null }).eq('id', pid);
+  adminDelFlash(error ? 'Workbook save failed: '+error.message
+    : (v ? 'Master workbook saved — its source tabs will sync on the next run.' : 'Master workbook cleared.'));
+  if(!error){ const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = v||null; }
+}
+// Save a source tab's config. The sheet id comes from the client master workbook;
+// here we only set the tab name (+ optional legacy CSV url for csv ingestion mode).
 async function saveSheetSource(pid, source='marketing'){
   if(!isTeamView()) return;
   const pick = cls => (document.querySelector(`.${cls}[data-pid="${pid}"][data-source="${source}"]`)?.value||'').trim();
-  const sheet_id = pick('sheetid');
   const tab_name = pick('sheettab');
   const csv_url  = pick('sheeturl');
-  // a private Sheet ID is the secure source type; CSV remains for the legacy mode
-  const source_type = sheet_id ? 'google_sheet_private' : 'google_sheet_csv';
+  // sheets_api mode reads the master workbook + this tab; a csv_url flips the row to legacy CSV mode
+  const source_type = csv_url ? 'google_sheet_csv' : 'google_sheet_private';
   const { error } = await sb.from('sheet_sources')
     .upsert({ practice_id: pid, source, label: channelLabel(source),
-              sheet_id: sheet_id||null, tab_name: tab_name||null, csv_url: csv_url||null,
+              tab_name: tab_name||null, csv_url: csv_url||null,
               is_active:true, source_type }, { onConflict:'practice_id,source' });
-  adminDelFlash(error? 'Sheet save failed: '+error.message : `${channelLabel(source)} sheet saved — it will sync on the next run.`);
+  adminDelFlash(error? 'Tab save failed: '+error.message : `${channelLabel(source)} tab saved — it will sync on the next run.`);
+  if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
+}
+// Add a new source tab to a client (preset or custom key).
+async function addSource(pid){
+  if(!isTeamView()) return;
+  let source = (document.querySelector(`.addsourcesel[data-pid="${pid}"]`)?.value||'').trim();
+  if(source==='__custom'){
+    source = (document.querySelector(`.addsourcekey[data-pid="${pid}"]`)?.value||'').trim()
+      .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+    if(!source){ adminDelFlash('Enter a custom source key (letters/numbers).'); return; }
+  }
+  if(!source){ adminDelFlash('Pick a source to add.'); return; }
+  const tab_name = (document.querySelector(`.addsourcetab[data-pid="${pid}"]`)?.value||'').trim();
+  const { error } = await sb.from('sheet_sources')
+    .upsert({ practice_id: pid, source, label: channelLabel(source),
+              tab_name: tab_name||null, is_active:true, source_type:'google_sheet_private' },
+            { onConflict:'practice_id,source' });
+  adminDelFlash(error? 'Add source failed: '+error.message : `${channelLabel(source)} added — set its tab and it syncs next run.`);
+  if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
+}
+// Remove a source tab mapping (already-imported KPI history is kept).
+async function removeSource(pid, source){
+  if(!isTeamView()) return;
+  const ok = await uiConfirm(`Remove ${channelLabel(source)} source?`,
+    `This removes the source-tab mapping for this client. KPI rows already imported for this source stay in history — they just won't refresh until you re-add it.`,
+    { danger:true, confirmLabel:'Remove source' });
+  if(!ok) return;
+  const { error } = await sb.from('sheet_sources').delete().eq('practice_id', pid).eq('source', source);
+  adminDelFlash(error? 'Remove failed: '+error.message : `${channelLabel(source)} source removed.`);
   if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
 }
 async function deletePractice(id, name){
