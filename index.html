@@ -96,7 +96,7 @@
         <div class="sub" id="kpiSub">Latest month against target.</div>
         <div class="metricpickers">
           <select id="channelPicker" class="picker hidden"></select>
-          <select id="metricsPicker" class="picker"></select>
+          <div id="metricsPicker" class="monthsel"></div>
         </div>
       </div>
       <div class="cards" id="kpiCards"></div>
@@ -224,7 +224,7 @@
       <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
       <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (Admin → Reporting &amp; KPI). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
       <div class="entry" id="kpiMeta">
-        <div class="f"><label>Reporting month</label><input id="inMonth" type="month"></div>
+        <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
       </div>
       <div class="entry" id="entryFields"></div>
       <div class="actions">

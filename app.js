@@ -78,12 +78,15 @@ const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_
 // Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
 let me = null;            // profile row
+let authEmail = '';       // signed-in user's email (display-name fallback)
 let myMembership = null;    // current practice membership { role: owner|member }
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
 // Selected reporting month is scoped PER PRACTICE so one client's choice can never
 // leak into another's. Absent key = follow that practice's latest reported month.
 let selByPractice = {};   // practiceId -> 'YYYY-MM-01'
+let monthSelApi = null;   // themed "Reporting month" dropdown instance (team)
+let metricsSelApi = null; // themed month dropdown instance (client dashboard)
 const getSel = () => (practiceId && practiceId in selByPractice) ? selByPractice[practiceId] : null;
 const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[practiceId]; else selByPractice[practiceId]=p; };
 // Ad channel (kpi source) selection, also scoped per-practice. 'all' = every channel
@@ -175,6 +178,7 @@ function syncChrome(){
   const teamView = isTeamView();
   const adminMode = currentView()==='admin';
   $('btnAdmin').classList.toggle('hidden', !teamView);           // top-level entry, team only
+  $('btnAdmin').textContent = adminMode ? '← Client portal' : '⚙ Admin';   // toggles back when in admin
   $('btnPreview').classList.toggle('hidden', !realTeam || adminMode);
   $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
   document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
@@ -191,7 +195,10 @@ function syncChrome(){
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
-$('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };   // showView restores the last admin sub-tab
+// Toggle: in admin → back to the client portal (last client view); else → admin.
+$('btnAdmin').onclick = ()=>{
+  location.hash = (currentView()==='admin') ? '#'+(lastClientView||'roadmap') : '#admin';
+};
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#'+(lastClientView||'roadmap'); });
 
 /* ---------------- searchable client switcher (team) ---------------- */
@@ -292,8 +299,32 @@ async function loadMyMembership(){
   myMembership = data;
 }
 
+// Display name = the real profile name, else the email prefix — never blank or a
+// random id. (The name is user-editable via the whoami chip → set_my_name RPC.)
+function displayName(){
+  const n = (me && me.full_name || '').trim();
+  if(n) return n;
+  return authEmail ? authEmail.split('@')[0] : 'Account';
+}
+function renderWhoami(){
+  if(!me) return;
+  $('whoami').textContent = displayName() + ' · ' + (previewMode ? 'client preview' : me.role);
+}
+async function editMyName(){
+  if(!me) return;
+  const v = await uiPrompt('Your display name', 'How your name appears across the portal.',
+    (me.full_name||'').trim(), 'e.g. Marek Kornelius Ciszewski');
+  if(v===null) return;
+  const name = v.trim();
+  const { error } = await sb.rpc('set_my_name', { p_name: name });
+  if(error){ await uiConfirm('Could not save name', esc(error.message||'Please try again.'), { confirmLabel:'OK' }); return; }
+  me.full_name = name || null; renderWhoami();
+}
+
 async function afterLogin(){
-  const uid = (await sb.auth.getUser()).data.user?.id;
+  const _user = (await sb.auth.getUser()).data.user;
+  const uid = _user?.id;
+  authEmail = _user?.email || '';
 
   // Claim any pending allowlist invites on every sign-in (first signup or added to another practice).
   const { data: claim } = await sb.rpc('claim_invites_for_user');
@@ -317,7 +348,10 @@ async function afterLogin(){
   me = prof;
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
-  $('whoami').textContent = (me.full_name||'') + ' · ' + me.role;
+  renderWhoami();
+  $('whoami').classList.add('editable');
+  $('whoami').title = 'Click to edit your name';
+  $('whoami').onclick = editMyName;
 
   if(me.role === 'team'){
     const prax = await loadTeamPractices();
@@ -326,7 +360,7 @@ async function afterLogin(){
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
       $('btnPreview').classList.toggle('previewing', previewMode);
-      $('whoami').textContent = (me.full_name||'') + ' · ' + (previewMode ? 'client preview' : me.role);
+      renderWhoami();
       syncChrome();
       showView(currentView());
       render();
@@ -548,19 +582,23 @@ function render(){
    Drives the per-practice selection (setSel). emptySelected adds a transient option so
    the dropdown stays in sync when the team sits on a month that has no data yet. */
 function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected){
-  const sel = $('metricsPicker');
-  if(!sel) return;
-  if(!reported.length && !emptySelected){ sel.style.display='none'; return; }
-  sel.style.display='';
-  // oldest → newest in the dropdown
-  let opts = ['<option value="">Latest month (live)</option>']
-    .concat(reported.slice().sort((a,b)=> (a.period<b.period?-1:a.period>b.period?1:0)).map(r=>
-      `<option value="${r.period}">${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}</option>`));
-  if(emptySelected) opts.push(`<option value="${viewPeriod}">${periodLabel(viewPeriod)} (no data yet)</option>`);
-  sel.innerHTML = opts.join('');
-  const cur = getSel();
-  sel.value = (cur!=null) ? String(cur) : '';
-  sel.onchange = ()=>{ setSel(sel.value===''? null : sel.value); render(); };
+  const mount = $('metricsPicker');
+  if(!mount) return;
+  if(!reported.length && !emptySelected){ mount.style.display='none'; return; }
+  mount.style.display='';
+  // 'Latest (live)' + each reported month, newest → oldest
+  const opts = [{ value:'', label:'Latest month (live)' }]
+    .concat(reported.slice().sort((a,b)=> a.period<b.period?1:a.period>b.period?-1:0).map(r=>
+      ({ value:r.period, label:`${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}` })));
+  if(emptySelected) opts.push({ value:viewPeriod, label:`${periodLabel(viewPeriod)} (no data yet)` });
+  const cur = getSel(); const val = (cur!=null) ? String(cur) : '';
+  if(!metricsSelApi || metricsSelApi._mount !== mount){
+    metricsSelApi = themedSelect(mount, { options:opts, value:val, placeholder:'Latest month (live)',
+      onChange:(v)=>{ setSel(v===''? null : v); render(); } });
+    metricsSelApi._mount = mount;
+  } else {
+    metricsSelApi.setOptions(opts); metricsSelApi.setValue(val);
+  }
 }
 
 // Channel selector: shown only when a practice reports under more than one ad
@@ -580,18 +618,30 @@ function buildChannelPicker(){
 // The team's reporting month is the SAME per-practice selection that drives the
 // client view: the <input type="month"> below IS that selector, so the top label,
 // the KPI cards and the entry form always move together.
+// Months offered in the themed "Reporting month" dropdown: every reported month
+// (same source the dashboard uses) unioned with a recent range, so any month is
+// pickable WITHOUT typing. Newest first, labelled "March 2026".
+function monthOptions(period){
+  const set = new Set((data.kpiRaw||[]).filter(r=> r.practice_id===practiceId).map(r=> String(r.period).slice(0,10)));
+  const base = new Date(); base.setUTCDate(1);
+  for(let i=-1;i<18;i++){ const d=new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth()-i, 1)); set.add(d.toISOString().slice(0,10)); }
+  if(period) set.add(period);
+  return [...set].sort((a,b)=> a<b?1:a>b?-1:0).map(p=> ({ value:p, label: periodLabel(p) }));
+}
 function renderTeam(viewPeriod, latestPeriod){
-  const inp = $('inMonth'); // an <input type="month"> — value is 'YYYY-MM'
-  if(!inp.dataset.wired){
-    inp.dataset.wired = '1';
-    inp.onchange = ()=>{ setSel(monthInputToPeriod(inp.value)); render(); };
+  const period = viewPeriod || latestPeriod || currentPeriod();
+  const mount = $('inMonth');
+  const opts = monthOptions(period);
+  if(!monthSelApi || monthSelApi._mount !== mount){
+    monthSelApi = themedSelect(mount, { options:opts, value:period, placeholder:'Pick a month',
+      onChange:(p)=>{ setSel(p); render(); } });
+    monthSelApi._mount = mount;
+  } else {
+    monthSelApi.setOptions(opts); monthSelApi.setValue(period);
   }
-  // reflect the resolved view month (or today's, for a brand-new client with no data)
-  inp.value = periodToMonthInput(viewPeriod || latestPeriod || currentPeriod());
-  const yr = $('inYear'); if(yr && !yr.value) yr.value = new Date().getFullYear();
   fillKpiForm();
 }
-function entryPeriod(){ return monthInputToPeriod($('inMonth').value); }   // the month the team form targets
+function entryPeriod(){ return monthSelApi ? monthSelApi.value : currentPeriod(); }   // the month the team form targets
 function fillKpiForm(){
   // the manual entry form edits the primary (Meta / 'marketing') channel directly,
   // independent of the dashboard's channel selector / summed view
@@ -676,6 +726,39 @@ function uiDialog({title='', body='', input=null, confirmLabel='Confirm', cancel
 const uiConfirm = (title, body='', opts={}) => uiDialog({title, body, danger:opts.danger, confirmLabel:opts.confirmLabel||'Confirm', requireText:opts.requireText});
 const uiAlert   = (title, body='') => uiDialog({title, body, cancelLabel:'', confirmLabel:'OK'}).then(()=>{});
 const uiPrompt  = (title, body='', value='', placeholder='') => uiDialog({title, body, input:{value,placeholder}, confirmLabel:'Save'});
+
+// Reusable THEMED dropdown (replaces native <select> so the whole control + popup
+// match the portal). API: mount a container, pass {options:[{value,label}], value,
+// placeholder, onChange}. Fully keyboard-accessible (Enter/Space/Arrows/Esc).
+function themedSelect(mount, { options=[], value=null, placeholder='Select…', onChange }={}){
+  let open=false, val=value, opts=options;
+  const labelFor = v => { const o=opts.find(x=> String(x.value)===String(v)); return o? o.label : placeholder; };
+  mount.classList.add('tsel');
+  mount.innerHTML = `<button type="button" class="tsel-btn" aria-haspopup="listbox" aria-expanded="false">
+      <span class="tsel-val"></span><span class="tsel-caret" aria-hidden="true">▾</span></button>
+    <div class="tsel-pop" role="listbox" hidden></div>`;
+  const btn = mount.querySelector('.tsel-btn');
+  const valEl = mount.querySelector('.tsel-val');
+  const pop = mount.querySelector('.tsel-pop');
+  const renderVal = ()=>{ const has=opts.some(o=> String(o.value)===String(val)); valEl.textContent = has?labelFor(val):placeholder; valEl.classList.toggle('placeholder', !has); };
+  const renderOpts = ()=>{ pop.innerHTML = opts.length
+      ? opts.map(o=> `<div class="tsel-opt${String(o.value)===String(val)?' sel':''}" role="option" tabindex="-1" data-v="${esc(String(o.value))}">${esc(o.label)}</div>`).join('')
+      : '<div class="tsel-empty">No options</div>'; };
+  const setOpen = o=>{ open=o; pop.hidden=!o; btn.setAttribute('aria-expanded', o?'true':'false'); mount.classList.toggle('open', o);
+    if(o){ (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); } };
+  const choose = v=>{ val=v; renderVal(); renderOpts(); setOpen(false); btn.focus(); onChange&&onChange(v); };
+  btn.onclick = ()=> setOpen(!open);
+  btn.onkeydown = e=>{ if(['ArrowDown','Enter',' '].includes(e.key)){ e.preventDefault(); setOpen(true); } };
+  pop.onclick = e=>{ const o=e.target.closest('.tsel-opt'); if(o) choose(o.dataset.v); };
+  pop.onkeydown = e=>{ const items=[...pop.querySelectorAll('.tsel-opt')]; const i=items.indexOf(document.activeElement);
+    if(e.key==='Escape'){ setOpen(false); btn.focus(); }
+    else if(e.key==='ArrowDown'){ e.preventDefault(); (items[i+1]||items[0])?.focus(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); (items[i-1]||items[items.length-1])?.focus(); }
+    else if((e.key==='Enter'||e.key===' ') && document.activeElement.classList.contains('tsel-opt')){ e.preventDefault(); choose(document.activeElement.dataset.v); } };
+  document.addEventListener('click', e=>{ if(open && !mount.contains(e.target)) setOpen(false); });
+  renderVal(); renderOpts();
+  return { setValue(v){ val=v; renderVal(); renderOpts(); }, setOptions(o){ opts=o; renderVal(); renderOpts(); }, get value(){ return val; } };
+}
 
 // Client-facing metric explainer — opens the themed dialog (same look as the rest of
 // the portal, no default browser UI) describing what a metric is, why it matters, and
