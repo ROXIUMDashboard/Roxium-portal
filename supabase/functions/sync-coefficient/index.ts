@@ -560,9 +560,16 @@ Deno.serve(async (req) => {
     // ---- DISCOVERY actions (read-only; no DB writes) ----------------------------
     // find_workbook: list the team Drive folder and match a client to its workbook.
     if (action === "find_workbook") {
-      const folderId = extractFolderId(String(reqBody.folder_id || Deno.env.get("REPORTING_FOLDER_ID") || ""));
+      // folder resolution: explicit body → global app_settings → env fallback.
+      let folderRaw = String(reqBody.folder_id || "");
+      if (!folderRaw) {
+        const { data: setting } = await sb.from("app_settings")
+          .select("value").eq("key", "master_reporting_drive_folder").maybeSingle();
+        folderRaw = String(setting?.value || Deno.env.get("REPORTING_FOLDER_ID") || "");
+      }
+      const folderId = extractFolderId(folderRaw);
       const name = String(reqBody.name || "");
-      if (!folderId) return json({ ok: false, error: "no folder_id (or REPORTING_FOLDER_ID) provided" }, 400);
+      if (!folderId) return json({ ok: false, error: "no master reporting Drive folder configured — set it in Admin → Reporting sheets & KPI sync" }, 400);
       if (!name) return json({ ok: false, error: "no client name provided to match" }, 400);
       const files = await driveListInFolder(folderId);
       const { match, candidates, reason } = matchWorkbook(files, name, reqBody.expected as string | null);

@@ -496,9 +496,16 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .workbookcfg .btn{align-self:flex-start}
 .wbhint{font-size:11px;opacity:.7}
 .wbbtns{display:flex;gap:8px;flex-wrap:wrap}
-.folderbar{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:4px;
-  padding:10px 11px;background:var(--ink);margin-bottom:12px}
-.folderbar .chanlabel{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.wboverride{margin-top:8px}
+.wboverride summary{cursor:pointer;font-size:11px;letter-spacing:.06em;color:var(--muted);user-select:none}
+.wboverride summary:hover{color:var(--gold)}
+.wboverride .cellinput{margin:8px 0 6px}
+.masterfolder{border:1px solid var(--line);border-radius:4px;padding:12px 13px;background:var(--ink);margin:8px 0 14px}
+.masterfolder .chanlabel{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.masterfolder .mfrow{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.masterfolder .mfrow .cellinput{flex:1;min-width:240px;background:var(--surface);border:1px solid var(--line);
+  color:var(--cream);padding:9px 11px;font-family:'Jost';font-size:12.5px;border-radius:3px}
+.masterfolder .mfrow .cellinput:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 .detectout{margin-top:8px;display:flex;flex-direction:column;gap:6px}
 .detectout:empty{display:none}
 .dtab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;

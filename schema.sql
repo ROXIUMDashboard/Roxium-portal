@@ -70,6 +70,13 @@ create table if not exists sheet_sources (
   unique (practice_id, source)                 -- one source tab per channel per practice
 );
 
+-- Global admin key/value settings (e.g. 'master_reporting_drive_folder').
+create table if not exists app_settings (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
 -- "Progress on the things we promised them" — the deliverables tracker.
 -- Grouped into draggable phase cards in the UI: phase_order sets card order,
 -- sort sets row order inside a card.
@@ -219,6 +226,12 @@ alter table practice_invites enable row level security;
 alter table sheet_sources  enable row level security;
 drop policy if exists "team sheet sources" on sheet_sources;
 create policy "team sheet sources" on sheet_sources for all using (is_team()) with check (is_team());
+
+alter table app_settings   enable row level security;
+drop policy if exists "team reads settings" on app_settings;
+create policy "team reads settings" on app_settings for select using (is_team());
+drop policy if exists "team writes settings" on app_settings;
+create policy "team writes settings" on app_settings for all using (is_team()) with check (is_team());
 
 -- security definer: these helpers read profiles directly without re-triggering
 -- the profiles RLS policy (prevents infinite recursion on profile lookups).
