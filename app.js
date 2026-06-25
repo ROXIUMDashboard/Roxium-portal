@@ -178,8 +178,10 @@ function syncChrome(){
   const realTeam = !!(me && me.role==='team');
   const teamView = isTeamView();
   const adminMode = currentView()==='admin';
-  $('btnAdmin').classList.toggle('hidden', !teamView);           // top-level entry, team only
-  $('btnAdmin').textContent = adminMode ? '← Client portal' : '⚙ Admin';   // toggles back when in admin
+  // team-only entry; hidden while in admin so the only back affordance is the top
+  // "← Back to client portal" link (no duplicate back control).
+  $('btnAdmin').classList.toggle('hidden', !teamView || adminMode);
+  $('btnAdmin').textContent = '⚙ Admin';
   $('btnPreview').classList.toggle('hidden', !realTeam || adminMode);
   $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
   document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
@@ -578,6 +580,8 @@ function render(){
       if(rt) rt.textContent = (data.practice && data.practice.name) ? `"${data.practice.name}"` : 'this practice';
     }
   });
+  // theme every native select (deliverable status, milestone, video stage, …)
+  safe('themed selects', ()=> enhanceSelectsIn(document));
 }
 
 /* Month selector for performance metrics: 'Latest (live)' + each reported month snapshot.
@@ -805,7 +809,7 @@ function enhanceNativeSelect(sel){
   themeSync(sel);
 }
 function enhanceSelectsIn(root){
-  (root||document).querySelectorAll('select.cellinput, select.picker, select#accessPractice, select#accessRole').forEach(enhanceNativeSelect);
+  (root||document).querySelectorAll('select.cellinput, select.picker, select#accessPractice, select#accessRole, select.statussel, select.stagesel, select.milesel').forEach(enhanceNativeSelect);
 }
 // one global outside-click closer for all enhanced (native-wrapped) dropdowns
 document.addEventListener('click', e=>{
@@ -914,6 +918,11 @@ function wireDelivClient(){
   wrap.querySelectorAll('.infobtn[data-info]').forEach(b=> b.addEventListener('click', ()=>{
     const el = document.getElementById('dinfo-'+b.dataset.info);
     if(el) el.classList.toggle('hidden');
+  }));
+  // truncated names/titles expand to full text on click, collapse on click again
+  wrap.querySelectorAll('.dnameC, .phasenameC').forEach(el=> el.addEventListener('click', e=>{
+    if(e.target.closest('.infobtn')) return;          // don't hijack the ⓘ button
+    el.classList.toggle('expanded');
   }));
 }
 function wireDeliverables(){

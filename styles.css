@@ -102,6 +102,13 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .drow.client{padding:7px 6px;border-bottom:1px solid rgba(201,168,76,.07)}
 .drow.client:last-child{border-bottom:none}
 .dnameC{flex:1;font-size:13px;color:var(--cream)}
+/* truncate long names/titles; click (client) or focus (team) expands to full text */
+.drow,.phasehead{flex-wrap:wrap}
+.dname,.phasename,.dnameC,.phasenameC{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dnameC,.phasenameC{cursor:pointer}
+.dname:focus,.phasename:focus,
+.dnameC.expanded,.phasenameC.expanded{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.dname:focus,.phasename:focus{flex-basis:100%;min-width:100%}
 .adddeliv{margin-top:2px;background:none;border:1px dashed var(--line);color:var(--muted);font-family:'Jost';font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:7px;cursor:pointer;border-radius:2px}
 .adddeliv:hover{border-color:var(--gold);color:var(--gold)}
 .newphase{display:flex;gap:10px;margin-top:14px;align-items:center}
@@ -151,8 +158,7 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .fitem{padding:14px 0;border-bottom:1px solid rgba(201,168,76,.1);font-size:14px;line-height:1.5}
 .fitem .meta{font-size:11px;color:var(--muted);letter-spacing:.08em;margin-top:4px}
 
-/* team forms */
-.teamonly{background:var(--surface)}
+/* team forms — sit flush on the near-black page (no lighter --surface panel) like the client side */
 .entry{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;margin-top:14px}
 .f label{display:block;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
 .f input,.f select{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--cream);padding:11px 12px;font-family:'Jost';font-size:14px;transition:border-color .18s ease, box-shadow .18s ease}
@@ -387,6 +393,8 @@ input,select,textarea{color-scheme:dark}                       /* dark native ca
 .f select,.picker{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:34px;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23C9A84C' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 13px center;cursor:pointer}
+/* dark-themed field + native calendar popup (color-scheme:dark) — no white control */
+input[type=date],input[type=month]{color-scheme:dark;background:var(--ink);color:var(--cream);border:1px solid var(--line)}
 input[type=date]::-webkit-calendar-picker-indicator,
 input[type=month]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.65;
   filter:invert(72%) sepia(38%) saturate(560%) hue-rotate(2deg) brightness(92%)}
@@ -466,12 +474,22 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .onboard-steps li.onboard-pending{list-style-type:'○ '}
 .onboard-hint{margin:8px 0 0;font-size:11.5px}
 .invite-actions{display:flex;flex-direction:column;gap:8px;align-self:end}
-.checklabel{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer}
-.checklabel input{margin:0}
+.checklabel{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:8px;cursor:pointer;letter-spacing:.04em}
+/* custom dark/gold checkbox — hide native, draw a themed box with a gold check */
+.checklabel input[type=checkbox]{appearance:none;-webkit-appearance:none;-moz-appearance:none;flex:0 0 auto;
+  width:16px;height:16px;margin:0;background:var(--ink);border:1px solid var(--line);border-radius:3px;cursor:pointer;
+  position:relative;transition:border-color .15s ease,background .15s ease}
+.checklabel input[type=checkbox]:hover{border-color:var(--gold)}
+.checklabel input[type=checkbox]:checked{background:var(--gold);border-color:var(--gold)}
+.checklabel input[type=checkbox]:checked::after{content:'';position:absolute;left:5px;top:2px;width:4px;height:8px;
+  border:solid var(--ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.checklabel input[type=checkbox]:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(201,168,76,.5)}
 .access-btns{display:flex;gap:8px;flex-wrap:wrap}
 
 /* Access roster (admin + client owners) */
-.roster{margin:12px 0 24px;border:1px solid var(--line);background:var(--surface)}
+/* flush on the dark page — no card box / lighter fill (incl. the empty-state strip) */
+.roster{margin:12px 0 24px;border:none;background:transparent}
+.roster .note{padding:10px 0}
 .rosterhead,.rosterrow{display:grid;grid-template-columns:2fr 80px 90px auto;gap:10px;align-items:center;padding:8px 12px;font-size:12px}
 .rosterhead{color:var(--muted);border-bottom:1px solid var(--line);letter-spacing:.04em;text-transform:uppercase;font-size:10.5px}
 .rosterrow{border-bottom:1px solid var(--line)}
@@ -552,6 +570,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .tsel-empty{padding:8px 11px;font-size:12px;color:var(--muted)}
 .tsel-wrap{display:block}
 .tsel-wrap.tsel{min-width:0}
+.drow .tsel-wrap{flex:0 0 auto;min-width:128px}
 .tsel-native{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0;opacity:0;pointer-events:none}
 .tsel-opt.disabled{color:var(--muted);cursor:default;opacity:.6}
 .tsel-opt.disabled:hover{background:transparent}
