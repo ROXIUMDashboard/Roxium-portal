@@ -35,6 +35,19 @@ const COLUMN_ALIASES: Record<string, string> = {
 const ADDITIVE = new Set(["spend", "impr", "clicks", "lpv", "reach", "page_engagement"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// A date/period column can be named many ways across exports. Meta uses "Reporting
+// starts"/"Day", Google "Week"/"Month", Coefficient "Date"/"Period". Matched by exact
+// name OR known prefix so "reporting starts (ds)" etc. still counts.
+const DATE_COL_NAMES = ["period","date","day","month","week","reporting date",
+  "reporting starts","reporting ends","reporting start","start date","week starting",
+  "month start","date start","ds"];
+const isDateCol = (h: string) => {
+  const c = (h || "").trim().toLowerCase();
+  return DATE_COL_NAMES.includes(c)
+    || c.startsWith("reporting start") || c.startsWith("reporting period")
+    || c.startsWith("week of") || c.startsWith("month of");
+};
+
 // month-name lookup for the deterministic period parser (handles 'Mar', 'March', etc.)
 const MONTHS: Record<string, number> = {
   jan:1, january:1, feb:2, february:2, mar:3, march:3, apr:4, april:4, may:5,
@@ -52,6 +65,16 @@ function resolvePeriod(raw: string): string | null {
   const s = (raw || "").trim();
   if (!s) return null;
   let m: RegExpMatchArray | null;
+  // Google Sheets serial date (days since 1899-12-30). The Sheets API returns these
+  // for real date cells under UNFORMATTED_VALUE, so a column of "46106" is actually a
+  // date, not a number. Range-guarded so plain years/counts aren't misread as dates.
+  if ((m = s.match(/^(\d{4,6})(?:\.\d+)?$/))) {
+    const serial = +m[1];
+    if (serial >= 20000 && serial <= 80000) {        // ~1954-09 .. ~2119-01
+      const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    }
+  }
   // ISO 'YYYY-MM' or 'YYYY-MM-DD'
   if ((m = s.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/))) {
     const y = +m[1], mo = +m[2];
@@ -123,7 +146,9 @@ async function googleAccessToken(): Promise<string> {
   const header = b64url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
   const claim = b64url(new TextEncoder().encode(JSON.stringify({
     iss: sa.client_email,
-    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    // spreadsheets.readonly = read values + tab metadata; drive.readonly = list the
+    // master folder to discover each client's workbook by name.
+    scope: "https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly",
     aud: "https://oauth2.googleapis.com/token",
     iat: now, exp: now + 3600,
   })));
@@ -154,6 +179,13 @@ function extractSheetId(s: string): string {
   return m ? m[1] : v;
 }
 
+// Same idea for a Drive folder link ('…/drive/folders/<ID>' or '…/folders/<ID>?…').
+function extractFolderId(s: string): string {
+  const v = (s || "").trim();
+  const m = v.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : v;
+}
+
 // Read a tab from a private sheet via the Sheets API and return it as a string grid
 // (same shape parseCSV produces, so rowsFromGrid is reused unchanged).
 async function readSheetGrid(sheetId: string, tab?: string | null): Promise<string[][]> {
@@ -164,6 +196,66 @@ async function readSheetGrid(sheetId: string, tab?: string | null): Promise<stri
   if (!res.ok) throw new Error(`sheets api ${res.status}: ${await res.text()}`);
   const body = await res.json() as { values?: unknown[][] };
   return (body.values || []).map(row => row.map(c => c == null ? "" : String(c)));
+}
+
+// ============================================================
+// DISCOVERY — folder → workbook → tabs. Used by the admin "Detect" actions so the
+// team can wire a client from its Drive folder without copying ids by hand. Read-only.
+// ============================================================
+
+// List the tabs of a workbook (titles + gids) via spreadsheets.get. Cheap metadata call.
+async function listTabs(sheetId: string): Promise<{ title: string; gid: number; index: number }[]> {
+  const token = await googleAccessToken();
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties(title,sheetId,index)`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`sheets api ${res.status}: ${await res.text()}`);
+  const body = await res.json() as { sheets?: { properties?: { title?: string; sheetId?: number; index?: number } }[] };
+  return (body.sheets || []).map(s => ({
+    title: s.properties?.title || "", gid: s.properties?.sheetId ?? 0, index: s.properties?.index ?? 0,
+  }));
+}
+
+// List spreadsheets inside a Drive folder (the team master folder). Read-only.
+async function driveListInFolder(folderId: string): Promise<{ id: string; name: string }[]> {
+  const token = await googleAccessToken();
+  const q = encodeURIComponent(
+    `'${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`drive api ${res.status}: ${await res.text()}`);
+  const body = await res.json() as { files?: { id: string; name: string }[] };
+  return body.files || [];
+}
+
+const normName = (s: string) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+// Match a client to a workbook in the folder. Returns the confident match (exact /
+// strong substring) plus ALL candidates, so the caller can refuse to guess when
+// the match is ambiguous (multiple) or weak (none).
+function matchWorkbook(files: { id: string; name: string }[], clientName: string, expected?: string | null):
+  { match: { id: string; name: string } | null; candidates: { id: string; name: string }[]; reason: string } {
+  const want = normName(expected || clientName);
+  if (!files.length) return { match: null, candidates: [], reason: "folder is empty or not shared with the service account" };
+  const exact = files.filter(f => normName(f.name) === want);
+  if (exact.length === 1) return { match: exact[0], candidates: exact, reason: "exact name match" };
+  if (exact.length > 1) return { match: null, candidates: exact, reason: "multiple exact matches — pick one" };
+  const sub = files.filter(f => { const n = normName(f.name); return n.includes(want) || want.includes(n); });
+  if (sub.length === 1) return { match: sub[0], candidates: sub, reason: "name contained in workbook title" };
+  if (sub.length > 1) return { match: null, candidates: sub, reason: "several possible workbooks — pick one" };
+  return { match: null, candidates: files, reason: "no name match — pick the workbook manually" };
+}
+
+// Guess which source a tab title represents. Meta stays under the legacy 'marketing'
+// key so it lines up with manual entry + the dashboard; others use their channel key.
+function guessSource(title: string): string | null {
+  const t = normName(title);
+  if (!t) return null;
+  if (/\b(meta|facebook|fb|instagram|ig)\b/.test(t) || t.includes("meta ads")) return "marketing";
+  if (/\bgoogle\b/.test(t) || t.includes("google ads") || t.includes("g ads")) return "google_ads";
+  if (t.includes("page engagement") || t === "engagement") return "page_engagement";
+  if (/\b(organic|social)\b/.test(t)) return "organic";
+  if (/\b(seo|website|web)\b/.test(t)) return "seo";
+  return null;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -274,18 +366,17 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
   // Find the REAL header row — ad exports (Meta/Coefficient) put title/"last updated"
   // rows ABOVE the header, so we can't assume grid[0]. Pick the row that best matches
   // a date column + known metric columns.
-  const DATE_COLS = ["period", "date", "day", "reporting date", "month"];
   let hIdx = 0, hScore = -1;
   for (let i = 0; i < Math.min(grid.length, 25); i++) {
     const low = grid[i].map(c => (c ?? "").trim().toLowerCase());
-    let score = low.some(c => DATE_COLS.includes(c)) ? 2 : 0;
+    let score = low.some(isDateCol) ? 2 : 0;
     for (const c of low) if (COLUMN_ALIASES[c] || c === "practice_id") score += 1;
     if (score > hScore) { hScore = score; hIdx = i; }
   }
   const header = grid[hIdx].map(h => h.trim().toLowerCase());
   const idxOf = (n: string) => header.indexOf(n);
   const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
-  const dateIdx = DATE_COLS.map(idxOf).find(i => i >= 0) ?? -1;
+  const dateIdx = header.findIndex(isDateCol);
 
   const buckets = new Map<string, MonthBucket>();
   if (dateIdx >= 0) {                                  // ---- TIDY layout (one row per date) ----
@@ -321,7 +412,22 @@ function rowsFromGrid(grid: string[][], source: string, defaultPid: string | nul
   if (!rows.length && defaultPid && UUID_RE.test(defaultPid)) {
     rows = parseWide(grid, defaultPid, source, skipped, label);
   }
-  if (!rows.length && dateIdx < 0) skipped.push({ source: label, reason: "no period/date column and not a recognizable wide month-block sheet" });
+  if (!rows.length && dateIdx < 0) {
+    // Tell the admin exactly what we saw so the failure is diagnosable, not opaque:
+    // which row we treated as the header and the literal column names on it.
+    const cols = header.filter(h => h);
+    const known = cols.filter(h => COLUMN_ALIASES[h]);
+    skipped.push({
+      source: label,
+      reason: "no period/date column found — this tab isn't a recognizable daily/period or wide month-block sheet",
+      header_row: hIdx + 1,
+      columns_seen: cols.slice(0, 30),
+      metric_columns_recognized: known,
+      hint: known.length
+        ? "metrics were recognized but there is no date/period column — add a Date/Reporting starts column, or use the wide month-block layout"
+        : "no recognized columns — check the tab name points at the data tab (not a summary/cover tab)",
+    });
+  }
   return rows;
 }
 
@@ -349,14 +455,55 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
 
   const ranAt = new Date().toISOString();
-  // who/what triggered this run? 'manual' from the Admin Sync-now button, else scheduled.
-  let trigger = "scheduled";
-  try { const b = await req.clone().json(); if (b && typeof b.trigger === "string") trigger = b.trigger; } catch (_) { /* no body */ }
+  // parse the request body once: { trigger?, action?, ...params }
+  let reqBody: Record<string, unknown> = {};
+  try { const b = await req.clone().json(); if (b && typeof b === "object") reqBody = b as Record<string, unknown>; } catch (_) { /* no body */ }
+  const trigger = typeof reqBody.trigger === "string" ? reqBody.trigger as string : "scheduled";
+  const action = typeof reqBody.action === "string" ? reqBody.action as string : "sync";
 
   try {
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const denied = await authorize(req, sb);
     if (denied) return denied;
+
+    // ---- DISCOVERY actions (read-only; no DB writes) ----------------------------
+    // find_workbook: list the team Drive folder and match a client to its workbook.
+    if (action === "find_workbook") {
+      const folderId = extractFolderId(String(reqBody.folder_id || Deno.env.get("REPORTING_FOLDER_ID") || ""));
+      const name = String(reqBody.name || "");
+      if (!folderId) return json({ ok: false, error: "no folder_id (or REPORTING_FOLDER_ID) provided" }, 400);
+      if (!name) return json({ ok: false, error: "no client name provided to match" }, 400);
+      const files = await driveListInFolder(folderId);
+      const { match, candidates, reason } = matchWorkbook(files, name, reqBody.expected as string | null);
+      return json({ ok: true, action, folder_id: folderId, match, candidates, reason, file_count: files.length });
+    }
+    // detect: inspect a workbook's tabs and dry-run parse each so the admin can map
+    // tabs → sources with eyes open (no silent guessing, no writes).
+    if (action === "detect") {
+      let sheetId = extractSheetId(String(reqBody.sheet_id || ""));
+      if (!sheetId && reqBody.practice_id) {
+        const { data: p } = await sb.from("practices").select("workbook_sheet_id").eq("id", reqBody.practice_id).single();
+        sheetId = extractSheetId(String(p?.workbook_sheet_id || ""));
+      }
+      if (!sheetId) return json({ ok: false, error: "no sheet_id and the practice has no master workbook set" }, 400);
+      const tabs = await listTabs(sheetId);
+      const out: unknown[] = [];
+      for (const t of tabs) {
+        const probe: unknown[] = [];
+        let parsed = 0; let months: string[] = []; let sample: string[][] = [];
+        try {
+          const grid = await readSheetGrid(sheetId, t.title);
+          sample = grid.slice(0, 4).map(r => r.slice(0, 8));
+          const rows = rowsFromGrid(grid, guessSource(t.title) || "marketing",
+            "00000000-0000-0000-0000-000000000000", probe, t.title);  // placeholder pid: shape check only
+          parsed = rows.length;
+          months = [...new Set(rows.map(r => String(r.period).slice(0, 7)))].sort();
+        } catch (e) { probe.push({ error: String((e as Error)?.message || e) }); }
+        out.push({ title: t.title, gid: t.gid, suggested_source: guessSource(t.title),
+          parsed_rows: parsed, months, diagnostics: probe.slice(0, 3), sample });
+      }
+      return json({ ok: true, action, sheet_id: sheetId, tab_count: tabs.length, tabs: out });
+    }
 
     const SOURCE = Deno.env.get("KPI_SOURCE") || "marketing";
     // 'sheets_api' = private Google Sheets API (Option B); 'csv' (default) = legacy public CSV.
