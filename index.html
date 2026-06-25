@@ -212,20 +212,6 @@
       <h2>Team · <em>controls</em></h2>
       <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in the Admin tab.)</div>
 
-      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
-      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (Admin → Reporting &amp; KPI). Use this manual layer for hand-entered months, overrides, or workbook import/export when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save.</p>
-      <div class="entry" id="kpiMeta">
-        <div class="f"><label>Reporting month</label><input id="inMonth" type="month"></div>
-        <div class="f"><label>Import year</label><input id="inYear" type="number" min="2000" max="2100" step="1" placeholder="2026"></div>
-      </div>
-      <div class="entry" id="entryFields"></div>
-      <div class="actions">
-        <button class="btn" id="btnSaveKpi">Save month</button>
-        <label class="btn ghost" for="xlsxFile" style="cursor:pointer">Import KPI workbook (.xlsx)</label>
-        <input type="file" id="xlsxFile" accept=".xlsx" class="hidden">
-        <span id="saveMsg"></span>
-      </div>
-
       <h3>Deliverables, roadmap & video pipeline</h3>
       <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. Roadmap: the date under each milestone is editable (dates are set automatically per practice at kickoff — change one only if a date shifts). Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
 
@@ -233,6 +219,18 @@
       <div class="entry">
         <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
         <div class="f"><button class="btn" id="btnPost">Post update</button></div>
+      </div>
+
+      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
+      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (Admin → Reporting &amp; KPI). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
+      <div class="entry" id="kpiMeta">
+        <div class="f"><label>Reporting month</label><input id="inMonth" type="month"></div>
+      </div>
+      <div class="entry" id="entryFields"></div>
+      <div class="actions">
+        <button class="btn" id="btnSaveKpi">Save month</button>
+        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI CSV</button>
+        <span id="saveMsg"></span>
       </div>
 
       <h3 class="danger-title">Danger zone</h3>

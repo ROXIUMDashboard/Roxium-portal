@@ -530,7 +530,12 @@ select.cellinput option{background:var(--ink);color:var(--cream)}
 .srcrow .sheettab{width:100%}
 .srcrow .srcstatus{font-size:11px;white-space:nowrap}
 .srcrow .btn.xs.danger{padding:0 7px;line-height:1.6}
+.addsource{flex-wrap:wrap}
 .addsource .addsourcetab{min-width:150px}
+.addsrc-label{flex-basis:100%;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+/* safety net: any select not caught by a specific rule still gets the dark theme */
+select{background-color:var(--ink);color:var(--cream);border:1px solid var(--line);border-radius:3px;font-family:'Jost';cursor:pointer}
+select option{background:var(--surface2);color:var(--cream)}
 .deployrow{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap}
 @media(max-width:640px){.srcrow{grid-template-columns:1fr 1fr;gap:6px}.srcrow .srcname{grid-column:1/-1}}
 .dtab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;
