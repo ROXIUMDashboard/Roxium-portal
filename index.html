@@ -150,7 +150,15 @@
       <div id="accessRoster" class="roster"></div>
 
       <h3>4 · Reporting sheets &amp; KPI sync</h3>
-      <p class="note" style="margin-top:-2px">Each client has its own Google Sheet (Coefficient feeds it). Paste the Sheet ID or legacy CSV URL, Save, then sync pulls ad metrics into Supabase every 2 hours.</p>
+      <p class="note" style="margin-top:-2px">One master Drive folder holds every client's reporting workbook. Set it once below; each client then finds its own workbook by name and detects its source tabs. Sync pulls ad metrics into Supabase every 2 hours.</p>
+      <div class="masterfolder">
+        <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
+        <div class="mfrow">
+          <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
+          <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
+        </div>
+        <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
+      </div>
       <div class="syncnowrow">
         <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
         <span class="note" id="syncNowMsg">Pulls every active reporting sheet into Supabase immediately.</span>

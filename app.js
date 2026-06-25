@@ -146,7 +146,7 @@ function showView(name){
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
   if(name==='admin'){
-    renderAdminClients(); loadSheetSources(); loadPlatformAdmins();
+    renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
     if(pid) refreshOnboardChecklist(pid);
@@ -1677,16 +1677,22 @@ $('btnSyncNow').onclick = async ()=>{
 // The client's ONE master workbook (shared once with the service account); every
 // source below is a TAB inside this sheet.
 function clientWorkbookBlock(p){
+  const has = !!(p.workbook_sheet_id && p.workbook_sheet_id.trim());
+  const status = has
+    ? `<span class="ssok">workbook linked</span>`
+    : `<span class="note">no workbook yet — use “Find in master folder”</span>`;
   return `<div class="workbookcfg">
-    <span class="chanlabel">Master reporting workbook</span>
-    <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
-      placeholder="Paste the client's master Google Sheet link or ID (shared with the backend service account)">
+    <span class="chanlabel">Reporting workbook ${status}</span>
     <div class="wbbtns">
-      <button class="btn ghost sm" data-saveworkbook="${p.id}">Save workbook</button>
+      <button class="btn ghost sm" data-findwb="${p.id}" data-name="${esc(p.name)}">Find in master folder</button>
       <button class="btn ghost sm" data-detecttabs="${p.id}">Detect tabs</button>
-      <button class="btn ghost sm" data-findwb="${p.id}" data-name="${esc(p.name)}">Find in folder</button>
     </div>
-    <div class="note wbhint">One sheet per client. Each source below reads one <b>tab</b> inside it — set the tab name on each source.</div>
+    <details class="wboverride">
+      <summary>Manual workbook override</summary>
+      <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
+        placeholder="Paste a Google Sheet link or ID to override auto-discovery">
+      <button class="btn ghost sm" data-saveworkbook="${p.id}">Save override</button>
+    </details>
     <div class="detectout" id="detect-${p.id}"></div>
   </div>`;
 }
@@ -1730,13 +1736,7 @@ function renderAdminClients(){
   if(!isTeamView()){ wrap.innerHTML=''; return; }
   const list = practicesList || [];
   const order = CHANNELS.map(c=> c.source);
-  // team-level master Drive folder (used by "Find in folder"); remembered locally
-  const folder = localStorage.getItem('reportingFolder')||'';
-  const folderBar = `<div class="folderbar">
-    <span class="chanlabel">Master Drive folder (optional)</span>
-    <input class="cellinput" id="reportingFolder" value="${esc(folder)}" placeholder="Paste the team reporting folder link — lets “Find in folder” locate each client's workbook by name">
-  </div>`;
-  wrap.innerHTML = folderBar + (list.length ? list.map(p=>{
+  wrap.innerHTML = (list.length ? list.map(p=>{
     // this client's configured source tabs, in preset order then any custom extras
     const present = Object.values(sheetSources).filter(s=> s.practice_id===p.id)
       .sort((a,b)=> ((order.indexOf(a.source)+1)||99) - ((order.indexOf(b.source)+1)||99));
@@ -1750,7 +1750,6 @@ function renderAdminClients(){
       ${addSourceRow(p.id)}
     </div>`;
   }).join('') : '<div class="note">No practices yet — add one above.</div>');
-  $('reportingFolder')?.addEventListener('change', e=> localStorage.setItem('reportingFolder', e.target.value.trim()));
   wrap.querySelectorAll('[data-delpractice]').forEach(b=>
     b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
   wrap.querySelectorAll('[data-saveworkbook]').forEach(b=>
@@ -1830,14 +1829,40 @@ async function applyDetectedTab(pid, source, tab){
   adminDelFlash(error? 'Map failed: '+error.message : `${channelLabel(source)} mapped to tab “${tab}” — syncs next run.`);
   if(!error){ await loadSheetSources(); refreshOnboardChecklist(pid); }
 }
+// ---- global admin settings (shared across the team via the app_settings table) ----
+let appSettings = {};
+async function loadAppSettings(){
+  if(!isTeamView()) return;
+  try{
+    const { data } = await sb.from('app_settings').select('key,value');
+    appSettings = Object.fromEntries((data||[]).map(r=> [r.key, r.value]));
+  }catch(_){ appSettings = {}; }
+  const inp = $('masterFolder'); if(inp) inp.value = appSettings.master_reporting_drive_folder || '';
+}
+async function saveMasterFolder(){
+  if(!isTeamView()) return;
+  const inp = $('masterFolder'); const raw = (inp?.value||'').trim();
+  // accept a full Drive folder link or a bare id — store just the id
+  const m = raw.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+  const val = m ? m[1] : raw;
+  if(inp && val!==raw) inp.value = val;
+  const { error } = await sb.from('app_settings')
+    .upsert({ key:'master_reporting_drive_folder', value: val||null, updated_at:new Date().toISOString() }, { onConflict:'key' });
+  const msg = $('masterFolderMsg');
+  if(msg) msg.textContent = error ? 'Save failed: '+error.message
+    : (val ? 'Master folder saved — “Find in master folder” on each client now searches it.' : 'Master folder cleared.');
+  if(!error) appSettings.master_reporting_drive_folder = val||null;
+}
+$('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
+
 // Find this client's workbook inside the master Drive folder by name (no silent
 // guessing — shows the match or candidates for the admin to confirm).
 async function findWorkbook(pid, name){
   if(!isTeamView()) return;
   const out = document.getElementById('detect-'+pid); if(!out) return;
-  const folder = (localStorage.getItem('reportingFolder')||'').trim();
-  if(!folder){ out.innerHTML = '<div class="note">Set the master Drive folder at the top first.</div>'; return; }
-  out.innerHTML = '<div class="note">Searching folder…</div>';
+  const folder = (appSettings.master_reporting_drive_folder||'').trim();
+  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> (top of this section) first.</div>'; return; }
+  out.innerHTML = '<div class="note">Searching the master folder…</div>';
   try{
     const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
     const cands = r.match ? [r.match] : (r.candidates||[]);
