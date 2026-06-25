@@ -92,18 +92,24 @@ let chanByPractice = {};   // practiceId -> 'all' | 'marketing' | 'google_ads' |
 const getChan = () => (practiceId && practiceId in chanByPractice) ? chanByPractice[practiceId] : 'all';
 const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete chanByPractice[practiceId]; else chanByPractice[practiceId]=c; };
 // Known source presets (Meta = the legacy 'marketing' source). Each is one TAB in a
-// client's master workbook; the list seeds the admin "add source" picker and channel
-// labels. Sources are open-ended — a custom key works too, this is just the menu.
+const DEFAULT_MASTER_FOLDER = '1SDfpxHnD7OSO6rWjdQDM73XE_e8h8sqD';
+// Preset channel keys for multi-source KPI (extensible — custom keys still work).
 const CHANNELS = [
-  { source:'marketing',       label:'Meta Ads' },
-  { source:'google_ads',      label:'Google Ads' },
-  { source:'organic',         label:'Organic / Social' },
-  { source:'seo',             label:'SEO / Website' },
-  { source:'page_engagement', label:'Page Engagement' },
+  { source:'meta_ads',           label:'Meta Ads' },
+  { source:'instagram_insights', label:'Instagram Insights' },
+  { source:'google_ads',         label:'Google Ads' },
+  { source:'facebook_insights',  label:'Facebook Insights' },
+  { source:'youtube_analytics',  label:'YouTube Analytics' },
+  { source:'microsoft_ads',      label:'Microsoft Ads' },
+  { source:'marketing',          label:'Meta Ads (legacy)' },
+  { source:'page_engagement',    label:'Page Engagement' },
+  { source:'organic',            label:'Organic / Social' },
+  { source:'seo',                label:'SEO / Website' },
 ];
-const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
+const META_ALIASES = new Set(['marketing','meta','coefficient','meta_ads']);
+const channelLabel = src => META_ALIASES.has(src||'')
   ? 'Meta Ads'
-  : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
+  : (CHANNELS.find(c=>c.source===src)?.label || (src||'').replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
 
 /* ---- KPI period helpers (period = first-of-month 'YYYY-MM-01' snapshot key) ---- */
@@ -146,6 +152,7 @@ function showView(name){
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
   if(name==='admin'){
+    showAdminTab(sessionStorage.getItem('adminTab') || 'clients');
     renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
@@ -179,6 +186,25 @@ function syncChrome(){
 window.addEventListener('hashchange', ()=> showView(currentView()));
 $('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#roadmap'; });
+
+/* ---- Admin sub-tabs (Clients / Access / Reporting / System) ---- */
+const ADMIN_TABS = ['clients','access','reporting','system'];
+function showAdminTab(tab){
+  if(!ADMIN_TABS.includes(tab)) tab = 'clients';
+  sessionStorage.setItem('adminTab', tab);
+  document.querySelectorAll('.admintab').forEach(t=> t.classList.toggle('active', t.dataset.adminTab===tab));
+  document.querySelectorAll('.adminpane').forEach(p=> p.classList.toggle('active', p.dataset.adminPane===tab));
+  if(tab==='reporting'){ renderAdminClients(); renderSyncStatus(); }
+  if(tab==='access') loadPlatformAdmins();
+}
+document.getElementById('adminTabnav')?.addEventListener('click', e=>{
+  const btn = e.target.closest('.admintab');
+  if(btn) showAdminTab(btn.dataset.adminTab);
+});
+
+function getMasterFolderId(){
+  return (appSettings.master_reporting_drive_folder || DEFAULT_MASTER_FOLDER).trim();
+}
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -430,7 +456,9 @@ function render(){
   // build the channel selector (only when this practice has more than one ad channel)
   buildChannelPicker();
   $('kpiSub').textContent = emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
-    : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
+    : getChan() !== 'all'
+      ? `${channelLabel(getChan())} · ${periodLabel(latest?.period||viewPeriod)}`
+      : latest ? `All channels combined · ${periodLabel(latest.period)}` : 'Latest month against target.';
 
   // hero stats — real ad metrics (spend / reach / link clicks) + project progress
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
@@ -498,6 +526,7 @@ function render(){
     }).filter(Boolean);
     $('statusBoard').innerHTML = rows.join('');
     $('statusBoard').style.display = rows.length ? '' : 'none';
+    renderChannelBreakdown(latest, isLive);
   });
 
   // feed (team can edit/delete each posted update)
@@ -560,6 +589,28 @@ function buildChannelPicker(){
     .concat(chans.map(s=> `<option value="${esc(s)}">${esc(channelLabel(s))}</option>`)).join('');
   sel.value = getChan();
   sel.onchange = ()=>{ setChan(sel.value); data.kpi = computeKpi(); render(); };
+}
+
+function renderChannelBreakdown(latest, isLive){
+  const el = $('channelBreakdown'); if(!el) return;
+  const chans = channelsPresent();
+  if(getChan() !== 'all' || chans.length < 2 || !latest){
+    el.innerHTML = ''; el.classList.add('hidden'); return;
+  }
+  el.classList.remove('hidden');
+  const period = latest.period;
+  const mNote = monthNote(period, isLive);
+  el.innerHTML = `<h3 class="chanbreak-h">Channel breakdown · ${periodLabel(period)}</h3>
+    <div class="chanbreak-grid">${chans.map(src=>{
+      const row = (data.kpiRaw||[]).find(r=> r.period===period && (r.source||'marketing')===src);
+      const spend = row ? N(row,'spend') : null;
+      const clicks = row ? N(row,'clicks') : null;
+      return `<div class="chanbreak-card">
+        <div class="chanbreak-label">${esc(channelLabel(src))}</div>
+        <div class="chanbreak-val">${fmt$(spend)}</div>
+        <div class="note">${fmtNum(clicks)} clicks · ${mNote}</div>
+      </div>`;
+    }).join('')}</div>`;
 }
 
 /* ---------------- team controls ---------------- */
@@ -1299,8 +1350,16 @@ $('btnPost').onclick = async ()=>{
 };
 
 /* ---- ONBOARDING & ACCESS (admin + client owners) ---- */
-const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
-const accessFlash = t=>{ const el=$('clientAccessMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
+const TRANSIENT_MS = 60000;
+const transientFlash = (el, text, ms = TRANSIENT_MS)=>{
+  if(!el) return;
+  el.textContent = text;
+  setTimeout(()=>{ if(el.textContent === text) el.textContent = ''; }, ms);
+};
+const onbFlash = t=> transientFlash($('onbMsg'), t);
+const accessFlash = t=> transientFlash($('clientAccessMsg'), t);
+const adminDelFlash = t=> transientFlash($('adminDelMsg'), t);
+const promoteFlash = t=> transientFlash($('promoteMsg'), t, 60000);
 
 function showOnboardChecklist(pid, name){
   const el = $('onboardChecklist'); if(!el) return;
@@ -1308,10 +1367,10 @@ function showOnboardChecklist(pid, name){
   el.dataset.practiceId = pid;
   el.innerHTML = `<div class="onboard-title">Onboarding · <b>${esc(name)}</b></div>
     <ol class="onboard-steps" id="onboardSteps">
-      <li data-step="access" class="onboard-pending">Add doctor / team access (section 3)</li>
-      <li data-step="sheet" class="onboard-pending">Configure reporting sheet (section 4)</li>
-      <li data-step="coefficient" class="onboard-pending">Connect Coefficient to that sheet tab</li>
-      <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
+      <li data-step="access" class="onboard-pending">Invite doctor / owner (Access tab)</li>
+      <li data-step="workbook" class="onboard-pending">Link reporting workbook (Reporting tab)</li>
+      <li data-step="sheet" class="onboard-pending">Map source tabs (Reporting tab)</li>
+      <li data-step="sync" class="onboard-pending">First KPI sync</li>
     </ol>
     <p class="note onboard-hint">Complete each step — status updates automatically.</p>`;
   const ap = $('accessPractice'); if(ap) ap.value = pid;
@@ -1331,8 +1390,8 @@ async function refreshOnboardChecklist(pid){
     li.classList.toggle('onboard-pending', !done);
   };
   mark('access', !!data?.has_access);
+  mark('workbook', !!data?.has_workbook);
   mark('sheet', !!data?.has_sheet);
-  mark('coefficient', !!data?.has_sheet); // manual step — sheet config is the gate
   mark('sync', !!data?.has_sync);
 }
 
@@ -1443,7 +1502,6 @@ async function loadPlatformAdmins(){
   renderPlatformAdmins(data);
 }
 
-const promoteFlash = t=>{ const el=$('promoteMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 7000); } };
 $('btnPromoteAdmin').onclick = async ()=>{
   if(!isTeamView()) return;
   const email = $('promoteEmail').value.trim();
@@ -1500,9 +1558,10 @@ $('btnAddClient').onclick = async ()=>{
     if(error) throw error;
     $('newClientName').value = '';
     await loadTeamPractices();
+    await loadAppSettings();
     renderAdminClients();
-    if(data){ practiceId = data; showOnboardChecklist(data, name); }
-    onbFlash(`Created "${name}". Complete the checklist below.`);
+    if(data){ practiceId = data; showOnboardChecklist(data, name); await autoOnboardClient(data, name); }
+    onbFlash(`Created "${name}". Workbook discovery started — check Reporting tab.`);
     loadAll();
   }catch(e){ onbFlash('Could not add client: '+e.message); }
   finally{ $('btnAddClient').disabled = false; }
@@ -1548,7 +1607,6 @@ $('btnClientInvite').onclick = async ()=>{
 };
 
 // ---- Admin: per-client sheet config + delete ----
-const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
 // per-client reporting-sheet sources, keyed 'practiceId::source' (one per ad channel)
 let sheetSources = {};
 const ssKey = (pid, source)=> `${pid}::${source||'marketing'}`;
@@ -1688,10 +1746,12 @@ function clientWorkbookBlock(p){
       <button class="btn ghost sm" data-detecttabs="${p.id}">Detect tabs</button>
     </div>
     <details class="wboverride">
-      <summary>Manual workbook override</summary>
+      <summary>Manual overrides</summary>
+      <input class="cellinput workbookhint" data-pid="${p.id}" value="${esc(p.workbook_name_hint||'')}"
+        placeholder="Workbook name hint (optional — overrides practice name for folder search)">
       <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
-        placeholder="Paste a Google Sheet link or ID to override auto-discovery">
-      <button class="btn ghost sm" data-saveworkbook="${p.id}">Save override</button>
+        placeholder="Workbook ID override (skip folder search)">
+      <button class="btn ghost sm" data-saveworkbook="${p.id}">Save overrides</button>
     </details>
     <div class="detectout" id="detect-${p.id}"></div>
   </div>`;
@@ -1725,7 +1785,7 @@ function addSourceRow(pid){
   const opts = CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
     + '<option value="__custom">Custom source…</option>';
   return `<div class="addsource">
-    <select class="cellinput addsourcesel" data-pid="${pid}">${opts}</select>
+    <select class="cellinput addsourcesel picker" data-pid="${pid}">${opts}</select>
     <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="Custom key (e.g. tiktok_ads)" style="display:none">
     <input class="cellinput addsourcetab" data-pid="${pid}" placeholder="Tab name in the master workbook">
     <button class="btn ghost sm" data-addsource="${pid}">+ Add source</button>
@@ -1773,16 +1833,23 @@ function renderAdminClients(){
 // Save the client's master workbook id (the one sheet every source tab reads from).
 async function saveWorkbook(pid){
   if(!isTeamView()) return;
-  const inp = document.querySelector(`.workbookid[data-pid="${pid}"]`);
-  const raw = (inp?.value||'').trim();
-  // accept a pasted full Google Sheets URL or a bare ID — store just the ID
+  const idInp = document.querySelector(`.workbookid[data-pid="${pid}"]`);
+  const hintInp = document.querySelector(`.workbookhint[data-pid="${pid}"]`);
+  const raw = (idInp?.value||'').trim();
+  const hint = (hintInp?.value||'').trim();
   const m = raw.match(/\/d\/([a-zA-Z0-9-_]+)/);
   const v = m ? m[1] : raw;
-  if(inp && v!==raw) inp.value = v;   // reflect the cleaned id back to the field
-  const { error } = await sb.from('practices').update({ workbook_sheet_id: v||null }).eq('id', pid);
-  adminDelFlash(error ? 'Workbook save failed: '+error.message
-    : (v ? 'Master workbook saved — its source tabs will sync on the next run.' : 'Master workbook cleared.'));
-  if(!error){ const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = v||null; }
+  if(idInp && v!==raw) idInp.value = v;
+  const { error } = await sb.from('practices').update({
+    workbook_sheet_id: v||null,
+    workbook_name_hint: hint||null,
+  }).eq('id', pid);
+  adminDelFlash(error ? 'Save failed: '+error.message
+    : (v ? 'Workbook override saved.' : 'Overrides cleared.'));
+  if(!error){
+    const p = (practicesList||[]).find(x=> x.id===pid);
+    if(p){ p.workbook_sheet_id = v||null; p.workbook_name_hint = hint||null; }
+  }
 }
 // Call sync-coefficient and return the parsed JSON body even on non-2xx (invoke()
 // throws but the real reason is in error.context). Shared by detect/find/sync calls.
@@ -1837,34 +1904,124 @@ async function loadAppSettings(){
     const { data } = await sb.from('app_settings').select('key,value');
     appSettings = Object.fromEntries((data||[]).map(r=> [r.key, r.value]));
   }catch(_){ appSettings = {}; }
-  const inp = $('masterFolder'); if(inp) inp.value = appSettings.master_reporting_drive_folder || '';
+  const inp = $('masterFolder'); if(inp) inp.value = appSettings.master_reporting_drive_folder || DEFAULT_MASTER_FOLDER;
 }
 async function saveMasterFolder(){
   if(!isTeamView()) return;
   const inp = $('masterFolder'); const raw = (inp?.value||'').trim();
-  // accept a full Drive folder link or a bare id — store just the id
   const m = raw.match(/\/folders\/([a-zA-Z0-9-_]+)/);
   const val = m ? m[1] : raw;
   if(inp && val!==raw) inp.value = val;
   const { error } = await sb.from('app_settings')
-    .upsert({ key:'master_reporting_drive_folder', value: val||null, updated_at:new Date().toISOString() }, { onConflict:'key' });
+    .upsert({ key:'master_reporting_drive_folder', value: val||DEFAULT_MASTER_FOLDER, updated_at:new Date().toISOString() }, { onConflict:'key' });
   const msg = $('masterFolderMsg');
   if(msg) msg.textContent = error ? 'Save failed: '+error.message
-    : (val ? 'Master folder saved — “Find in master folder” on each client now searches it.' : 'Master folder cleared.');
-  if(!error) appSettings.master_reporting_drive_folder = val||null;
+    : 'Master folder saved.';
+  if(!error) appSettings.master_reporting_drive_folder = val||DEFAULT_MASTER_FOLDER;
 }
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
+$('btnTestFolder')?.addEventListener('click', async ()=>{
+  if(!isTeamView()) return;
+  const msg = $('masterFolderMsg');
+  if(msg) msg.textContent = 'Testing Drive connection…';
+  try{
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: getMasterFolderId(), name:'__connection_test__' });
+    transientFlash(msg, `Connected — ${r.file_count??0} workbook(s) in folder.`, TRANSIENT_MS);
+  }catch(e){
+    if(msg) msg.textContent = 'Connection failed: '+(e.message||e);
+  }
+});
+
+async function autoOnboardClient(pid, name){
+  showAdminTab('reporting');
+  const out = document.getElementById('detect-'+pid);
+  if(out) out.innerHTML = '<div class="note">Searching global reporting folder…</div>';
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  const hint = p?.workbook_name_hint || '';
+  const wbOverride = (p?.workbook_sheet_id||'').trim();
+  try{
+    if(wbOverride){
+      if(out) out.innerHTML = '<div class="note">Workbook override set — detecting tabs…</div>';
+      await autoMapDetectedTabs(pid, { autoOnly: true });
+      adminDelFlash('Workbook override linked — source tabs auto-mapped where unambiguous.');
+      return;
+    }
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: getMasterFolderId(), name, expected: hint||undefined });
+    if(r.match){
+      await linkWorkbook(pid, r.match.id, out);
+      await autoMapDetectedTabs(pid, { autoOnly: true });
+      adminDelFlash(`Auto-linked workbook “${r.match.name}”. Review source mappings below.`);
+    } else if(r.candidates?.length){
+      if(out) out.innerHTML = `<div class="note warn">${esc(r.reason||'Pick a workbook')}:</div>` + r.candidates.map(c=>
+        `<div class="dtab"><b>${esc(c.name)}</b> <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this workbook</button></div>`).join('');
+      out.querySelectorAll('[data-usewb]').forEach(b=> b.onclick = ()=> useWorkbook(b.dataset.usewb, b.dataset.id, out));
+      adminDelFlash('Multiple workbooks possible — confirm which one to use.');
+    } else if(out){
+      out.innerHTML = `<div class="note">No workbook found (${esc(r.reason||'')}). Add a name hint or paste a workbook ID under Manual overrides.</div>`;
+    }
+  }catch(e){
+    if(out) out.innerHTML = `<div class="ssbad">Discovery failed: ${esc(e.message||String(e))}</div>`;
+  }
+  refreshOnboardChecklist(pid);
+  renderAdminClients();
+}
+
+async function linkWorkbook(pid, sheetId, out){
+  const { error } = await sb.from('practices').update({ workbook_sheet_id: sheetId }).eq('id', pid);
+  if(error) throw error;
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  if(p) p.workbook_sheet_id = sheetId;
+  const inp = document.querySelector(`.workbookid[data-pid="${pid}"]`);
+  if(inp) inp.value = sheetId;
+}
+
+async function autoMapDetectedTabs(pid, { autoOnly = false } = {}){
+  const r = await invokeSyncFn({ action:'detect', practice_id: pid });
+  const tabs = r.tabs || [];
+  const bySource = {};
+  for(const t of tabs){
+    if(!t.suggested_source) continue;
+    (bySource[t.suggested_source] ||= []).push(t);
+  }
+  let mapped = 0;
+  const needsConfirm = [];
+  for(const t of tabs){
+    const src = t.suggested_source;
+    if(!src || (t.parsed_rows||0)===0) continue;
+    const taken = Object.values(sheetSources).some(s=> s.practice_id===pid && s.source===src);
+    if(taken) continue;
+    if((bySource[src]||[]).length > 1){ needsConfirm.push(t); continue; }
+    if(autoOnly){
+      const { error } = await sb.from('sheet_sources').upsert({
+        practice_id: pid, source: src, label: channelLabel(src), tab_name: t.title,
+        is_active: true, source_type: 'google_sheet_private',
+      }, { onConflict:'practice_id,source' });
+      if(!error) mapped++;
+    }
+  }
+  await loadSheetSources();
+  const out = document.getElementById('detect-'+pid);
+  if(out && needsConfirm.length){
+    out.innerHTML += `<div class="note warn" style="margin-top:8px">${needsConfirm.length} tab(s) need manual mapping (ambiguous source guess).</div>`;
+  }
+  if(mapped && out){
+    out.innerHTML = `<div class="note">Auto-mapped ${mapped} source tab(s).${needsConfirm.length ? ' Some tabs need confirmation — click Detect tabs.' : ''}</div>`;
+  }
+  return { mapped, needsConfirm };
+}
 
 // Find this client's workbook inside the master Drive folder by name (no silent
 // guessing — shows the match or candidates for the admin to confirm).
 async function findWorkbook(pid, name){
   if(!isTeamView()) return;
   const out = document.getElementById('detect-'+pid); if(!out) return;
-  const folder = (appSettings.master_reporting_drive_folder||'').trim();
-  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> (top of this section) first.</div>'; return; }
+  const folder = getMasterFolderId();
+  if(!folder){ out.innerHTML = '<div class="note">No master reporting folder configured — check System tab.</div>'; return; }
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  const hint = p?.workbook_name_hint || '';
   out.innerHTML = '<div class="note">Searching the master folder…</div>';
   try{
-    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name, expected: hint||undefined });
     const cands = r.match ? [r.match] : (r.candidates||[]);
     if(!cands.length){ out.innerHTML = `<div class="note">No workbook found (${esc(r.reason||'')}).</div>`; return; }
     out.innerHTML = `<div class="note">${esc(r.reason||'')}:</div>` + cands.map(c=>

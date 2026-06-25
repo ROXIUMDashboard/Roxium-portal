@@ -256,18 +256,25 @@ function matchWorkbook(files: { id: string; name: string }[], clientName: string
   return { match: null, candidates: files, reason: "no name match — pick the workbook manually" };
 }
 
-// Guess which source a tab title represents. Meta stays under the legacy 'marketing'
-// key so it lines up with manual entry + the dashboard; others use their channel key.
+// Guess which source a tab title represents. Returns distinct channel keys;
+// legacy 'marketing' is still accepted when reading existing data.
 function guessSource(title: string): string | null {
   const t = normName(title);
   if (!t) return null;
-  if (/\b(meta|facebook|fb|instagram|ig)\b/.test(t) || t.includes("meta ads")) return "marketing";
+  if (/\b(instagram|ig)\b/.test(t) && /\b(insight|organic|reach)\b/.test(t)) return "instagram_insights";
+  if (t.includes("instagram insights") || t === "instagram") return "instagram_insights";
+  if (/\b(facebook insights|fb insights)\b/.test(t) || (/\bfacebook\b/.test(t) && /\binsight\b/.test(t))) return "facebook_insights";
+  if (/\byoutube\b/.test(t)) return "youtube_analytics";
+  if (/\b(microsoft|bing)\b/.test(t)) return "microsoft_ads";
   if (/\bgoogle\b/.test(t) || t.includes("google ads") || t.includes("g ads")) return "google_ads";
+  if (/\b(meta ads|meta)\b/.test(t) || /\b(meta|facebook|fb)\b/.test(t)) return "meta_ads";
   if (t.includes("page engagement") || t === "engagement") return "page_engagement";
   if (/\b(organic|social)\b/.test(t)) return "organic";
   if (/\b(seo|website|web)\b/.test(t)) return "seo";
   return null;
 }
+
+const DEFAULT_REPORTING_FOLDER = "1SDfpxHnD7OSO6rWjdQDM73XE_e8h8sqD";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
@@ -565,7 +572,7 @@ Deno.serve(async (req) => {
       if (!folderRaw) {
         const { data: setting } = await sb.from("app_settings")
           .select("value").eq("key", "master_reporting_drive_folder").maybeSingle();
-        folderRaw = String(setting?.value || Deno.env.get("REPORTING_FOLDER_ID") || "");
+        folderRaw = String(setting?.value || Deno.env.get("REPORTING_FOLDER_ID") || DEFAULT_REPORTING_FOLDER || "");
       }
       const folderId = extractFolderId(folderRaw);
       const name = String(reqBody.name || "");
