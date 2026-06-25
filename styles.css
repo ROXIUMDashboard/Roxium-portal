@@ -188,7 +188,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .notifybar .notetext{flex:1;letter-spacing:.02em}
 .notifybar .noteclose{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 6px}
 .notifybar .noteclose:hover{color:var(--gold)}
-.metricshead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.metricshead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:26px}
 .metricshead .sub{margin-bottom:14px}
 #metricsPicker{min-width:150px}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
