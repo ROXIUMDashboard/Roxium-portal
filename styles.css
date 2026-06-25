@@ -500,6 +500,20 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .wboverride summary{cursor:pointer;font-size:11px;letter-spacing:.06em;color:var(--muted);user-select:none}
 .wboverride summary:hover{color:var(--gold)}
 .wboverride .cellinput{margin:8px 0 6px}
+/* admin sub-tabs */
+.admintabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:18px 0 18px}
+.admintabs .atab{appearance:none;background:transparent;border:1px solid transparent;border-bottom:none;
+  color:var(--muted);font-family:'Jost';font-size:13px;letter-spacing:.04em;padding:9px 16px;cursor:pointer;
+  border-radius:4px 4px 0 0;margin-bottom:-1px;transition:color .15s ease,background .15s ease}
+.admintabs .atab:hover{color:var(--cream)}
+.admintabs .atab.active{color:var(--gold);border-color:var(--line);border-bottom-color:var(--ink);background:var(--surface)}
+.admin-tab{animation:fadein .2s ease}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+/* theme the admin "Add source" pickers (.cellinput selects weren't covered by .f select) */
+select.cellinput{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:30px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23C9A84C' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center}
+select.cellinput option{background:var(--ink);color:var(--cream)}
 .masterfolder{border:1px solid var(--line);border-radius:4px;padding:12px 13px;background:var(--ink);margin:8px 0 14px}
 .masterfolder .chanlabel{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
 .masterfolder .mfrow{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}

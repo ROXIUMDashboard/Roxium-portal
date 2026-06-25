@@ -116,57 +116,81 @@
       <h2>Admin · <em>portal controls</em></h2>
       <div class="sub">One global area for the whole site — create clients, manage who can sign in, configure KPI sources, and monitor sync. Not part of any single client's dashboard.</div>
 
-      <h3>1 · New client onboarding</h3>
-      <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline, plus an empty reporting-sheet slot. Next: allowlist emails, configure the sheet, sync runs automatically every 2 hours.</p>
-      <div class="entry">
-        <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
-        <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
-        <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
-      </div>
-      <div id="onboardChecklist" class="onboard-check hidden"></div>
-      <p class="note" id="onbMsg" style="margin-top:6px"></p>
+      <nav class="admintabs" id="adminTabs">
+        <button class="atab active" data-atab="clients">Clients</button>
+        <button class="atab" data-atab="access">Access &amp; Invites</button>
+        <button class="atab" data-atab="reporting">Reporting &amp; KPI</button>
+        <button class="atab" data-atab="system">System</button>
+      </nav>
 
-      <h3>2 · Platform administrators</h3>
-      <p class="note" style="margin-top:-2px">Who can open this Admin panel. <b>Make admin</b> grants full portal-admin access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
-      <div class="entry">
-        <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
-        <div class="f" style="align-self:end"><button class="btn sm" id="btnPromoteAdmin">Make admin</button></div>
+      <!-- A · CLIENTS / ONBOARDING -->
+      <div class="admin-tab" data-atab="clients">
+        <h3>New client onboarding</h3>
+        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Reporting &amp; KPI</b>.</p>
+        <div class="entry">
+          <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
+          <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
+          <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
+        </div>
+        <div id="onboardChecklist" class="onboard-check hidden"></div>
+        <p class="note" id="onbMsg" style="margin-top:6px"></p>
       </div>
-      <p class="note" id="promoteMsg" style="margin-top:6px"></p>
-      <div id="platformAdminRoster" class="roster roster-compact"></div>
 
-      <h3>3 · Practice access &amp; invites</h3>
-      <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite staff from the <b>Invite team</b> tab.</p>
-      <div class="entry">
-        <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
-        <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
-        <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
-        <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
-        <div class="f invite-actions">
-          <label class="checklabel"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
-          <button class="btn sm" id="btnInvite">Send invite</button>
+      <!-- B · ACCESS / INVITES -->
+      <div class="admin-tab hidden" data-atab="access">
+        <h3>Platform administrators</h3>
+        <p class="note" style="margin-top:-2px">Who can open this Admin panel. <b>Make admin</b> grants full portal-admin access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
+        <div class="entry">
+          <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
+          <div class="f" style="align-self:end"><button class="btn sm" id="btnPromoteAdmin">Make admin</button></div>
+        </div>
+        <p class="note" id="promoteMsg" style="margin-top:6px"></p>
+        <div id="platformAdminRoster" class="roster roster-compact"></div>
+
+        <h3 style="margin-top:22px">Practice access &amp; invites</h3>
+        <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
+        <div class="entry">
+          <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
+          <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
+          <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
+          <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
+          <div class="f invite-actions">
+            <label class="checklabel"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
+            <button class="btn sm" id="btnInvite">Send invite</button>
+          </div>
+        </div>
+        <div id="accessRoster" class="roster"></div>
+      </div>
+
+      <!-- C · REPORTING / KPI SOURCES -->
+      <div class="admin-tab hidden" data-atab="reporting">
+        <h3>Reporting workbooks &amp; KPI sync</h3>
+        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b> on a client, confirm the source mappings, then sync — it also runs automatically every 2 hours.</p>
+        <div class="syncnowrow">
+          <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
+          <span class="note" id="syncNowMsg">Pulls every active reporting source into Supabase immediately.</span>
+        </div>
+        <h4 class="syncstatus-h">Auto-sync status</h4>
+        <div id="syncStatus" class="syncstatus"></div>
+        <div id="adminClientList" class="clientlist"></div>
+        <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
+      </div>
+
+      <!-- D · SYSTEM / REPORTING SETTINGS -->
+      <div class="admin-tab hidden" data-atab="system">
+        <h3>System &amp; reporting settings</h3>
+        <p class="note" style="margin-top:-2px">Global settings for the whole portal.</p>
+        <div class="masterfolder">
+          <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
+          <div class="mfrow">
+            <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
+            <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
+            <button class="btn ghost sm" id="btnListWorkbooks">Test &amp; list workbooks</button>
+          </div>
+          <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
+          <div class="detectout" id="folderWorkbooks"></div>
         </div>
       </div>
-      <div id="accessRoster" class="roster"></div>
-
-      <h3>4 · Reporting sheets &amp; KPI sync</h3>
-      <p class="note" style="margin-top:-2px">One master Drive folder holds every client's reporting workbook. Set it once below; each client then finds its own workbook by name and detects its source tabs. Sync pulls ad metrics into Supabase every 2 hours.</p>
-      <div class="masterfolder">
-        <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
-        <div class="mfrow">
-          <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
-          <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
-        </div>
-        <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
-      </div>
-      <div class="syncnowrow">
-        <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
-        <span class="note" id="syncNowMsg">Pulls every active reporting sheet into Supabase immediately.</span>
-      </div>
-      <h4 class="syncstatus-h">Auto-sync status</h4>
-      <div id="syncStatus" class="syncstatus"></div>
-      <div id="adminClientList" class="clientlist"></div>
-      <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
     </section>
 
     <!-- CLIENT OWNER · invite their own team (not global admin) -->

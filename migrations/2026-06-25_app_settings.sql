@@ -18,3 +18,9 @@ drop policy if exists "team reads settings" on app_settings;
 create policy "team reads settings" on app_settings for select using (is_team());
 drop policy if exists "team writes settings" on app_settings;
 create policy "team writes settings" on app_settings for all using (is_team()) with check (is_team());
+
+-- Seed the team's master reporting Drive folder (all client workbooks live here).
+-- Admins can change it in Admin → System; this just gives discovery a default.
+insert into app_settings (key, value)
+values ('master_reporting_drive_folder', '1SDfpxHnD7OSO6rWjdQDM73XE_e8h8sqD')
+on conflict (key) do nothing;

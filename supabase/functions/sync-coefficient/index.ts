@@ -256,16 +256,22 @@ function matchWorkbook(files: { id: string; name: string }[], clientName: string
   return { match: null, candidates: files, reason: "no name match — pick the workbook manually" };
 }
 
-// Guess which source a tab title represents. Meta stays under the legacy 'marketing'
-// key so it lines up with manual entry + the dashboard; others use their channel key.
+// Guess which source/channel a tab title represents. Meta Ads stays under the legacy
+// 'marketing' key so it lines up with manual entry + the dashboard; the rest use their
+// own channel key. Order matters — most specific patterns first.
 function guessSource(title: string): string | null {
   const t = normName(title);
   if (!t) return null;
-  if (/\b(meta|facebook|fb|instagram|ig)\b/.test(t) || t.includes("meta ads")) return "marketing";
-  if (/\bgoogle\b/.test(t) || t.includes("google ads") || t.includes("g ads")) return "google_ads";
+  const has = (re: RegExp) => re.test(t);
+  // paid ads
+  if (has(/\bmeta\b/) || t.includes("meta ads") || has(/\bfacebook ads\b/) || has(/\bfb ads\b/)) return "marketing";
+  if (has(/\bgoogle\b/) || t.includes("g ads")) return "google_ads";
+  if (has(/\bmicrosoft\b/) || has(/\bbing\b/)) return "microsoft_ads";
+  // organic / insights / analytics
+  if (has(/\binstagram\b/) || has(/\big\b/)) return "instagram_insights";
+  if (has(/\byoutube\b/) || has(/\byt\b/)) return "youtube_analytics";
+  if (has(/\bfacebook\b/) || has(/\bfb\b/)) return "facebook_insights";
   if (t.includes("page engagement") || t === "engagement") return "page_engagement";
-  if (/\b(organic|social)\b/.test(t)) return "organic";
-  if (/\b(seo|website|web)\b/.test(t)) return "seo";
   return null;
 }
 
@@ -558,18 +564,28 @@ Deno.serve(async (req) => {
     if (denied) return denied;
 
     // ---- DISCOVERY actions (read-only; no DB writes) ----------------------------
-    // find_workbook: list the team Drive folder and match a client to its workbook.
-    if (action === "find_workbook") {
-      // folder resolution: explicit body → global app_settings → env fallback.
-      let folderRaw = String(reqBody.folder_id || "");
-      if (!folderRaw) {
+    // resolve the master folder: explicit body → global app_settings → env fallback.
+    const resolveFolder = async (): Promise<string> => {
+      let raw = String(reqBody.folder_id || "");
+      if (!raw) {
         const { data: setting } = await sb.from("app_settings")
           .select("value").eq("key", "master_reporting_drive_folder").maybeSingle();
-        folderRaw = String(setting?.value || Deno.env.get("REPORTING_FOLDER_ID") || "");
+        raw = String(setting?.value || Deno.env.get("REPORTING_FOLDER_ID") || "");
       }
-      const folderId = extractFolderId(folderRaw);
+      return extractFolderId(raw);
+    };
+    // list_workbooks: "test connection" — list every spreadsheet in the master folder.
+    if (action === "list_workbooks") {
+      const folderId = await resolveFolder();
+      if (!folderId) return json({ ok: false, error: "no master reporting Drive folder configured — set it in Admin → System" }, 400);
+      const files = await driveListInFolder(folderId);
+      return json({ ok: true, action, folder_id: folderId, file_count: files.length, files });
+    }
+    // find_workbook: match a client to its workbook in the master folder.
+    if (action === "find_workbook") {
+      const folderId = await resolveFolder();
       const name = String(reqBody.name || "");
-      if (!folderId) return json({ ok: false, error: "no master reporting Drive folder configured — set it in Admin → Reporting sheets & KPI sync" }, 400);
+      if (!folderId) return json({ ok: false, error: "no master reporting Drive folder configured — set it in Admin → System" }, 400);
       if (!name) return json({ ok: false, error: "no client name provided to match" }, 400);
       const files = await driveListInFolder(folderId);
       const { match, candidates, reason } = matchWorkbook(files, name, reqBody.expected as string | null);
