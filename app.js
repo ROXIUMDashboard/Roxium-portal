@@ -1805,9 +1805,10 @@ async function detectTabs(pid){
     if(!r.tabs || !r.tabs.length){ out.innerHTML = '<div class="note">No tabs found — is the workbook saved and shared with the service account?</div>'; return; }
     out.innerHTML = `<div class="note">Found ${r.tab_count} tab(s). Map the ones you want to sync:</div>` + r.tabs.map(t=>{
       const ok = (t.parsed_rows||0) > 0;
-      const meta = ok ? `✓ ${t.parsed_rows} row(s)${t.months&&t.months.length?` · ${t.months.join(', ')}`:''}`
+      const shape = t.shape && t.shape!=='unknown' ? `${t.shape} · ` : '';
+      const meta = ok ? `✓ ${shape}${t.parsed_rows} row(s)${t.months&&t.months.length?` · ${t.months.join(', ')}`:''}`
                       : '⚠ 0 parsed';
-      const why = (!ok && t.diagnostics && t.diagnostics.length) ? esc(t.diagnostics.map(d=>d.reason||d.error).filter(Boolean).join('; ')) : '';
+      const why = !ok ? esc(t.reason||'') : '';            // server gives a specific reason now
       const src = t.suggested_source;
       const apply = src
         ? `<button class="btn ghost xs" data-applytab="${pid}" data-tab="${esc(t.title)}" data-src="${esc(src)}">Map → ${esc(channelLabel(src))}</button>`
