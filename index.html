@@ -164,12 +164,8 @@
 
       <!-- C · REPORTING / KPI SOURCES -->
       <div class="admin-tab hidden" data-atab="reporting">
-        <h3>Reporting workbooks &amp; KPI sync</h3>
-        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b> on a client, confirm the source mappings, then sync — it also runs automatically every 2 hours.</p>
-        <div class="syncnowrow">
-          <button class="btn sm" id="btnSyncNow">↻ Sync now</button>
-          <span class="note" id="syncNowMsg">Pulls every active reporting source into Supabase immediately.</span>
-        </div>
+        <h3>Reporting workbooks &amp; KPI sources</h3>
+        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
         <h4 class="syncstatus-h">Auto-sync status</h4>
         <div id="syncStatus" class="syncstatus"></div>
         <div id="adminClientList" class="clientlist"></div>
@@ -189,6 +185,11 @@
           </div>
           <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
           <div class="detectout" id="folderWorkbooks"></div>
+        </div>
+        <h4 class="syncstatus-h" style="margin-top:18px">Manual sync &amp; debugging</h4>
+        <div class="syncnowrow">
+          <button class="btn ghost sm" id="btnSyncNow">↻ Run sync now</button>
+          <span class="note" id="syncNowMsg">Manual/debug — “Deploy setup” on a client also runs this. Sync runs automatically every 2 hours.</span>
         </div>
       </div>
     </section>
@@ -211,8 +212,8 @@
       <h2>Team · <em>controls</em></h2>
       <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in the Admin tab.)</div>
 
-      <h3>Monthly KPIs</h3>
-      <p class="note" style="margin-top:-2px">Each month is its own saved snapshot — editing one month never changes another, and re-reporting a later month can't overwrite the past. Pick the month, enter values, Save.</p>
+      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
+      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (Admin → Reporting &amp; KPI). Use this manual layer for hand-entered months, overrides, or workbook import/export when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save.</p>
       <div class="entry" id="kpiMeta">
         <div class="f"><label>Reporting month</label><input id="inMonth" type="month"></div>
         <div class="f"><label>Import year</label><input id="inYear" type="number" min="2000" max="2100" step="1" placeholder="2026"></div>
