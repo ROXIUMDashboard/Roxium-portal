@@ -543,10 +543,13 @@ begin
   select count(*)::int into member_cnt from memberships where practice_id = p_practice;
   select count(*)::int into pending_cnt from practice_invites where practice_id = p_practice and status in ('pending','sent');
   select exists (
-    select 1 from sheet_sources where practice_id = p_practice
-      and ((sheet_id is not null and btrim(sheet_id) <> '') or (csv_url is not null and btrim(csv_url) <> ''))
+    select 1 from sheet_sources s where s.practice_id = p_practice and s.is_active
+      and ((s.csv_url is not null and btrim(s.csv_url) <> '')
+           or (s.sheet_id is not null and btrim(s.sheet_id) <> '')
+           or exists (select 1 from practices p where p.id = p_practice
+                        and p.workbook_sheet_id is not null and btrim(p.workbook_sheet_id) <> ''))
   ) into has_sheet;
-  select last_synced_at into sheet_synced_at from sheet_sources where practice_id = p_practice;
+  select max(last_synced_at) into sheet_synced_at from sheet_sources where practice_id = p_practice;
   select (sheet_synced_at is not null or exists (select 1 from kpi_monthly where practice_id = p_practice limit 1)) into has_sync;
   return jsonb_build_object('practice_id', p_practice, 'has_access', member_cnt > 0 or pending_cnt > 0,
     'member_count', member_cnt, 'pending_invites', pending_cnt, 'has_sheet', has_sheet,
@@ -807,9 +810,12 @@ begin
     (pid,'Patient testimonial #3','planned'),
     (pid,'Office walkthrough B-roll package','planned');
 
-  insert into sheet_sources (practice_id, is_active, source_type)
-  values (pid, true, 'google_sheet_csv')
-  on conflict (practice_id) do nothing;
+  -- Seed the default Meta source row (no tab yet — it stays inert until an admin
+  -- sets the master workbook + tab name). Conflict target matches the per-channel
+  -- unique index (practice_id, source); the old (practice_id)-only index is gone.
+  insert into sheet_sources (practice_id, source, label, is_active, source_type)
+  values (pid, 'marketing', 'Meta Ads', true, 'google_sheet_private')
+  on conflict (practice_id, source) do nothing;
 
   return pid;
 end $$;

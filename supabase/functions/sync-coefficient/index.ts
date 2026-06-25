@@ -146,6 +146,14 @@ async function googleAccessToken(): Promise<string> {
   return tok.access_token;
 }
 
+// Accept either a bare Google Sheet ID or a full URL ('…/spreadsheets/d/<ID>/edit…')
+// pasted into the workbook/sheet field, so a stray link doesn't become a bad API call.
+function extractSheetId(s: string): string {
+  const v = (s || "").trim();
+  const m = v.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : v;
+}
+
 // Read a tab from a private sheet via the Sheets API and return it as a string grid
 // (same shape parseCSV produces, so rowsFromGrid is reused unchanged).
 async function readSheetGrid(sheetId: string, tab?: string | null): Promise<string[][]> {
@@ -367,27 +375,44 @@ Deno.serve(async (req) => {
     const { data: sources } = await sb.from("sheet_sources")
       .select("practice_id,csv_url,sheet_id,tab_name,is_active,source").eq("is_active", true);
     // One job per active source TAB. In sheets_api mode the sheet id is the client's
-    // master workbook (with the source's tab_name selecting the tab); the legacy
-    // per-row sheet_id is kept as a fallback. Each job carries its own `source`
-    // (e.g. 'marketing' = Meta, 'google_ads', 'organic', 'seo') so every tab lands
-    // under its own kpi source and new sources need no importer changes.
+    // master workbook and the source's tab_name selects WHICH tab to read — the master
+    // workbook is a CONTAINER, never parsed whole, so a tab is required when reading it.
+    // The legacy per-row sheet_id is a standalone sheet (tab optional). Each job carries
+    // its own `source` so every tab lands under its own kpi source.
+    const skipped: unknown[] = [];
     const jobs: { pid: string | null; url?: string; sheetId?: string; tab?: string | null; label: string; source: string }[] = [];
     if (sources && sources.length) {
       for (const s of sources) {
         const src = s.source || SOURCE;
         const lbl = `${s.practice_id} · ${src}`;
-        const workbook = workbookByPid[s.practice_id] || s.sheet_id;   // client master sheet (fallback: legacy per-row sheet)
-        if (MODE === "sheets_api" && workbook) jobs.push({ pid: s.practice_id, sheetId: workbook, tab: s.tab_name, label: lbl, source: src });
-        else if (s.csv_url) jobs.push({ pid: s.practice_id, url: s.csv_url, label: lbl, source: src });
+        const tab = (s.tab_name || "").trim();
+        const masterId = extractSheetId(workbookByPid[s.practice_id] || "");   // client master workbook (accepts URL or bare id)
+        const legacyId = extractSheetId(s.sheet_id || "");                     // legacy per-row standalone sheet
+        if (MODE === "sheets_api") {
+          if (masterId) {
+            // reading the shared master workbook → a tab is mandatory, else we'd parse
+            // the wrong (first) tab. Skip with a clear, actionable reason.
+            if (tab) jobs.push({ pid: s.practice_id, sheetId: masterId, tab, label: lbl, source: src });
+            else skipped.push({ source: lbl, reason: "no tab configured for this source — set its tab name so sync reads that tab inside the master workbook (the workbook itself is not a flat KPI sheet)" });
+          } else if (legacyId) {
+            jobs.push({ pid: s.practice_id, sheetId: legacyId, tab: tab || null, label: lbl, source: src });
+          } else if (s.csv_url) {
+            jobs.push({ pid: s.practice_id, url: s.csv_url, label: lbl, source: src });
+          } else {
+            skipped.push({ source: lbl, reason: "no master workbook set for this client (practices.workbook_sheet_id) and no per-source sheet/CSV" });
+          }
+        } else if (s.csv_url) {
+          jobs.push({ pid: s.practice_id, url: s.csv_url, label: lbl, source: src });
+        }
       }
     } else if (MODE !== "sheets_api" && Deno.env.get("CSV_URL")) {
       jobs.push({ pid: null, url: Deno.env.get("CSV_URL")!, label: "legacy CSV_URL", source: SOURCE });
     }
-    if (!jobs.length) return json({ ok: false, error: MODE === "sheets_api"
-      ? "no active source tabs to sync — set each client's master workbook (practices.workbook_sheet_id) and add at least one source tab (INGESTION_MODE=sheets_api)"
+    if (!jobs.length) return json({ ok: false, ran_at: ranAt, trigger, rows_seen: 0, upserted: 0,
+      skipped_count: skipped.length, skipped: skipped.slice(0, 25), error: MODE === "sheets_api"
+      ? "no syncable source tabs — set each client's master workbook (practices.workbook_sheet_id) and give each source a tab name"
       : "no active sheet sources and no CSV_URL" }, 400);
 
-    const skipped: unknown[] = [];
     const upserts: Record<string, unknown>[] = [];
     const perSource: Record<string, { ok: boolean; rows?: number; months?: string[]; error?: string }> = {};
     const allMonths = new Set<string>();   // distinct 'YYYY-MM' months seen across every source
