@@ -587,9 +587,11 @@ Deno.serve(async (req) => {
       const name = String(reqBody.name || "");
       if (!folderId) return json({ ok: false, error: "no master reporting Drive folder configured — set it in Admin → System" }, 400);
       if (!name) return json({ ok: false, error: "no client name provided to match" }, 400);
-      const files = await driveListInFolder(folderId);
+      const files = await driveListInFolder(folderId);   // live folder contents each call
       const { match, candidates, reason } = matchWorkbook(files, name, reqBody.expected as string | null);
-      return json({ ok: true, action, folder_id: folderId, match, candidates, reason, file_count: files.length });
+      // return the FULL folder list too, so the admin can pick a newly-added workbook
+      // even when one existing sheet name-matches the client.
+      return json({ ok: true, action, folder_id: folderId, match, candidates, reason, file_count: files.length, files });
     }
     // detect: inspect a workbook's tabs and dry-run parse each so the admin can map
     // tabs → sources with eyes open (no silent guessing, no writes).
