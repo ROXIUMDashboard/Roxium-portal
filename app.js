@@ -164,6 +164,7 @@ function showView(name){
   if(name==='admin'){
     activateAdminTab(lastAdminTab);                     // land on the last admin sub-tab I used
     renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
+    enhanceSelectsIn($('adminPanel'));                  // theme practice/role selects
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
     if(pid) refreshOnboardChecklist(pid);
@@ -251,6 +252,7 @@ async function loadTeamPractices(){
       sel.dataset.wired = '1';
       sel.onchange = ()=> loadAccessRoster(sel.value);
     }
+    enhanceNativeSelect(sel);   // wrap + re-sync the themed overlay to new options/value
   }
   return list;
 }
@@ -606,12 +608,15 @@ function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected){
 function buildChannelPicker(){
   const sel = $('channelPicker'); if(!sel) return;
   const chans = channelsPresent();
-  if(chans.length < 2){ sel.classList.add('hidden'); setChan('all'); return; }
-  sel.classList.remove('hidden');
+  enhanceNativeSelect(sel);
+  const field = sel.closest('.mp-field') || sel._tsel?.wrap || sel;
+  if(chans.length < 2){ field.classList.add('hidden'); setChan('all'); return; }
   sel.innerHTML = ['<option value="all">All channels</option>']
     .concat(chans.map(s=> `<option value="${esc(s)}">${esc(channelLabel(s))}</option>`)).join('');
   sel.value = getChan();
   sel.onchange = ()=>{ setChan(sel.value); data.kpi = computeKpi(); render(); };
+  field.classList.remove('hidden');
+  themeSync(sel);
 }
 
 /* ---------------- team controls ---------------- */
@@ -621,11 +626,14 @@ function buildChannelPicker(){
 // Months offered in the themed "Reporting month" dropdown: every reported month
 // (same source the dashboard uses) unioned with a recent range, so any month is
 // pickable WITHOUT typing. Newest first, labelled "March 2026".
+// Data-driven: one option per DISTINCT reporting month present in THIS client's KPI
+// data — the list self-updates as new months arrive (June metrics → June appears),
+// no static range. Current + viewed month are always included so you can enter the
+// present month. Newest first.
 function monthOptions(period){
   const set = new Set((data.kpiRaw||[]).filter(r=> r.practice_id===practiceId).map(r=> String(r.period).slice(0,10)));
-  const base = new Date(); base.setUTCDate(1);
-  for(let i=-1;i<18;i++){ const d=new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth()-i, 1)); set.add(d.toISOString().slice(0,10)); }
-  if(period) set.add(period);
+  set.add(currentPeriod());          // always allow entering the current month
+  if(period) set.add(period);        // keep the month currently in view
   return [...set].sort((a,b)=> a<b?1:a>b?-1:0).map(p=> ({ value:p, label: periodLabel(p) }));
 }
 function renderTeam(viewPeriod, latestPeriod){
@@ -759,6 +767,51 @@ function themedSelect(mount, { options=[], value=null, placeholder='Select…', 
   renderVal(); renderOpts();
   return { setValue(v){ val=v; renderVal(); renderOpts(); }, setOptions(o){ opts=o; renderVal(); renderOpts(); }, get value(){ return val; } };
 }
+
+// Same themed UI applied to an EXISTING native <select>: the select is kept as the
+// value source (so all current .value reads + change handlers keep working) and
+// visually replaced by a themed button + popup. Idempotent + re-syncable. Open
+// state lives in the DOM class so one global handler can close any open dropdown
+// (no per-instance listeners → safe across admin re-renders).
+function themeSync(sel){
+  const t = sel && sel._tsel; if(!t) return;
+  const chosen = sel.options[sel.selectedIndex];
+  t.btn.querySelector('.tsel-val').textContent = chosen ? chosen.textContent : '';
+  t.pop.innerHTML = [...sel.options].map(o=>
+    `<div class="tsel-opt${o.selected?' sel':''}${o.disabled?' disabled':''}" role="option" tabindex="-1" data-v="${esc(o.value)}">${esc(o.textContent)}</div>`).join('');
+}
+function enhanceNativeSelect(sel){
+  if(!sel) return;
+  if(sel._tsel){ themeSync(sel); return; }
+  const wrap = document.createElement('div'); wrap.className = 'tsel tsel-wrap';
+  sel.parentNode.insertBefore(wrap, sel); wrap.appendChild(sel); sel.classList.add('tsel-native');
+  const btn = document.createElement('button');
+  btn.type='button'; btn.className='tsel-btn'; btn.setAttribute('aria-haspopup','listbox'); btn.setAttribute('aria-expanded','false');
+  btn.innerHTML = `<span class="tsel-val"></span><span class="tsel-caret" aria-hidden="true">▾</span>`;
+  const pop = document.createElement('div'); pop.className='tsel-pop'; pop.setAttribute('role','listbox'); pop.hidden=true;
+  wrap.appendChild(btn); wrap.appendChild(pop); sel._tsel = { wrap, btn, pop };
+  const isOpen = ()=> wrap.classList.contains('open');
+  const setOpen = o=>{ wrap.classList.toggle('open',o); pop.hidden=!o; btn.setAttribute('aria-expanded',o?'true':'false');
+    if(o) (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); };
+  const choose = v=>{ const changed = sel.value!==v; sel.value=v; themeSync(sel); setOpen(false); btn.focus(); if(changed) sel.dispatchEvent(new Event('change',{bubbles:true})); };
+  btn.onclick = ()=> setOpen(!isOpen());
+  btn.onkeydown = e=>{ if(['ArrowDown','Enter',' '].includes(e.key)){ e.preventDefault(); setOpen(true); } };
+  pop.onclick = e=>{ const o=e.target.closest('.tsel-opt'); if(o && !o.classList.contains('disabled')) choose(o.dataset.v); };
+  pop.onkeydown = e=>{ const items=[...pop.querySelectorAll('.tsel-opt:not(.disabled)')]; const i=items.indexOf(document.activeElement);
+    if(e.key==='Escape'){ setOpen(false); btn.focus(); }
+    else if(e.key==='ArrowDown'){ e.preventDefault(); (items[i+1]||items[0])?.focus(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); (items[i-1]||items[items.length-1])?.focus(); }
+    else if((e.key==='Enter'||e.key===' ') && document.activeElement.classList.contains('tsel-opt')){ e.preventDefault(); choose(document.activeElement.dataset.v); } };
+  themeSync(sel);
+}
+function enhanceSelectsIn(root){
+  (root||document).querySelectorAll('select.cellinput, select.picker, select#accessPractice, select#accessRole').forEach(enhanceNativeSelect);
+}
+// one global outside-click closer for all enhanced (native-wrapped) dropdowns
+document.addEventListener('click', e=>{
+  document.querySelectorAll('.tsel-wrap.open').forEach(w=>{ if(!w.contains(e.target)){
+    w.classList.remove('open'); const p=w.querySelector('.tsel-pop'); if(p)p.hidden=true; w.querySelector('.tsel-btn')?.setAttribute('aria-expanded','false'); } });
+});
 
 // Client-facing metric explainer — opens the themed dialog (same look as the rest of
 // the portal, no default browser UI) describing what a metric is, why it matters, and
@@ -1401,7 +1454,7 @@ function showOnboardChecklist(pid, name){
       <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
     </ol>
     <p class="note onboard-hint">Status updates automatically. This panel hides itself after a minute.</p>`;
-  const ap = $('accessPractice'); if(ap) ap.value = pid;
+  const ap = $('accessPractice'); if(ap){ ap.value = pid; enhanceNativeSelect(ap); }
   loadAccessRoster(pid);
   refreshOnboardChecklist(pid);
   // transient helper — auto-dismiss after ~1 min so the admin page stays uncluttered
@@ -1857,10 +1910,12 @@ function addSourceRow(pid){
     + '<option value="__custom">Custom source…</option>';
   return `<div class="addsource">
     <span class="addsrc-label">Add another reporting source</span>
-    <select class="cellinput addsourcesel" data-pid="${pid}" title="Pick a channel / insight to add">${srcOpts}</select>
-    <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="custom key (e.g. tiktok_ads)" style="display:none">
-    <select class="cellinput addsourcetab" data-pid="${pid}" title="Pick its tab inside the workbook">${tabOptions(pid, '')}</select>
-    <button class="btn ghost sm" data-addsource="${pid}">+ Add this source</button>
+    <div class="addsource-row">
+      <select class="cellinput addsourcesel" data-pid="${pid}" title="Pick a channel / insight to add">${srcOpts}</select>
+      <select class="cellinput addsourcetab" data-pid="${pid}" title="Pick its tab inside the workbook">${tabOptions(pid, '')}</select>
+      <button class="btn ghost sm" data-addsource="${pid}">+ Add source</button>
+    </div>
+    <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="custom source key (e.g. tiktok_ads)" style="display:none">
   </div>`;
 }
 // Per-client sources block (its own node so Detect tabs can refresh the dropdowns
@@ -1905,8 +1960,9 @@ function wireAdminClients(){
   // picking a tab from the dropdown saves that source mapping immediately
   wrap.querySelectorAll('select.sheettab').forEach(sel=> sel.onchange = ()=> saveSheetSource(sel.dataset.pid, sel.dataset.source));
   wrap.querySelectorAll('.addsourcesel').forEach(sel=> sel.onchange = ()=>{
-    const k = sel.parentElement.querySelector('.addsourcekey'); if(k) k.style.display = sel.value==='__custom' ? '' : 'none';
+    const k = sel.closest('.addsource')?.querySelector('.addsourcekey'); if(k) k.style.display = sel.value==='__custom' ? '' : 'none';
   });
+  enhanceSelectsIn(wrap);   // theme every source / tab / add-source select
 }
 // Repopulate one client's source dropdowns after Detect tabs, leaving the summary intact.
 function refreshClientSources(pid){
