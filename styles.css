@@ -536,6 +536,26 @@ select.cellinput option{background:var(--ink);color:var(--cream)}
 /* safety net: any select not caught by a specific rule still gets the dark theme */
 select{background-color:var(--ink);color:var(--cream);border:1px solid var(--line);border-radius:3px;font-family:'Jost';cursor:pointer}
 select option{background:var(--surface2);color:var(--cream)}
+/* reusable themed dropdown (custom select — themed button + popup) */
+.tsel{position:relative;display:inline-block;min-width:170px}
+.tsel-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--ink);border:1px solid var(--line);color:var(--cream);font-family:'Jost';font-size:13px;
+  padding:9px 12px;border-radius:3px;cursor:pointer;text-align:left;transition:border-color .15s ease,box-shadow .15s ease}
+.tsel-btn:hover{border-color:var(--gold)}
+.tsel.open .tsel-btn,.tsel-btn:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.tsel-val.placeholder{color:var(--muted)}
+.tsel-caret{color:var(--gold);font-size:11px;transition:transform .15s ease}
+.tsel.open .tsel-caret{transform:rotate(180deg)}
+.tsel-pop{position:absolute;z-index:50;top:calc(100% + 4px);left:0;right:0;max-height:260px;overflow:auto;
+  background:var(--surface2);border:1px solid var(--gold);border-radius:3px;padding:4px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.tsel-opt{padding:8px 11px;font-size:13px;color:var(--cream);border-radius:2px;cursor:pointer;outline:none}
+.tsel-opt:hover,.tsel-opt:focus{background:var(--surface)}
+.tsel-opt.sel{color:var(--gold)}
+.tsel-opt.sel::after{content:'✓';float:right;color:var(--gold)}
+.tsel-empty{padding:8px 11px;font-size:12px;color:var(--muted)}
+#whoami.editable{cursor:pointer;border-bottom:1px dotted transparent}
+#whoami.editable:hover{border-bottom-color:var(--gold);color:var(--cream)}
 .deployrow{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap}
 @media(max-width:640px){.srcrow{grid-template-columns:1fr 1fr;gap:6px}.srcrow .srcname{grid-column:1/-1}}
 .dtab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;

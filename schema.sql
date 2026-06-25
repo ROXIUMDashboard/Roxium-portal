@@ -273,6 +273,15 @@ create policy "own profile"   on profiles for select using (id = auth.uid() or i
 drop policy if exists "team upserts profiles" on profiles;
 create policy "team upserts profiles" on profiles for all using (is_team()) with check (is_team());
 
+-- Any signed-in user can set their OWN display name (full_name only — not role or
+-- practice_id), so a mis-seeded invite name never sticks.
+create or replace function set_my_name(p_name text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update profiles set full_name = nullif(btrim(p_name), '') where id = auth.uid();
+end $$;
+grant execute on function set_my_name(text) to authenticated;
+
 -- memberships: user reads their own; team reads/manages all (invites write via service role).
 drop policy if exists "read memberships" on memberships;
 create policy "read memberships" on memberships for select using (is_team() or user_id = auth.uid());
