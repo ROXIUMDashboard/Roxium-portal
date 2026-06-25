@@ -1636,17 +1636,25 @@ $('btnSyncNow').onclick = async ()=>{
   msg.textContent = 'Syncing…';
   try{
     const { data, error } = await sb.functions.invoke('sync-coefficient', { body:{ trigger:'manual' } });
-    if(error) throw error;
-    if(!data?.ok) throw new Error(data?.error || 'Sync failed');
-    const skip = data.skipped_count || 0;
-    const parts = [`Synced ${data.upserted ?? 0} row(s)`];
+    // invoke() throws on any non-2xx but the function still returns a JSON body with the
+    // REAL reason (400 "no syncable source tabs", 401, a 500 message, …). Pull it out of
+    // error.context (the raw Response) so we surface the actual error, not a generic wrapper.
+    let body = data;
+    if(error){
+      try{ body = await error.context.json(); }catch(_){ /* body wasn't json */ }
+      if(!body) throw error;
+    }
+    if(!body?.ok) throw new Error(body?.error || (error && error.message) || 'Sync failed');
+    const data2 = body;
+    const skip = data2.skipped_count || 0;
+    const parts = [`Synced ${data2.upserted ?? 0} row(s)`];
     if(skip) parts.push(`skipped ${skip}`);
-    const months = monthsList(data.months_seen);
+    const months = monthsList(data2.months_seen);
     if(months) parts.push(`months: ${months}`);
-    if(data.rows_seen === 0){
+    if(data2.rows_seen === 0){
       // surface the first concrete skip reason (e.g. "no tab configured") so the
       // admin knows exactly what to fix instead of a generic "check headers".
-      const why = (data.skipped||[]).map(s=> s && s.reason).find(Boolean);
+      const why = (data2.skipped||[]).map(s=> s && s.reason).find(Boolean);
       parts.push(why ? `no rows parsed — ${why}` : 'no rows parsed — check the source tab names and headers');
     }
     msg.textContent = parts.join(' · ');
@@ -1673,8 +1681,13 @@ function clientWorkbookBlock(p){
     <span class="chanlabel">Master reporting workbook</span>
     <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
       placeholder="Paste the client's master Google Sheet link or ID (shared with the backend service account)">
-    <button class="btn ghost sm" data-saveworkbook="${p.id}">Save workbook</button>
+    <div class="wbbtns">
+      <button class="btn ghost sm" data-saveworkbook="${p.id}">Save workbook</button>
+      <button class="btn ghost sm" data-detecttabs="${p.id}">Detect tabs</button>
+      <button class="btn ghost sm" data-findwb="${p.id}" data-name="${esc(p.name)}">Find in folder</button>
+    </div>
     <div class="note wbhint">One sheet per client. Each source below reads one <b>tab</b> inside it — set the tab name on each source.</div>
+    <div class="detectout" id="detect-${p.id}"></div>
   </div>`;
 }
 // One config row for a single source TAB (practice, channel) inside the master workbook.
@@ -1717,7 +1730,13 @@ function renderAdminClients(){
   if(!isTeamView()){ wrap.innerHTML=''; return; }
   const list = practicesList || [];
   const order = CHANNELS.map(c=> c.source);
-  wrap.innerHTML = list.length ? list.map(p=>{
+  // team-level master Drive folder (used by "Find in folder"); remembered locally
+  const folder = localStorage.getItem('reportingFolder')||'';
+  const folderBar = `<div class="folderbar">
+    <span class="chanlabel">Master Drive folder (optional)</span>
+    <input class="cellinput" id="reportingFolder" value="${esc(folder)}" placeholder="Paste the team reporting folder link — lets “Find in folder” locate each client's workbook by name">
+  </div>`;
+  wrap.innerHTML = folderBar + (list.length ? list.map(p=>{
     // this client's configured source tabs, in preset order then any custom extras
     const present = Object.values(sheetSources).filter(s=> s.practice_id===p.id)
       .sort((a,b)=> ((order.indexOf(a.source)+1)||99) - ((order.indexOf(b.source)+1)||99));
@@ -1730,11 +1749,16 @@ function renderAdminClients(){
       <div class="sheetchans">${tabs}</div>
       ${addSourceRow(p.id)}
     </div>`;
-  }).join('') : '<div class="note">No practices yet — add one above.</div>';
+  }).join('') : '<div class="note">No practices yet — add one above.</div>');
+  $('reportingFolder')?.addEventListener('change', e=> localStorage.setItem('reportingFolder', e.target.value.trim()));
   wrap.querySelectorAll('[data-delpractice]').forEach(b=>
     b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
   wrap.querySelectorAll('[data-saveworkbook]').forEach(b=>
     b.onclick = ()=> saveWorkbook(b.dataset.saveworkbook));
+  wrap.querySelectorAll('[data-detecttabs]').forEach(b=>
+    b.onclick = ()=> detectTabs(b.dataset.detecttabs));
+  wrap.querySelectorAll('[data-findwb]').forEach(b=>
+    b.onclick = ()=> findWorkbook(b.dataset.findwb, b.dataset.name));
   wrap.querySelectorAll('[data-savesheet]').forEach(b=>
     b.onclick = ()=> saveSheetSource(b.dataset.savesheet, b.dataset.savesource));
   wrap.querySelectorAll('[data-delsource]').forEach(b=>
@@ -1760,6 +1784,78 @@ async function saveWorkbook(pid){
   adminDelFlash(error ? 'Workbook save failed: '+error.message
     : (v ? 'Master workbook saved — its source tabs will sync on the next run.' : 'Master workbook cleared.'));
   if(!error){ const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = v||null; }
+}
+// Call sync-coefficient and return the parsed JSON body even on non-2xx (invoke()
+// throws but the real reason is in error.context). Shared by detect/find/sync calls.
+async function invokeSyncFn(body){
+  const { data, error } = await sb.functions.invoke('sync-coefficient', { body });
+  let out = data;
+  if(error){ try{ out = await error.context.json(); }catch(_){ /* not json */ } if(!out) throw error; }
+  if(!out?.ok) throw new Error(out?.error || (error && error.message) || 'Request failed');
+  return out;
+}
+// Inspect the client's master workbook: list its tabs and dry-run parse each so the
+// admin can map tab → source with eyes open. No writes until they click "Map".
+async function detectTabs(pid){
+  if(!isTeamView()) return;
+  const out = document.getElementById('detect-'+pid); if(!out) return;
+  out.innerHTML = '<div class="note">Inspecting workbook…</div>';
+  try{
+    const r = await invokeSyncFn({ action:'detect', practice_id: pid });
+    if(!r.tabs || !r.tabs.length){ out.innerHTML = '<div class="note">No tabs found — is the workbook saved and shared with the service account?</div>'; return; }
+    out.innerHTML = `<div class="note">Found ${r.tab_count} tab(s). Map the ones you want to sync:</div>` + r.tabs.map(t=>{
+      const ok = (t.parsed_rows||0) > 0;
+      const meta = ok ? `✓ ${t.parsed_rows} row(s)${t.months&&t.months.length?` · ${t.months.join(', ')}`:''}`
+                      : '⚠ 0 parsed';
+      const why = (!ok && t.diagnostics && t.diagnostics.length) ? esc(t.diagnostics.map(d=>d.reason||d.error).filter(Boolean).join('; ')) : '';
+      const src = t.suggested_source;
+      const apply = src
+        ? `<button class="btn ghost xs" data-applytab="${pid}" data-tab="${esc(t.title)}" data-src="${esc(src)}">Map → ${esc(channelLabel(src))}</button>`
+        : `<span class="note">no source guess — add it manually below</span>`;
+      return `<div class="dtab">
+        <b>${esc(t.title)}</b> <span class="${ok?'ssok':'ssbad'}" ${why?`title="${why}"`:''}>${meta}</span> ${apply}
+        ${why?`<div class="note dtabwhy">${why}</div>`:''}</div>`;
+    }).join('');
+    out.querySelectorAll('[data-applytab]').forEach(b=>
+      b.onclick = ()=> applyDetectedTab(b.dataset.applytab, b.dataset.src, b.dataset.tab));
+  }catch(e){ out.innerHTML = `<div class="ssbad">Detect failed: ${esc(e.message||String(e))}</div>`; }
+}
+// Create/update a source-tab mapping from a detected tab.
+async function applyDetectedTab(pid, source, tab){
+  if(!isTeamView()) return;
+  const { error } = await sb.from('sheet_sources')
+    .upsert({ practice_id: pid, source, label: channelLabel(source), tab_name: tab,
+              is_active:true, source_type:'google_sheet_private' }, { onConflict:'practice_id,source' });
+  adminDelFlash(error? 'Map failed: '+error.message : `${channelLabel(source)} mapped to tab “${tab}” — syncs next run.`);
+  if(!error){ await loadSheetSources(); refreshOnboardChecklist(pid); }
+}
+// Find this client's workbook inside the master Drive folder by name (no silent
+// guessing — shows the match or candidates for the admin to confirm).
+async function findWorkbook(pid, name){
+  if(!isTeamView()) return;
+  const out = document.getElementById('detect-'+pid); if(!out) return;
+  const folder = (localStorage.getItem('reportingFolder')||'').trim();
+  if(!folder){ out.innerHTML = '<div class="note">Set the master Drive folder at the top first.</div>'; return; }
+  out.innerHTML = '<div class="note">Searching folder…</div>';
+  try{
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
+    const cands = r.match ? [r.match] : (r.candidates||[]);
+    if(!cands.length){ out.innerHTML = `<div class="note">No workbook found (${esc(r.reason||'')}).</div>`; return; }
+    out.innerHTML = `<div class="note">${esc(r.reason||'')}:</div>` + cands.map(c=>
+      `<div class="dtab"><b>${esc(c.name)}</b> <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this workbook</button></div>`).join('');
+    out.querySelectorAll('[data-usewb]').forEach(b=>
+      b.onclick = ()=> useWorkbook(b.dataset.usewb, b.dataset.id, out));
+  }catch(e){ out.innerHTML = `<div class="ssbad">Find failed: ${esc(e.message||String(e))}</div>`; }
+}
+// Set the client's master workbook from a found candidate, then auto-detect its tabs.
+async function useWorkbook(pid, sheetId, out){
+  if(!isTeamView()) return;
+  const { error } = await sb.from('practices').update({ workbook_sheet_id: sheetId }).eq('id', pid);
+  if(error){ if(out) out.innerHTML = `<div class="ssbad">Save failed: ${esc(error.message)}</div>`; return; }
+  const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = sheetId;
+  const inp = document.querySelector(`.workbookid[data-pid="${pid}"]`); if(inp) inp.value = sheetId;
+  adminDelFlash('Workbook linked — detecting its tabs…');
+  detectTabs(pid);
 }
 // Save a source tab's config. The sheet id comes from the client master workbook;
 // here we only set the tab name (+ optional legacy CSV url for csv ingestion mode).
