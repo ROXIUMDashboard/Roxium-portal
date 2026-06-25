@@ -95,11 +95,13 @@ const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete cha
 // client's master workbook; the list seeds the admin "add source" picker and channel
 // labels. Sources are open-ended — a custom key works too, this is just the menu.
 const CHANNELS = [
-  { source:'marketing',       label:'Meta Ads' },
-  { source:'google_ads',      label:'Google Ads' },
-  { source:'organic',         label:'Organic / Social' },
-  { source:'seo',             label:'SEO / Website' },
-  { source:'page_engagement', label:'Page Engagement' },
+  { source:'marketing',           label:'Meta Ads' },
+  { source:'instagram_insights',  label:'Instagram Insights' },
+  { source:'google_ads',          label:'Google Ads' },
+  { source:'facebook_insights',   label:'Facebook Insights' },
+  { source:'youtube_analytics',   label:'YouTube Analytics' },
+  { source:'microsoft_ads',       label:'Microsoft Ads' },
+  { source:'page_engagement',     label:'Page Engagement' },
 ];
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
@@ -1308,15 +1310,18 @@ function showOnboardChecklist(pid, name){
   el.dataset.practiceId = pid;
   el.innerHTML = `<div class="onboard-title">Onboarding · <b>${esc(name)}</b></div>
     <ol class="onboard-steps" id="onboardSteps">
-      <li data-step="access" class="onboard-pending">Add doctor / team access (section 3)</li>
-      <li data-step="sheet" class="onboard-pending">Configure reporting sheet (section 4)</li>
-      <li data-step="coefficient" class="onboard-pending">Connect Coefficient to that sheet tab</li>
+      <li data-step="access" class="onboard-pending">Invite the doctor / owner (Access &amp; Invites tab)</li>
+      <li data-step="sheet" class="onboard-pending">Link workbook &amp; map source tabs (Reporting &amp; KPI tab)</li>
+      <li data-step="coefficient" class="onboard-pending">Connect Coefficient to those tabs</li>
       <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
     </ol>
-    <p class="note onboard-hint">Complete each step — status updates automatically.</p>`;
+    <p class="note onboard-hint">Status updates automatically. This panel hides itself after a minute.</p>`;
   const ap = $('accessPractice'); if(ap) ap.value = pid;
   loadAccessRoster(pid);
   refreshOnboardChecklist(pid);
+  // transient helper — auto-dismiss after ~1 min so the admin page stays uncluttered
+  clearTimeout(el._dismissTimer);
+  el._dismissTimer = setTimeout(()=>{ el.classList.add('hidden'); }, 60000);
 }
 
 async function refreshOnboardChecklist(pid){
@@ -1502,11 +1507,43 @@ $('btnAddClient').onclick = async ()=>{
     await loadTeamPractices();
     renderAdminClients();
     if(data){ practiceId = data; showOnboardChecklist(data, name); }
-    onbFlash(`Created "${name}". Complete the checklist below.`);
+    onbFlash(`Created "${name}". Looking for its workbook in the master folder…`);
     loadAll();
+    if(data) autoDiscoverWorkbook(data, name);   // best-effort onboarding; safe if it can't
   }catch(e){ onbFlash('Could not add client: '+e.message); }
   finally{ $('btnAddClient').disabled = false; }
 };
+// Best-effort onboarding: find the new client's workbook in the global folder, link it,
+// detect its tabs, and map the confidently-recognized ones. Anything ambiguous is left
+// for manual confirmation under Reporting & KPI (never a silent wrong guess).
+async function autoDiscoverWorkbook(pid, name){
+  if(!isTeamView()) return;
+  const folder = (appSettings.master_reporting_drive_folder||'').trim();
+  if(!folder) return;
+  try{
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
+    if(!r.match){                                  // none or multiple candidates → don't guess
+      onbFlash(r.candidates && r.candidates.length
+        ? `Created "${name}". Found ${r.candidates.length} possible workbooks — confirm under Reporting & KPI.`
+        : `Created "${name}". No workbook matched yet — link it under Reporting & KPI.`);
+      return;
+    }
+    await sb.from('practices').update({ workbook_sheet_id: r.match.id }).eq('id', pid);
+    const p=(practicesList||[]).find(x=>x.id===pid); if(p) p.workbook_sheet_id=r.match.id;
+    const d = await invokeSyncFn({ action:'detect', practice_id: pid });
+    let mapped=0;
+    for(const t of (d.tabs||[])){
+      if(t.suggested_source && (t.parsed_rows||0)>0){   // only map tabs that actually parsed
+        const { error } = await sb.from('sheet_sources').upsert({ practice_id:pid, source:t.suggested_source,
+          label:channelLabel(t.suggested_source), tab_name:t.title, is_active:true, source_type:'google_sheet_private' },
+          { onConflict:'practice_id,source' });
+        if(!error) mapped++;
+      }
+    }
+    await loadSheetSources(); refreshOnboardChecklist(pid);
+    onbFlash(`Created "${name}" — linked workbook “${r.match.name}”${mapped?` and mapped ${mapped} source tab(s)`:''}. Review under Reporting & KPI.`);
+  }catch(_){ /* best-effort; the manual Find/Detect flow remains available */ }
+}
 
 $('btnInvite').onclick = async ()=>{
   if(!isTeamView()) return;
@@ -1854,6 +1891,27 @@ async function saveMasterFolder(){
   if(!error) appSettings.master_reporting_drive_folder = val||null;
 }
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
+
+// Admin sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
+$('adminTabs')?.addEventListener('click', e=>{
+  const b = e.target.closest('.atab'); if(!b) return;
+  const name = b.dataset.atab;
+  document.querySelectorAll('#adminTabs .atab').forEach(t=> t.classList.toggle('active', t===b));
+  document.querySelectorAll('.admin-tab').forEach(p=> p.classList.toggle('hidden', p.dataset.atab!==name));
+});
+
+// System tab · "Test & list workbooks" — proves the folder is reachable + shared.
+$('btnListWorkbooks')?.addEventListener('click', async ()=>{
+  if(!isTeamView()) return;
+  const out = $('folderWorkbooks'); if(out) out.innerHTML = '<div class="note">Listing workbooks…</div>';
+  try{
+    const folder = (appSettings.master_reporting_drive_folder||'').trim();
+    const r = await invokeSyncFn({ action:'list_workbooks', folder_id: folder||undefined });
+    if(!r.files || !r.files.length){ if(out) out.innerHTML = '<div class="note">No spreadsheets found — is the folder shared with the service account?</div>'; return; }
+    if(out) out.innerHTML = `<div class="note">${r.file_count} workbook(s) in the master folder:</div>` +
+      r.files.map(f=> `<div class="dtab"><b>${esc(f.name)}</b></div>`).join('');
+  }catch(e){ if(out) out.innerHTML = `<div class="ssbad">List failed: ${esc(e.message||String(e))}</div>`; }
+});
 
 // Find this client's workbook inside the master Drive folder by name (no silent
 // guessing — shows the match or candidates for the admin to confirm).
