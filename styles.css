@@ -188,7 +188,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .notifybar .notetext{flex:1;letter-spacing:.02em}
 .notifybar .noteclose{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 6px}
 .notifybar .noteclose:hover{color:var(--gold)}
-.metricshead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.metricshead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:26px}
 .metricshead .sub{margin-bottom:14px}
 #metricsPicker{min-width:150px}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
@@ -477,12 +477,10 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .checklabel{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:8px;cursor:pointer;letter-spacing:.04em}
 /* custom dark/gold checkbox — hide native, draw a themed box with a gold check */
 .checklabel input[type=checkbox]{appearance:none;-webkit-appearance:none;-moz-appearance:none;flex:0 0 auto;
-  width:16px;height:16px;margin:0;background:var(--ink);border:1px solid var(--line);border-radius:3px;cursor:pointer;
-  position:relative;transition:border-color .15s ease,background .15s ease}
+  width:12px;height:12px;margin:0;background:var(--ink);border:1px solid var(--line);border-radius:2px;cursor:pointer;
+  transition:border-color .15s ease,background .15s ease}
 .checklabel input[type=checkbox]:hover{border-color:var(--gold)}
 .checklabel input[type=checkbox]:checked{background:var(--gold);border-color:var(--gold)}
-.checklabel input[type=checkbox]:checked::after{content:'';position:absolute;left:5px;top:2px;width:4px;height:8px;
-  border:solid var(--ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
 .checklabel input[type=checkbox]:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(201,168,76,.5)}
 .access-btns{display:flex;gap:8px;flex-wrap:wrap}
 
