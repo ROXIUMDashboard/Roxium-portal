@@ -19,16 +19,26 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 // header alias (lower-cased) -> kpi_monthly column. Accepts human labels (incl. the
 // common Meta/Coefficient variants) AND raw DB keys. CTR/CPM/CPC are derived in the
 // dashboard, so they're ignored here.
+// Variants are normalized (lower-cased, punctuation/extra-spaces collapsed) before
+// lookup by `aliasOf`, so we only list distinct wordings here, not every spacing/case.
 const COLUMN_ALIASES: Record<string, string> = {
-  "amount spent": "spend", "amount spent (usd)": "spend", "spend": "spend", "cost": "spend",
-  "reach": "reach",
-  "impressions": "impr", "impressions & reach": "impr", "impr": "impr",
-  "link clicks": "clicks", "clicks": "clicks", "clicks (all)": "clicks", "outbound clicks": "clicks",
-  "landing page views": "lpv", "landing page visits": "lpv", "lpv": "lpv",
-  "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes",
+  "amount spent": "spend", "amount spent usd": "spend", "spend": "spend", "ad spend": "spend",
+  "total spend": "spend", "total spent": "spend", "cost": "spend", "cost usd": "spend", "amount": "spend",
+  "reach": "reach", "unique reach": "reach", "people reached": "reach",
+  "impressions": "impr", "impressions reach": "impr", "impr": "impr", "impressions served": "impr",
+  "link clicks": "clicks", "clicks": "clicks", "clicks all": "clicks", "outbound clicks": "clicks",
+  "link click": "clicks", "outbound link clicks": "clicks", "unique link clicks": "clicks", "total clicks": "clicks",
+  "landing page views": "lpv", "landing page visits": "lpv", "landing page view": "lpv", "lpv": "lpv",
+  "page likes": "page_likes", "page_likes": "page_likes", "new page likes": "page_likes", "page like": "page_likes",
   "page engagement": "page_engagement", "page_engagement": "page_engagement", "engagement": "page_engagement",
-  "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll",
+  "post engagement": "page_engagement", "engagements": "page_engagement",
+  "followers": "foll", "qualified followers added": "foll", "foll": "foll", "new followers": "foll", "follows": "foll",
 };
+// Normalize a raw header before alias lookup: lower-case, strip punctuation/parens,
+// collapse whitespace. So "CPM (cost per 1,000 impressions)" → "cpm cost per 1 000 impressions",
+// and "Amount Spent (USD)" → "amount spent usd" — tolerant of spacing/case/punctuation.
+const normHeader = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const aliasOf = (h: string): string | undefined => COLUMN_ALIASES[normHeader(h)] ?? COLUMN_ALIASES[(h || "").trim().toLowerCase()];
 // Daily-export metrics are SUMMED into a month so portal values match the sheet column
 // total (reach summed = total monthly exposures — what adding the column gives). Running
 // totals (followers, cumulative page likes) take the latest/max day.
@@ -38,14 +48,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // A date/period column can be named many ways across exports. Meta uses "Reporting
 // starts"/"Day", Google "Week"/"Month", Coefficient "Date"/"Period". Matched by exact
 // name OR known prefix so "reporting starts (ds)" etc. still counts.
-const DATE_COL_NAMES = ["period","date","day","month","week","reporting date",
+const DATE_COL_NAMES = new Set(["period","date","day","month","week","reporting date",
   "reporting starts","reporting ends","reporting start","start date","week starting",
-  "month start","date start","ds"];
+  "month start","date start","ds","reporting month","report month","report date",
+  "month period","date day"]);
 const isDateCol = (h: string) => {
-  const c = (h || "").trim().toLowerCase();
-  return DATE_COL_NAMES.includes(c)
-    || c.startsWith("reporting start") || c.startsWith("reporting period")
-    || c.startsWith("week of") || c.startsWith("month of");
+  const c = normHeader(h);                    // tolerant of case/punctuation/spacing
+  if (DATE_COL_NAMES.has(c)) return true;
+  return c.startsWith("reporting start") || c.startsWith("reporting period")
+    || c.startsWith("reporting month") || c.startsWith("week of") || c.startsWith("month of");
 };
 
 // month-name lookup for the deterministic period parser (handles 'Mar', 'March', etc.)
@@ -308,127 +319,207 @@ function bareMonth(s: string): string | null {
 // (Jan, Feb, Mar 2026…). Reads each (metric-row × month-column) cell and writes ONE
 // snapshot per month. Empty months are dropped (so blank Jan/Feb don't appear).
 // Returns [] when the sheet isn't this shape (caller then keeps the tidy result).
-function parseWide(grid: string[][], pid: string, source: string,
-                   skipped: unknown[], label: string): Record<string, unknown>[] {
-  const nCols = Math.max(...grid.map(r => r.length));
+// ============================================================
+// RESILIENT PARSE PIPELINE: detect shape → find header → normalize → parse → report.
+// Deterministic and safe: parses daily / monthly / wide month-block layouts, tolerant
+// of title rows, blank rows, and header naming/spacing/case — but refuses to import
+// when confidence is too low, returning a specific reason instead.
+// ============================================================
+interface ParseReport {
+  source: string;
+  shape: "daily" | "monthly" | "wide" | "unknown";
+  header_row: number | null;                 // 1-based row we treated as the header
+  period_field: string | null;               // the column used for the date/period
+  normalized_headers: Record<string, string>; // original header → canonical metric
+  metric_columns: string[];                  // canonical metrics recognized
+  produced: number;                          // monthly KPI rows produced
+  months: string[];                          // 'YYYY-MM' months produced
+  skipped_rows: number;
+  skipped_samples: unknown[];
+  confidence: "high" | "medium" | "low" | "none";
+  reason: string;                            // human summary / why it failed
+}
+
+// Daily vs monthly is cosmetic (both aggregate to month) but useful in diagnostics:
+// daily if the date column shows several non-first-of-month days.
+function classifyGranularity(grid: string[][], hIdx: number, dateIdx: number): "daily" | "monthly" {
+  let nonFirst = 0, seen = 0;
+  for (let i = hIdx + 1; i < grid.length && seen < 24; i++) {
+    const raw = (grid[i][dateIdx] ?? "").trim(); if (!raw) continue; seen++;
+    let day = 1;
+    let m = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (m) day = +m[3];
+    else if ((m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) day = +m[2];
+    else if (/^\d{4,6}(\.\d+)?$/.test(raw)) { const s = +raw; if (s >= 20000 && s <= 80000) day = new Date(Date.UTC(1899,11,30)+s*86400000).getUTCDate(); }
+    if (day !== 1) nonFirst++;
+  }
+  return nonFirst >= 2 ? "daily" : "monthly";
+}
+
+// WIDE month-block: metric labels down a left column, months across a header row.
+function detectWide(grid: string[][], nCols: number):
+  { labelCol: number; headerRow: number; colPeriod: Record<number, string>; metrics: string[] } | null {
   const monthAt = (s: string) => resolvePeriod(s) || bareMonth(s);
-  // metric-label column = left-most column with the most metric-alias matches
   let labelCol = -1, bestHits = 0;
   for (let c = 0; c < Math.min(nCols, 4); c++) {
     let hits = 0;
-    for (let r = 0; r < grid.length; r++) if (COLUMN_ALIASES[(grid[r][c] ?? "").trim().toLowerCase()]) hits++;
+    for (let r = 0; r < grid.length; r++) if (aliasOf(grid[r][c] ?? "")) hits++;
     if (hits > bestHits) { bestHits = hits; labelCol = c; }
   }
-  if (bestHits < 2) return [];
-  // month-header row = the row with the most month-parseable cells (excluding label col)
+  if (bestHits < 2) return null;
   let headerRow = -1, bestMonths = 0;
   for (let r = 0; r < Math.min(grid.length, 10); r++) {
     let hits = 0;
     for (let c = 0; c < nCols; c++) if (c !== labelCol && monthAt(grid[r][c] ?? "")) hits++;
     if (hits > bestMonths) { bestMonths = hits; headerRow = r; }
   }
-  if (bestMonths < 1) return [];
+  if (bestMonths < 1) return null;
   const colPeriod: Record<number, string> = {};
   for (let c = 0; c < nCols; c++) {
     if (c === labelCol) continue;
-    const p = monthAt(grid[headerRow][c] ?? "");
-    if (!p) continue;
+    const p = monthAt(grid[headerRow][c] ?? ""); if (!p) continue;
     const py = +p.slice(0, 4), nowY = new Date().getUTCFullYear();
     if (py >= 2020 && py <= nowY + 1 && p <= nextMonthCutoff()) colPeriod[c] = p;
   }
-  const buckets = new Map<string, MonthBucket>();
-  for (let r = 0; r < grid.length; r++) {
-    if (r === headerRow) continue;
-    const col = COLUMN_ALIASES[(grid[r][labelCol] ?? "").trim().toLowerCase()];
-    if (!col) continue;
-    for (const cs of Object.keys(colPeriod)) {
-      const c = +cs, period = colPeriod[c];
-      const v = num((grid[r][c] ?? "").trim()); if (v == null) continue;
-      const b = buckets.get(period) || { practice_id: pid, period };
-      if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
-      else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
-      buckets.set(period, b);
-    }
-  }
-  const rows = [...buckets.values()]
-    .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
-    .map(b => { const { practice_id, period, ...m } = b; return { practice_id, period, source, ...m }; });
-  if (rows.length) skipped.push({ source: label, info: "parsed as WIDE month-block", label_column: labelCol, header_row: headerRow + 1, months: Object.values(colPeriod) });
-  return rows;
+  if (!Object.keys(colPeriod).length) return null;
+  const metrics: string[] = [];
+  for (let r = 0; r < grid.length; r++) { const canon = aliasOf(grid[r][labelCol] ?? ""); if (canon && !metrics.includes(canon)) metrics.push(canon); }
+  return { labelCol, headerRow, colPeriod, metrics };
 }
 
-// Parse one CSV grid into kpi_monthly upsert rows. defaultPid is used when the
-// sheet has no practice_id column (per-client source). Supports both a monthly
-// `period` column and a daily `date` column (daily rows are aggregated per month).
-function rowsFromGrid(grid: string[][], source: string, defaultPid: string | null,
-                      skipped: unknown[], label: string): Record<string, unknown>[] {
-  if (grid.length < 2) return [];
-  // Find the REAL header row — ad exports (Meta/Coefficient) put title/"last updated"
-  // rows ABOVE the header, so we can't assume grid[0]. Pick the row that best matches
-  // a date column + known metric columns.
-  let hIdx = 0, hScore = -1;
-  for (let i = 0; i < Math.min(grid.length, 25); i++) {
-    const low = grid[i].map(c => (c ?? "").trim().toLowerCase());
-    let score = low.some(isDateCol) ? 2 : 0;
-    for (const c of low) if (COLUMN_ALIASES[c] || c === "practice_id") score += 1;
-    if (score > hScore) { hScore = score; hIdx = i; }
-  }
-  const header = grid[hIdx].map(h => h.trim().toLowerCase());
-  const idxOf = (n: string) => header.indexOf(n);
-  const cell = (r: string[], n: string) => { const i = idxOf(n); return i >= 0 ? (r[i] ?? "").trim() : ""; };
-  const dateIdx = header.findIndex(isDateCol);
+interface ShapeDetection {
+  shape: ParseReport["shape"]; headerRow: number; dateIdx: number; periodField: string | null;
+  metricCols: string[]; normalized: Record<string, string>;
+  confidence: ParseReport["confidence"]; reason: string;
+  wide?: { labelCol: number; headerRow: number; colPeriod: Record<number, string>; metrics: string[] };
+}
 
-  const buckets = new Map<string, MonthBucket>();
-  if (dateIdx >= 0) {                                  // ---- TIDY layout (one row per date) ----
-    for (let i = hIdx + 1; i < grid.length; i++) {
-      const r = grid[i];
-      const pid = idxOf("practice_id") >= 0 ? cell(r, "practice_id") : (defaultPid || "");
-      if (!UUID_RE.test(pid)) { skipped.push({ source: label, row: i + 1, reason: "no/invalid practice_id" }); continue; }
-      const raw = (r[dateIdx] ?? "").trim();
-      if (!raw) continue;                              // blank trailing row
-      const period = resolvePeriod(raw);
-      if (!period) { skipped.push({ source: label, row: i + 1, reason: "unparseable period/date", value: raw }); continue; }
-      const py = Number(period.slice(0, 4)), nowY = new Date().getUTCFullYear();
-      if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) {
-        skipped.push({ source: label, row: i + 1, reason: "implausible/future period", value: period }); continue;
+// Step 1+2+3: pick the most likely header row, then classify the layout.
+function detectShape(grid: string[][]): ShapeDetection {
+  const nCols = Math.max(...grid.map(r => r.length), 0);
+  let hIdx = -1, hScore = 0, ties = 0;
+  for (let i = 0; i < Math.min(grid.length, 25); i++) {
+    const cells = grid[i].map(c => (c ?? "").trim());
+    const hasDate = cells.some(isDateCol);
+    let metrics = 0; for (const c of cells) if (aliasOf(c)) metrics++;
+    const hasPid = cells.some(c => normHeader(c) === "practice id");
+    const score = (hasDate ? 2 : 0) + metrics + (hasPid ? 1 : 0);
+    if (score > hScore) { hScore = score; hIdx = i; ties = 1; }
+    else if (score === hScore && score >= 3) ties++;       // another strong candidate
+  }
+  const det: ShapeDetection = { shape: "unknown", headerRow: hIdx, dateIdx: -1, periodField: null,
+    metricCols: [], normalized: {}, confidence: "low", reason: "" };
+  if (hIdx >= 0) {
+    const header = grid[hIdx].map(h => (h ?? "").trim());
+    const dateIdx = header.findIndex(isDateCol);
+    const normalized: Record<string, string> = {}; const metricCols: string[] = [];
+    header.forEach(h => { const canon = aliasOf(h); if (canon) { normalized[h] = canon; if (!metricCols.includes(canon)) metricCols.push(canon); } });
+    det.dateIdx = dateIdx; det.periodField = dateIdx >= 0 ? header[dateIdx] : null;
+    det.normalized = normalized; det.metricCols = metricCols;
+    if (dateIdx >= 0 && metricCols.length >= 1) {            // confident TIDY layout
+      det.shape = classifyGranularity(grid, hIdx, dateIdx);
+      det.confidence = ties > 1 ? "medium" : "high";
+      if (ties > 1) det.reason = "multiple plausible header rows; used the topmost recognized one";
+      return det;
+    }
+  }
+  const wide = detectWide(grid, nCols);                      // confident WIDE layout
+  if (wide) { det.shape = "wide"; det.headerRow = wide.headerRow; det.wide = wide;
+    det.metricCols = wide.metrics; det.periodField = "month columns across the header row";
+    det.confidence = "high"; return det; }
+  // Not confident → explain precisely (Step: fail safe)
+  if (det.dateIdx >= 0 && det.metricCols.length === 0)
+    det.reason = `found a date/period column ('${det.periodField}') but no recognized KPI metric columns`;
+  else if (det.metricCols.length >= 1 && det.dateIdx < 0)
+    det.reason = `recognized ${det.metricCols.length} metric column(s) but no date/period column and no month-block layout — add a Date/Reporting month column`;
+  else
+    det.reason = "no recognizable KPI columns — this tab looks like notes/summary content, not data";
+  det.shape = "unknown"; det.confidence = "low";
+  return det;
+}
+
+// Step 4+5: parse per detected shape and normalize into kpi_monthly rows + a report.
+function parseGrid(grid: string[][], source: string, defaultPid: string | null, label: string):
+  { rows: Record<string, unknown>[]; report: ParseReport } {
+  const report: ParseReport = { source: label, shape: "unknown", header_row: null, period_field: null,
+    normalized_headers: {}, metric_columns: [], produced: 0, months: [], skipped_rows: 0,
+    skipped_samples: [], confidence: "none", reason: "" };
+  if (grid.length < 2) { report.reason = "tab is empty or has no data rows"; return { rows: [], report }; }
+
+  const det = detectShape(grid);
+  report.shape = det.shape; report.confidence = det.confidence;
+  report.header_row = det.headerRow >= 0 ? det.headerRow + 1 : null;
+  report.period_field = det.periodField; report.normalized_headers = det.normalized; report.metric_columns = det.metricCols;
+  if (det.shape === "unknown") { report.reason = det.reason; return { rows: [], report }; }
+
+  const skips: Record<string, number> = {}; const samples: unknown[] = [];
+  const skip = (reason: string, extra?: Record<string, unknown>) => {
+    skips[reason] = (skips[reason] || 0) + 1; if (samples.length < 5) samples.push({ reason, ...extra }); };
+  let rows: Record<string, unknown>[] = [];
+
+  if (det.shape === "wide" && det.wide) {
+    const pid = defaultPid || "";
+    if (!UUID_RE.test(pid)) { report.reason = "month-block sheet has no client to attach to (missing practice_id)"; return { rows: [], report }; }
+    const { labelCol, headerRow, colPeriod } = det.wide;
+    const buckets = new Map<string, MonthBucket>();
+    for (let r = 0; r < grid.length; r++) {
+      if (r === headerRow) continue;
+      const col = aliasOf(grid[r][labelCol] ?? ""); if (!col) continue;
+      for (const cs of Object.keys(colPeriod)) {
+        const c = +cs, period = colPeriod[c];
+        const v = num((grid[r][c] ?? "").trim()); if (v == null) continue;
+        const b = buckets.get(period) || { practice_id: pid, period };
+        if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
+        else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
+        buckets.set(period, b);
       }
+    }
+    rows = [...buckets.values()]
+      .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
+      .map(b => { const { practice_id, period, ...m } = b; return { practice_id, period, source, ...m }; });
+  } else {                                                   // TIDY daily/monthly
+    const header = grid[det.headerRow].map(h => (h ?? "").trim());
+    const pidIdx = header.findIndex(h => normHeader(h) === "practice id");
+    const buckets = new Map<string, MonthBucket>();
+    for (let i = det.headerRow + 1; i < grid.length; i++) {
+      const r = grid[i];
+      const pid = pidIdx >= 0 ? (r[pidIdx] ?? "").trim() : (defaultPid || "");
+      if (!UUID_RE.test(pid)) { skip("no/invalid practice_id"); continue; }
+      const raw = (r[det.dateIdx] ?? "").trim(); if (!raw) continue;
+      const period = resolvePeriod(raw);
+      if (!period) { skip("unparseable period/date", { value: raw }); continue; }
+      const py = +period.slice(0, 4), nowY = new Date().getUTCFullYear();
+      if (py < 2020 || py > nowY + 1 || period > nextMonthCutoff()) { skip("implausible/future period", { value: period }); continue; }
       const key = pid + "|" + period;
       const b = buckets.get(key) || { practice_id: pid, period };
       for (let c = 0; c < header.length; c++) {
-        const col = COLUMN_ALIASES[header[c]]; if (!col) continue;
+        const col = aliasOf(header[c]); if (!col) continue;
         const v = num((r[c] ?? "").trim()); if (v == null) continue;
         if (ADDITIVE.has(col)) b[col] = (typeof b[col] === "number" ? b[col] as number : 0) + v;
         else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
       }
       buckets.set(key, b);
     }
+    rows = [...buckets.values()]
+      .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
+      .map(b => { const { practice_id, period, ...m } = b; return { practice_id, period, source, ...m }; });
   }
 
-  let rows = [...buckets.values()]
-    .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
-    .map(b => { const { practice_id, period, ...metrics } = b; return { practice_id, period, source, ...metrics }; });
-
-  // ---- fall back to the WIDE month-block layout if tidy found nothing usable ----
-  if (!rows.length && defaultPid && UUID_RE.test(defaultPid)) {
-    rows = parseWide(grid, defaultPid, source, skipped, label);
+  report.produced = rows.length;
+  report.months = [...new Set(rows.map(r => String(r.period).slice(0, 7)))].sort();
+  report.skipped_rows = Object.values(skips).reduce((a, b) => a + b, 0);
+  report.skipped_samples = samples;
+  if (rows.length) {
+    const note = det.shape === "daily" ? " (daily rows aggregated by month)" : det.shape === "wide" ? " (month-block)" : "";
+    report.reason = `parsed as ${det.shape}${note} → ${report.months.join(", ")}`;
+  } else if (skips["no/invalid practice_id"]) {
+    report.reason = "rows found but none attached to a client (no/invalid practice_id) — usually the global CSV_URL path; use a per-client source";
+  } else if (skips["unparseable period/date"]) {
+    report.reason = "found a date column but its values could not be parsed as dates";
+  } else {
+    report.reason = "no monthly rows produced — no numeric metric values under the recognized columns";
   }
-  if (!rows.length && dateIdx < 0) {
-    // Tell the admin exactly what we saw so the failure is diagnosable, not opaque:
-    // which row we treated as the header and the literal column names on it.
-    const cols = header.filter(h => h);
-    const known = cols.filter(h => COLUMN_ALIASES[h]);
-    skipped.push({
-      source: label,
-      reason: "no period/date column found — this tab isn't a recognizable daily/period or wide month-block sheet",
-      header_row: hIdx + 1,
-      columns_seen: cols.slice(0, 30),
-      metric_columns_recognized: known,
-      hint: known.length
-        ? "metrics were recognized but there is no date/period column — add a Date/Reporting starts column, or use the wide month-block layout"
-        : "no recognized columns — check the tab name points at the data tab (not a summary/cover tab)",
-    });
-  }
-  return rows;
+  return { rows, report };
 }
 
 async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
@@ -489,18 +580,22 @@ Deno.serve(async (req) => {
       const tabs = await listTabs(sheetId);
       const out: unknown[] = [];
       for (const t of tabs) {
-        const probe: unknown[] = [];
-        let parsed = 0; let months: string[] = []; let sample: string[][] = [];
+        let sample: string[][] = [];
         try {
           const grid = await readSheetGrid(sheetId, t.title);
           sample = grid.slice(0, 4).map(r => r.slice(0, 8));
-          const rows = rowsFromGrid(grid, guessSource(t.title) || "marketing",
-            "00000000-0000-0000-0000-000000000000", probe, t.title);  // placeholder pid: shape check only
-          parsed = rows.length;
-          months = [...new Set(rows.map(r => String(r.period).slice(0, 7)))].sort();
-        } catch (e) { probe.push({ error: String((e as Error)?.message || e) }); }
-        out.push({ title: t.title, gid: t.gid, suggested_source: guessSource(t.title),
-          parsed_rows: parsed, months, diagnostics: probe.slice(0, 3), sample });
+          // placeholder pid → shape/parse check only, nothing is written
+          const { report } = parseGrid(grid, guessSource(t.title) || "marketing",
+            "00000000-0000-0000-0000-000000000000", t.title);
+          out.push({ title: t.title, gid: t.gid, suggested_source: guessSource(t.title),
+            parsed_rows: report.produced, months: report.months, shape: report.shape,
+            header_row: report.header_row, period_field: report.period_field,
+            normalized_headers: report.normalized_headers, confidence: report.confidence,
+            reason: report.reason, skipped_rows: report.skipped_rows, sample });
+        } catch (e) {
+          out.push({ title: t.title, gid: t.gid, suggested_source: guessSource(t.title),
+            parsed_rows: 0, months: [], shape: "unknown", reason: String((e as Error)?.message || e), sample });
+        }
       }
       return json({ ok: true, action, sheet_id: sheetId, tab_count: tabs.length, tabs: out });
     }
@@ -561,11 +656,9 @@ Deno.serve(async (req) => {
       : "no active sheet sources and no CSV_URL" }, 400);
 
     const upserts: Record<string, unknown>[] = [];
-    const perSource: Record<string, { ok: boolean; rows?: number; months?: string[]; error?: string }> = {};
+    const perSource: Record<string, Record<string, unknown>> = {};
+    const reports: ParseReport[] = [];     // full per-tab parse report (shape, header, reason…)
     const allMonths = new Set<string>();   // distinct 'YYYY-MM' months seen across every source
-    // distinct months ('YYYY-MM') a set of upsert rows touched — surfaced per client + globally
-    const monthsOf = (rows: Record<string, unknown>[]) =>
-      [...new Set(rows.map(r => String(r.period).slice(0, 7)))].sort();
 
     for (const job of jobs) {
       try {
@@ -578,19 +671,26 @@ Deno.serve(async (req) => {
           if (!res.ok) throw new Error(`fetch ${res.status}`);
           grid = parseCSV(await res.text());
         }
-        const rows = rowsFromGrid(grid, job.source, job.pid, skipped, job.label);
+        const { rows, report } = parseGrid(grid, job.source, job.pid, job.label);
+        reports.push(report);
         upserts.push(...rows);
-        const months = monthsOf(rows);
+        const months = report.months;
         months.forEach(m => allMonths.add(m));
-        perSource[job.label] = { ok: true, rows: rows.length, months };
-        // per-channel observability: scope the status update to this practice + source
+        const ok = rows.length > 0;
+        perSource[job.label] = { ok, rows: rows.length, months, shape: report.shape,
+          header_row: report.header_row, confidence: report.confidence,
+          skipped: report.skipped_rows, reason: report.reason };
+        // a zero-row parse is a soft failure: keep it visible in the global skipped list
+        if (!ok || report.skipped_rows) skipped.push({ source: job.label, ...report });
+        // per-channel observability: a clean human summary lands on the source row
         if (job.pid) await sb.from("sheet_sources").update({
-          last_synced_at: ranAt, last_status: "ok", last_error: null,
-          last_rows: rows.length, last_months: months,
+          last_synced_at: ranAt, last_status: ok ? "ok" : "error",
+          last_error: ok ? null : report.reason, last_rows: rows.length, last_months: months,
         }).eq("practice_id", job.pid).eq("source", job.source);
       } catch (e) {
         const msg = String((e as Error)?.message || e);
         perSource[job.label] = { ok: false, error: msg };
+        skipped.push({ source: job.label, reason: msg });
         if (job.pid) await sb.from("sheet_sources").update({
           last_synced_at: ranAt, last_status: "error", last_error: msg,
         }).eq("practice_id", job.pid).eq("source", job.source);
@@ -617,7 +717,8 @@ Deno.serve(async (req) => {
     } catch (_) { /* sync_runs table not present yet */ }
 
     return json({ ok, ran_at: ranAt, trigger, sources: perSource, rows_seen: upserts.length, upserted,
-      skipped_count: skipped.length, months_seen, skipped: skipped.slice(0, 25), error }, error ? 500 : 200);
+      skipped_count: skipped.length, months_seen, skipped: skipped.slice(0, 25),
+      reports, error }, error ? 500 : 200);
   } catch (e) {
     const msg = String((e as Error)?.message || e);
     return json({ ok: false, ran_at: ranAt, trigger, error: msg }, 500);
