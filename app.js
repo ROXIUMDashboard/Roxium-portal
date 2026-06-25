@@ -1915,7 +1915,8 @@ function sourceTabRow(pid, s){
 // "Add a source" row — source dropdown + detected-tab dropdown (+ custom key).
 function addSourceRow(pid){
   const taken = new Set(Object.values(sheetSources).filter(s=> s.practice_id===pid).map(s=> s.source||'marketing'));
-  const srcOpts = CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
+  const srcOpts = '<option value="" disabled selected>— Select source —</option>'
+    + CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
     + '<option value="__custom">Custom source…</option>';
   return `<div class="addsource">
     <span class="addsrc-label">Add another reporting source</span>
@@ -2164,12 +2165,17 @@ async function addSource(pid){
 async function removeSource(pid, source){
   if(!isTeamView()) return;
   const ok = await uiConfirm(`Remove ${channelLabel(source)} source?`,
-    `This removes the source-tab mapping for this client. KPI rows already imported for this source stay in history — they just won't refresh until you re-add it.`,
+    `This removes the ${channelLabel(source)} source mapping <b>and its imported KPI months</b> for this client, so it stops showing in the client's channel view. Re-add the source and sync to bring it back.`,
     { danger:true, confirmLabel:'Remove source' });
   if(!ok) return;
   const { error } = await sb.from('sheet_sources').delete().eq('practice_id', pid).eq('source', source);
-  adminDelFlash(error? 'Remove failed: '+error.message : `${channelLabel(source)} source removed.`);
-  if(!error){ loadSheetSources(); refreshOnboardChecklist(pid); }
+  if(error){ adminDelFlash('Remove failed: '+error.message); return; }
+  // also clear this channel's KPI rows — the client-side channel list is derived from
+  // kpi data, so leaving them would keep showing a source that no longer exists.
+  const { error: kerr } = await sb.from('kpi_monthly').delete().eq('practice_id', pid).eq('source', source);
+  adminDelFlash(kerr ? `Source removed, but clearing its KPI rows failed: ${kerr.message}` : `${channelLabel(source)} source removed.`);
+  loadSheetSources(); refreshOnboardChecklist(pid);
+  if(practiceId===pid) loadAll();   // refresh the open dashboard so the channel disappears now
 }
 async function deletePractice(id, name){
   if(!isTeamView()) return;
