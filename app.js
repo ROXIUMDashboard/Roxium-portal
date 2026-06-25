@@ -94,6 +94,9 @@ const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[p
 let chanByPractice = {};   // practiceId -> 'all' | 'marketing' | 'google_ads' | …
 const getChan = () => (practiceId && practiceId in chanByPractice) ? chanByPractice[practiceId] : 'all';
 const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete chanByPractice[practiceId]; else chanByPractice[practiceId]=c; };
+// canonical channel/source key — fold Meta's aliases into 'marketing' so a source is
+// attributed to exactly one channel (no split/duplicate channels, consistent math).
+const sourceKey = s => (!s || s==='meta' || s==='coefficient') ? 'marketing' : s;
 // Known source presets (Meta = the legacy 'marketing' source). Each is one TAB in a
 // client's master workbook; the list seeds the admin "add source" picker and channel
 // labels. Sources are open-ended — a custom key works too, this is just the menu.
@@ -406,14 +409,21 @@ const KPI_ADDITIVE = new Set(['spend','impr','clicks','lpv','reach','page_engage
 // 'all' sums every channel together; a specific channel filters to just its rows.
 function computeKpi(){
   const rows = data.kpiRaw || [];
-  const chan = getChan();
-  const scoped = chan==='all' ? rows : rows.filter(r => (r.source||'marketing') === chan);
+  // derive the channel set from the CURRENT KPI rows; if the selected channel is no
+  // longer present (source removed / data changed), fall back to the aggregate so the
+  // view never shows a stale/empty channel.
+  const present = new Set(rows.map(r => sourceKey(r.source)));
+  let chan = getChan();
+  if(chan!=='all' && !present.has(chan)){ chan = 'all'; setChan('all'); }
+  // per-channel: that source's rows only. all: every present source (additive metrics
+  // sum across channels; ratios like CTR/CPM/CPC are re-derived from the summed totals).
+  const scoped = chan==='all' ? rows : rows.filter(r => sourceKey(r.source) === chan);
   return mergeKpiByPeriod(scoped);
 }
 
 // Distinct channels present in the raw data, in CHANNELS order then any extras.
 function channelsPresent(){
-  const present = new Set((data.kpiRaw||[]).map(r => r.source || 'marketing'));
+  const present = new Set((data.kpiRaw||[]).map(r => sourceKey(r.source)));
   const ordered = CHANNELS.map(c=>c.source).filter(s=> present.has(s));
   for(const s of present) if(!ordered.includes(s)) ordered.push(s);
   return ordered;
@@ -2111,10 +2121,14 @@ async function findWorkbook(pid, name){
   out.innerHTML = '<div class="note">Searching the master folder…</div>';
   try{
     const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
-    const cands = r.match ? [r.match] : (r.candidates||[]);
-    if(!cands.length){ out.innerHTML = `<div class="note">No workbook found (${esc(r.reason||'')}).</div>`; return; }
-    out.innerHTML = `<div class="note">${esc(r.reason||'')}:</div>` + cands.map(c=>
-      `<div class="dtab"><b>${esc(c.name)}</b> <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this workbook</button></div>`).join('');
+    // show EVERY workbook currently in the folder (re-queried live) so newly-added
+    // sheets appear — with the best name match floated to the top.
+    const files = (r.files && r.files.length) ? r.files : (r.match ? [r.match] : (r.candidates||[]));
+    if(!files.length){ out.innerHTML = `<div class="note">No Google Sheets found in the master folder. Make sure the new workbook is a Google Sheet (not an uploaded .xlsx) and the folder is shared with the service account.</div>`; return; }
+    const matchId = r.match?.id;
+    const ordered = [...files].sort((a,b)=> (b.id===matchId?1:0) - (a.id===matchId?1:0));
+    out.innerHTML = `<div class="note">${files.length} workbook(s) in the master folder${matchId?' — best name match first':''}:</div>` + ordered.map(c=>
+      `<div class="dtab"><b>${esc(c.name)}</b>${c.id===matchId?' <span class="ssok">best match</span>':''} <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this workbook</button></div>`).join('');
     out.querySelectorAll('[data-usewb]').forEach(b=>
       b.onclick = ()=> useWorkbook(b.dataset.usewb, b.dataset.id, out));
   }catch(e){ out.innerHTML = `<div class="ssbad">Find failed: ${esc(e.message||String(e))}</div>`; }
