@@ -134,6 +134,16 @@ function safe(label, fn){
 /* ---------------- tabbed views (hash router) ---------------- */
 const VIEWS = ['roadmap','deliverables','video','metrics','updates','access','team','admin'];
 const TEAM_ONLY_VIEWS = ['team','admin'];
+// remember the last client-side view and the last admin sub-tab for smooth two-way nav
+let lastClientView = 'roadmap';
+let lastAdminTab = localStorage.getItem('lastAdminTab') || 'clients';
+function activateAdminTab(name){
+  name = name || 'clients';
+  if(!document.querySelector(`#adminTabs .atab[data-atab="${name}"]`)) name = 'clients';
+  document.querySelectorAll('#adminTabs .atab').forEach(t=> t.classList.toggle('active', t.dataset.atab===name));
+  document.querySelectorAll('.admin-tab').forEach(p=> p.classList.toggle('hidden', p.dataset.atab!==name));
+  lastAdminTab = name; localStorage.setItem('lastAdminTab', name);
+}
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
 function currentView(){
@@ -144,10 +154,12 @@ function showView(name){
   if(!VIEWS.includes(name)) name = 'roadmap';
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
   if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
+  if(name !== 'admin') lastClientView = name;          // remember where to return on "Back to client portal"
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
   if(name==='admin'){
+    activateAdminTab(lastAdminTab);                     // land on the last admin sub-tab I used
     renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
@@ -179,8 +191,8 @@ function syncChrome(){
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
-$('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };
-$('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#roadmap'; });
+$('btnAdmin').onclick = ()=>{ location.hash = '#admin'; };   // showView restores the last admin sub-tab
+$('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#'+(lastClientView||'roadmap'); });
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -599,34 +611,24 @@ $('btnSaveKpi').onclick = async ()=>{
   flash(error? error.message : `Saved ${periodLabel(period)}.`); if(!error) loadAll();
 };
 
-$('xlsxFile').onchange = async (e)=>{
-  const file = e.target.files[0]; if(!file) return;
-  // the workbook is 12 sequential month columns; the year comes from the import-year field
-  const yr = parseInt($('inYear').value, 10) || new Date().getFullYear();
-  try{
-    const wb = XLSX.read(await file.arrayBuffer());
-    const ws = wb.Sheets['Dashboard']; if(!ws) throw new Error('No "Dashboard" sheet');
-    const grid = XLSX.utils.sheet_to_json(ws,{header:1,raw:true});
-    const byLabel = {}; grid.forEach(r=>{ if(r&&r[0]) byLabel[String(r[0]).trim()]=r; });
-    const rows = [];
-    for(let mIdx=0;mIdx<12;mIdx++){
-      const period = `${yr}-${String(mIdx+1).padStart(2,'0')}-01`;
-      const row = { practice_id: practiceId, period, source: KPI_SOURCE };
-      let any=false;
-      Object.entries(XL_MAP).forEach(([label,key])=>{
-        const r = byLabel[label]; if(!r) return;
-        const v = r[4+mIdx];
-        if(typeof v==='number' && !isNaN(v)){ row[key]=v; any=true; }
-      });
-      if(any) rows.push(row);
-    }
-    if(!rows.length) throw new Error('No monthly values found');
-    const { error } = await sb.from('kpi_monthly').upsert(rows, { onConflict:'practice_id,period,source' });
-    flash(error? error.message : `Imported ${rows.length} month(s) of ${yr} from workbook.`);
-    if(!error) loadAll();
-  }catch(err){ flash('Import failed: '+err.message); }
-  e.target.value='';
-};
+// Manual KPI export — download the open practice's saved KPI months as CSV.
+// (The manual layer is entry/edit + download only; workbook import was removed.)
+$('btnExportKpi')?.addEventListener('click', ()=>{
+  const rows = (data.kpiRaw||[]).filter(r=> r.practice_id===practiceId);
+  if(!rows.length){ flash('No KPI data to export yet.'); return; }
+  const keys = ['period','source', ...FIELDS.map(f=> f.k)];
+  const header = ['Period','Source', ...FIELDS.map(f=> f.l)];
+  const cell = v => v==null ? '' : (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v));
+  const body = rows.slice().sort((a,b)=> (a.period<b.period?-1:a.period>b.period?1:0) || String(a.source||'').localeCompare(String(b.source||'')))
+    .map(r=> keys.map(k=> cell(r[k])).join(',')).join('\n');
+  const csv = header.join(',') + '\n' + body;
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  const pname = ((practicesList||[]).find(p=> p.id===practiceId)?.name || 'practice').replace(/[^a-z0-9]+/gi,'_');
+  a.href = URL.createObjectURL(blob); a.download = `${pname}_kpis.csv`; a.click();
+  URL.revokeObjectURL(a.href);
+  flash(`Downloaded ${rows.length} KPI row(s).`);
+});
 
 /* ============================================================
    INLINE-EDITABLE RENDERERS  (team edits in place; client sees read-only)
@@ -1771,10 +1773,11 @@ function addSourceRow(pid){
   const srcOpts = CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
     + '<option value="__custom">Custom source…</option>';
   return `<div class="addsource">
-    <select class="cellinput addsourcesel" data-pid="${pid}">${srcOpts}</select>
+    <span class="addsrc-label">Add another reporting source</span>
+    <select class="cellinput addsourcesel" data-pid="${pid}" title="Pick a channel / insight to add">${srcOpts}</select>
     <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="custom key (e.g. tiktok_ads)" style="display:none">
-    <select class="cellinput addsourcetab" data-pid="${pid}">${tabOptions(pid, '')}</select>
-    <button class="btn ghost sm" data-addsource="${pid}">+ Add</button>
+    <select class="cellinput addsourcetab" data-pid="${pid}" title="Pick its tab inside the workbook">${tabOptions(pid, '')}</select>
+    <button class="btn ghost sm" data-addsource="${pid}">+ Add this source</button>
   </div>`;
 }
 // Per-client sources block (its own node so Detect tabs can refresh the dropdowns
@@ -1930,11 +1933,10 @@ async function saveMasterFolder(){
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
 
 // Admin sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
+// Remembers the choice so the Admin button returns here next time.
 $('adminTabs')?.addEventListener('click', e=>{
   const b = e.target.closest('.atab'); if(!b) return;
-  const name = b.dataset.atab;
-  document.querySelectorAll('#adminTabs .atab').forEach(t=> t.classList.toggle('active', t===b));
-  document.querySelectorAll('.admin-tab').forEach(p=> p.classList.toggle('hidden', p.dataset.atab!==name));
+  activateAdminTab(b.dataset.atab);
 });
 
 // System tab · "Test & list workbooks" — proves the folder is reachable + shared.
