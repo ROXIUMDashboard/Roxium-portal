@@ -1,2 +1,4 @@
-# Cloudflare Pages SPA fallback (magic-link auth redirects land on index.html)
-/*    /index.html   200
+# SPA routing: do NOT use "/* /index.html 200" here — Wrangler rejects it as an
+# infinite loop (error 100324). Cloudflare Pages serves index.html automatically
+# when there is no 404.html. For Workers + wrangler deploy, use wrangler.jsonc
+# assets.not_found_handling = "single-page-application" instead.
