@@ -1738,6 +1738,17 @@ $('btnInvite').onclick = async ()=>{
   }finally{ $('btnInvite').disabled = false; }
 };
 
+$('btnDeleteAccessClient')?.addEventListener('click', async ()=>{
+  if(!isTeamView()) return;
+  const pid = $('accessPractice')?.value;
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  if(!p){
+    const el=$('accessDelMsg'); if(el) el.textContent='Select a practice in the dropdown above first.';
+    return;
+  }
+  await deletePractice(p.id, p.name, { flash: t=>{ const el=$('accessDelMsg'); if(el) el.textContent=t; } });
+});
+
 $('btnClientInvite').onclick = async ()=>{
   if(!canSeeAccessTab() || !practiceId) return;
   const email = $('clientInviteEmail').value.trim();
@@ -1967,16 +1978,85 @@ function clientSourcesHTML(pid){
     </div>
   </div>`;
 }
+// Reporting tab · filter + sort helpers (many clients → find a surgeon without scrolling)
+let reportingListWired = false;
+let adminClientSort = 'name-asc';
+try{ adminClientSort = sessionStorage.getItem('roxium_admin_client_sort') || 'name-asc'; }catch(_){}
+
+function practiceReportingMeta(p){
+  const pid = p.id;
+  const sources = Object.values(sheetSources).filter(s=> s.practice_id===pid);
+  const hasWorkbook = !!(p.workbook_sheet_id && p.workbook_sheet_id.trim());
+  const mapped = sources.filter(s=> (s.tab_name||'').trim()).length;
+  const hasError = sources.some(s=> s.last_status==='error');
+  const lastSync = sources.map(s=> s.last_synced_at).filter(Boolean).sort().pop() || null;
+  let setupRank = 5;
+  if(!hasWorkbook) setupRank = 0;
+  else if(!sources.length) setupRank = 1;
+  else if(mapped < sources.length) setupRank = 2;
+  else if(hasError) setupRank = 3;
+  else if(!lastSync) setupRank = 4;
+  return {
+    name: (p.name||'').toLowerCase(),
+    hasWorkbook, hasError, lastSync, setupRank,
+    needsSetup: setupRank < 5,
+  };
+}
+function adminClientListFiltered(){
+  const q = ($('reportingClientSearch')?.value || '').trim().toLowerCase();
+  const sort = $('reportingClientSort')?.value || adminClientSort || 'name-asc';
+  let list = [...(practicesList || [])];
+  if(q) list = list.filter(p=> (p.name||'').toLowerCase().includes(q));
+  list.sort((a,b)=>{
+    const ma = practiceReportingMeta(a), mb = practiceReportingMeta(b);
+    switch(sort){
+      case 'name-desc': return mb.name.localeCompare(ma.name) || a.name.localeCompare(b.name);
+      case 'setup-first': return ma.setupRank - mb.setupRank || ma.name.localeCompare(mb.name);
+      case 'errors-first':
+        return (mb.hasError?1:0) - (ma.hasError?1:0) || ma.setupRank - mb.setupRank || ma.name.localeCompare(mb.name);
+      default: return ma.name.localeCompare(mb.name);
+    }
+  });
+  return { list, total: (practicesList||[]).length, query: q };
+}
+function wireReportingListControls(){
+  if(reportingListWired) return;
+  reportingListWired = true;
+  const search = $('reportingClientSearch');
+  const sort = $('reportingClientSort');
+  if(sort){
+    sort.value = adminClientSort;
+    sort.addEventListener('change', ()=>{
+      adminClientSort = sort.value;
+      try{ sessionStorage.setItem('roxium_admin_client_sort', adminClientSort); }catch(_){}
+      renderAdminClients();
+    });
+    enhanceNativeSelect(sort);
+  }
+  search?.addEventListener('input', ()=> renderAdminClients());
+  search?.addEventListener('keydown', e=>{ if(e.key==='Escape'){ search.value=''; renderAdminClients(); search.blur(); } });
+}
 function renderAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
   if(!isTeamView()){ wrap.innerHTML=''; return; }
-  const list = practicesList || [];
+  wireReportingListControls();
+  const { list, total, query } = adminClientListFiltered();
+  const countEl = $('reportingClientCount');
+  if(countEl){
+    if(!total) countEl.textContent = '';
+    else if(query) countEl.textContent = list.length === total
+      ? `${total} client${total===1?'':'s'}`
+      : `Showing ${list.length} of ${total} client${total===1?'':'s'}`;
+    else countEl.textContent = `${total} client${total===1?'':'s'}`;
+  }
   wrap.innerHTML = (list.length ? list.map(p=> `<div class="clientrow2">
       <div class="ccol"><span class="cname">${esc(p.name)}</span>
         <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete client</button></div>
       ${clientWorkbookBlock(p)}
       ${clientSourcesHTML(p.id)}
-    </div>`).join('') : '<div class="note">No practices yet — add one above.</div>');
+    </div>`).join('') : (query
+      ? '<div class="note">No clients match your search — try a different name.</div>'
+      : '<div class="note">No practices yet — add one above.</div>'));
   wireAdminClients();
 }
 // (Re)bind all client-card handlers — called after a full render or a sources refresh.
@@ -2205,25 +2285,29 @@ async function removeSource(pid, source){
   loadSheetSources(); refreshOnboardChecklist(pid);
   if(practiceId===pid) loadAll();   // refresh the open dashboard so the channel disappears now
 }
-async function deletePractice(id, name){
+async function deletePractice(id, name, opts={}){
   if(!isTeamView()) return;
-  // single themed dialog: confirmation message + type-the-name-to-confirm guard
+  const flash = opts.flash || adminDelFlash;
   const ok = await uiConfirm(`Delete “${name}”?`,
     `This permanently removes the practice and <b>all</b> of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins. This cannot be undone.`,
     { danger:true, confirmLabel:'Delete practice', requireText:name });
   if(!ok) return;
-  adminDelFlash('Deleting…');
+  flash('Deleting…');
   try{
     const { error } = await sb.rpc('delete_practice', { p_id: id });
     if(error) throw error;
     delete selByPractice[id];
-    if(practiceId===id){ practiceId = null; }  // we deleted the open one
+    delete chanByPractice[id];
+    if(practiceId===id){ practiceId = null; }
     await loadTeamPractices();
-    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;  // fall back to another practice
+    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;
     renderAdminClients();
-    adminDelFlash(`"${name}" was deleted.`);
+    flash(`"${name}" was deleted.`);
+    const ap = $('accessPractice');
+    if(ap?.value) loadAccessRoster(ap.value);
+    else if($('accessRoster')) $('accessRoster').innerHTML = '<div class="note">Select a practice to manage access.</div>';
     if(practiceId) loadAll();
-  }catch(e){ adminDelFlash('Delete failed: '+(e.message||e)); }
+  }catch(e){ flash('Delete failed: '+(e.message||e)); }
 }
 
 /* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */

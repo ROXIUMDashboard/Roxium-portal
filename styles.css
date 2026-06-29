@@ -489,7 +489,8 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .checklabel input[type=checkbox]:hover{border-color:var(--gold)}
 .checklabel input[type=checkbox]:checked{background:var(--gold);border-color:var(--gold)}
 .checklabel input[type=checkbox]:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(201,168,76,.5)}
-.access-btns{display:flex;gap:8px;flex-wrap:wrap}
+.access-delete-row{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.access-delete-row .note{margin:0}
 
 /* Access roster (admin + client owners) */
 /* flush on the dark page — no card box / lighter fill (incl. the empty-state strip) */
@@ -508,6 +509,13 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 @media(max-width:640px){.rosterhead,.rosterrow{grid-template-columns:1fr;gap:4px}}
 
 /* Phase C · per-client reporting-sheet rows in Admin */
+.reporting-toolbar{display:flex;flex-wrap:wrap;gap:14px 18px;align-items:flex-end;margin:14px 0 12px;padding:12px 14px;
+  background:var(--surface);border:1px solid var(--line);border-radius:4px}
+.reporting-toolbar .f{margin:0}
+.reporting-search{flex:1;min-width:220px}
+.reporting-search input{width:100%}
+.reporting-sort{min-width:200px}
+.reporting-count{flex:1 1 100%;margin:0;font-size:11px}
 .clientrow2{display:block;padding:12px 14px;background:var(--surface);border:1px solid var(--line);transition:border-color .15s ease;margin-bottom:10px}
 .clientrow2:hover{border-color:var(--gold)}
 .clientrow2 .ccol{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}

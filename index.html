@@ -6,7 +6,7 @@
 <title>ROXIUM · Client Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=46">
+<link rel="stylesheet" href="styles.css?v=48">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -163,6 +163,10 @@
           </div>
         </div>
         <div id="accessRoster" class="roster"></div>
+        <div class="access-delete-row">
+          <button class="btn ghost sm danger" id="btnDeleteAccessClient">Delete selected client</button>
+          <p class="note" id="accessDelMsg">Permanently removes the practice selected above and all of its data.</p>
+        </div>
       </div>
 
       <!-- C · REPORTING / KPI SOURCES -->
@@ -171,6 +175,22 @@
         <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
         <h4 class="syncstatus-h">Auto-sync status</h4>
         <div id="syncStatus" class="syncstatus"></div>
+        <div class="reporting-toolbar" id="reportingToolbar">
+          <div class="f reporting-search">
+            <label for="reportingClientSearch">Find client</label>
+            <input id="reportingClientSearch" class="picker" type="search" placeholder="Search by surgeon / practice name…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="f reporting-sort">
+            <label for="reportingClientSort">Sort</label>
+            <select id="reportingClientSort" class="picker">
+              <option value="name-asc">Name (A → Z)</option>
+              <option value="name-desc">Name (Z → A)</option>
+              <option value="setup-first">Needs setup first</option>
+              <option value="errors-first">Sync errors first</option>
+            </select>
+          </div>
+          <p class="note reporting-count" id="reportingClientCount"></p>
+        </div>
         <div id="adminClientList" class="clientlist"></div>
         <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
       </div>
@@ -248,14 +268,14 @@
 
     <footer>
       <span>ROXIUM · Practice Growth Systems</span>
-      <span id="portalBuild">build 46</span><span> · Live KPI Data</span>
+      <span id="portalBuild">build 48</span><span> · Live KPI Data</span>
     </footer>
   </div>
 </div>
 
 <div id="modal" class="modal"></div>
 
-<script src="config.js?v=46"></script>
-<script src="app.js?v=46"></script>
+<script src="config.js?v=48"></script>
+<script src="app.js?v=48"></script>
 </body>
 </html>
