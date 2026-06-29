@@ -7,14 +7,14 @@
 // Requires practice_member_emails() RPC (migrations/2026-06-23_phase_d_email.sql).
 // ============================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireTeamUser, serviceClient, UUID_RE } from "../_shared/auth.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const json = (b: unknown, s = 200) =>
+const respond = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
 function escapeHtml(s: string) {
@@ -33,34 +33,41 @@ const emailHtml = (item: string, url: string) => `
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
+  if (req.method !== "POST") return respond({ ok: false, error: "method not allowed" }, 405);
   try {
+    const auth = await requireTeamUser(req);
+    if ("error" in auth) {
+      const body = await auth.error.json();
+      return respond(body, auth.error.status);
+    }
+
     const { video_id } = await req.json();
-    if (!video_id) return json({ ok: false, error: "video_id required" }, 400);
+    if (!video_id) return respond({ ok: false, error: "video_id required" }, 400);
+    if (!UUID_RE.test(String(video_id))) return respond({ ok: false, error: "invalid video_id" }, 400);
 
     const RESEND = Deno.env.get("RESEND_API_KEY");
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
-    const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    const sb = serviceClient();
 
     const { data: v, error: vErr } = await sb
       .from("video_pipeline").select("practice_id,item,video_url").eq("id", video_id).single();
-    if (vErr || !v) return json({ ok: false, error: vErr?.message || "video not found" }, 404);
-    if (!v.video_url) return json({ ok: false, error: "video has no URL yet" }, 400);
+    if (vErr || !v) return respond({ ok: false, error: vErr?.message || "video not found" }, 404);
+    if (!v.video_url) return respond({ ok: false, error: "video has no URL yet" }, 400);
 
     const { data: rows, error } = await sb.rpc("practice_member_emails", { p_id: v.practice_id });
-    if (error) return json({ ok: false, error: error.message }, 500);
+    if (error) return respond({ ok: false, error: error.message }, 500);
     const to = (rows || []).map((r: { email: string }) => r.email).filter(Boolean);
-    if (!to.length) return json({ ok: true, emailed: 0, note: "no client emails on file" });
-    if (!RESEND) return json({ ok: true, emailed: 0, note: "RESEND_API_KEY not set — would have emailed " + to.length });
+    if (!to.length) return respond({ ok: true, emailed: 0, note: "no client emails on file" });
+    if (!RESEND) return respond({ ok: true, emailed: 0, note: "RESEND_API_KEY not set — would have emailed " + to.length });
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from: FROM, to, subject: `Your video "${v.item}" is ready`, html: emailHtml(v.item, v.video_url) }),
     });
-    if (!res.ok) return json({ ok: false, error: `resend ${res.status}: ${await res.text()}` }, 502);
-    return json({ ok: true, emailed: to.length });
+    if (!res.ok) return respond({ ok: false, error: `resend ${res.status}: ${await res.text()}` }, 502);
+    return respond({ ok: true, emailed: to.length });
   } catch (e) {
-    return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
+    return respond({ ok: false, error: String((e as Error)?.message || e) }, 500);
   }
 });
