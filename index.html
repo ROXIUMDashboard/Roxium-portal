@@ -6,7 +6,7 @@
 <title>ROXIUM · Client Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=45">
+<link rel="stylesheet" href="styles.css?v=46">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -149,13 +149,16 @@
 
         <h3 style="margin-top:22px">Practice access &amp; invites</h3>
         <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
-        <div class="entry">
-          <div class="f"><label>Practice</label><select id="accessPractice"></select></div>
+        <div class="entry invite-entry">
+          <div class="f"><label>Practice</label><select id="accessPractice" class="picker"></select></div>
           <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
           <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
-          <div class="f"><label>Role</label><select id="accessRole"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
-          <div class="f invite-actions">
-            <label class="checklabel"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
+          <div class="f"><label>Role</label><select id="accessRole" class="picker"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
+          <div class="f">
+            <label class="checklabel invite-check"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
+          </div>
+          <div class="f invite-send">
+            <label class="invite-send-spacer" aria-hidden="true">&nbsp;</label>
             <button class="btn ghost sm" id="btnInvite">Send invite</button>
           </div>
         </div>
@@ -245,14 +248,14 @@
 
     <footer>
       <span>ROXIUM · Practice Growth Systems</span>
-      <span id="portalBuild">build 45</span><span> · Live KPI Data</span>
+      <span id="portalBuild">build 46</span><span> · Live KPI Data</span>
     </footer>
   </div>
 </div>
 
 <div id="modal" class="modal"></div>
 
-<script src="config.js?v=45"></script>
-<script src="app.js?v=45"></script>
+<script src="config.js?v=46"></script>
+<script src="app.js?v=46"></script>
 </body>
 </html>

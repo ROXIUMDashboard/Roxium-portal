@@ -231,8 +231,8 @@ async function driveListInFolder(folderId: string): Promise<{ id: string; name: 
   const token = await googleAccessToken();
   const q = encodeURIComponent(
     `'${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=200&orderBy=modifiedTime desc&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, "Cache-Control": "no-cache" } });
   if (!res.ok) throw new Error(`drive api ${res.status}: ${await res.text()}`);
   const body = await res.json() as { files?: { id: string; name: string }[] };
   return body.files || [];
