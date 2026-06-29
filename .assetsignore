@@ -1,0 +1,17 @@
+# Only publish the static portal — not the full monorepo (used by wrangler deploy).
+.git
+.git/**
+.github
+.github/**
+supabase
+supabase/**
+migrations
+migrations/**
+docs
+docs/**
+*.sql
+README.md
+netlify.toml
+roxium-portal.zip
+wrangler.jsonc
+.assetsignore

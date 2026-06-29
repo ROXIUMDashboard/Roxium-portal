@@ -31,7 +31,30 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 4. **Authentication → URL Configuration**: set Site URL to your Netlify URL (step 3) once you have it.
 5. **Settings → API**: copy the `Project URL` and `anon public` key into `config.js`. Commit + push.
 
-### 3 · Netlify (5 min)
+### 3 · Hosting (Netlify or Cloudflare Pages)
+
+#### Option A — Cloudflare Pages (recommended)
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
+2. Pick this repo. Use these settings:
+
+| Setting | Value |
+|---------|--------|
+| Framework preset | **None** |
+| Build command | *(leave empty)* |
+| Build output directory | `/` |
+
+3. **Do not** set the build command to `npx wrangler deploy` — that creates a Worker and uploads the whole repo (including `.git/`). Pages only needs the static files.
+4. Deploy. Your preview URL will be `https://<project-name>.pages.dev`.
+5. Add a custom domain under **Custom domains** if you have one.
+6. Supabase → **Authentication → URL configuration** → set **Site URL** and add **Redirect URLs**:
+   - `https://<your-domain>/**`
+   - `https://<project-name>.pages.dev/**` (while testing)
+
+SPA routing (magic-link auth) works automatically — there is no `404.html`, so Pages serves `index.html` for unknown routes. `_headers` in the repo sets security + cache headers.
+
+#### Option B — Netlify
+
 1. netlify.com → **Add new site → Import an existing project** → pick your GitHub repo.
 2. No build command needed; publish directory is the repo root (already set in `netlify.toml`).
 3. Deploy. Then add your custom domain (e.g. `portal.roxium.co`) under **Domain settings**.
