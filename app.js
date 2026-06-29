@@ -490,7 +490,7 @@ const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 /* ---------------- render ---------------- */
 function render(){
   renderBanner();
-  $('heroTitle').innerHTML = (data.practice? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
+  $('heroTitle').innerHTML = esc(data.practice ? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
   // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
   const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));
   const latestPeriod = reported.length? reported[0].period : null;

@@ -23,10 +23,9 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const ASANA_SECRET = Deno.env.get('ASANA_SECRET') ?? '';
-  if (ASANA_SECRET) {
-    const hdr = req.headers.get('x-asana-secret') || '';
-    if (hdr !== ASANA_SECRET) return json({ error: 'Invalid webhook secret' }, 403);
-  }
+  if (!ASANA_SECRET) return json({ error: 'Webhook not configured (ASANA_SECRET missing)' }, 503);
+  const hdr = req.headers.get('x-asana-secret') || '';
+  if (hdr !== ASANA_SECRET) return json({ error: 'Invalid webhook secret' }, 403);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -41,6 +40,11 @@ Deno.serve(async (req) => {
   const message = (body.message ?? '').trim();
   const author = (body.author ?? 'Asana').trim();
   if (!practice_id || !message) return json({ error: 'practice_id and message are required' }, 400);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(practice_id))
+    return json({ error: 'invalid practice_id' }, 400);
+
+  const { data: practice } = await admin.from('practices').select('id').eq('id', practice_id).maybeSingle();
+  if (!practice) return json({ error: 'practice not found' }, 404);
 
   try {
     const { data, error } = await admin.from('activity').insert({ practice_id, message, author, source: 'asana' }).select();

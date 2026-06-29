@@ -66,6 +66,7 @@ create table if not exists sheet_sources (
   csv_url text, sheet_id text, tab_name text, gid text,
   is_active boolean not null default true,
   last_synced_at timestamptz, last_status text, last_error text,
+  last_rows int, last_months text[],
   created_at timestamptz default now(),
   unique (practice_id, source)                 -- one source tab per channel per practice
 );
@@ -227,6 +228,41 @@ alter table sheet_sources  enable row level security;
 drop policy if exists "team sheet sources" on sheet_sources;
 create policy "team sheet sources" on sheet_sources for all using (is_team()) with check (is_team());
 
+-- Sync run audit log (written by sync-coefficient Edge Function).
+create table if not exists sync_runs (
+  id            uuid primary key default gen_random_uuid(),
+  ran_at        timestamptz not null default now(),
+  trigger       text not null default 'scheduled',
+  ok            boolean not null default true,
+  rows_seen     int not null default 0,
+  upserted      int not null default 0,
+  skipped_count int not null default 0,
+  months_seen   text[],
+  sources       jsonb,
+  error         text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists sync_runs_ran_at_idx on sync_runs (ran_at desc);
+alter table sync_runs enable row level security;
+drop policy if exists "team reads sync_runs" on sync_runs;
+create policy "team reads sync_runs" on sync_runs for select using (is_team());
+drop policy if exists "service inserts sync_runs" on sync_runs;
+create policy "service inserts sync_runs" on sync_runs for insert
+  with check (auth.role() = 'service_role');
+
+-- Team-only sync status view (SECURITY INVOKER — respects RLS on sheet_sources).
+drop view if exists public.sheet_sync_status;
+create view public.sheet_sync_status
+with (security_invoker = true) as
+select
+  s.id, s.practice_id, p.name as practice_name, s.source, s.label, s.is_active,
+  s.tab_name, s.last_synced_at, s.last_status, s.last_error, s.last_rows, s.last_months,
+  p.workbook_sheet_id
+from sheet_sources s
+join practices p on p.id = s.practice_id;
+revoke all on public.sheet_sync_status from public;
+grant select on public.sheet_sync_status to authenticated;
+
 alter table app_settings   enable row level security;
 drop policy if exists "team reads settings" on app_settings;
 create policy "team reads settings" on app_settings for select using (is_team());
@@ -340,7 +376,7 @@ create policy "team activity" on activity    for all using (is_team()) with chec
 drop policy if exists "read notif" on notifications;
 create policy "read notif" on notifications for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "insert notif" on notifications;
-create policy "insert notif" on notifications for insert with check (true);
+create policy "insert notif" on notifications for insert with check (is_team());
 drop policy if exists "client seen" on notifications;
 create policy "client seen" on notifications for update using (is_member_of(practice_id)) with check (is_member_of(practice_id));
 drop policy if exists "team notif" on notifications;
@@ -400,11 +436,18 @@ begin
 end $$;
 
 -- Freeze every month before the current calendar month; current month stays live.
+-- Callable only by service_role (sync-coefficient) or team in SQL editor.
 create or replace function finalize_past_months() returns void
-language sql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.role() is distinct from 'service_role' and not is_team() then
+    raise exception 'finalize_past_months: not authorized'
+      using errcode = 'insufficient_privilege';
+  end if;
   update kpi_monthly set finalized = true
    where finalized = false and period < date_trunc('month', now())::date;
-$$;
+end $$;
+revoke all on function finalize_past_months() from public, anon, authenticated;
 
 -- Keep `month` derived from `period` and refresh updated_at on every KPI write.
 create or replace function sync_kpi_month() returns trigger
@@ -762,6 +805,10 @@ create or replace function seed_practice(p_name text, p_kickoff date)
 returns uuid language plpgsql as $$
 declare pid uuid;
 begin
+  if not is_team() then
+    raise exception 'seed_practice: team only'
+      using errcode = 'insufficient_privilege';
+  end if;
   -- Guard against duplicate practices (the cause of the "two Balikians" bug):
   -- if a practice with the same trimmed, case-insensitive name already exists,
   -- refuse rather than silently create a second, empty one. The caller (team UI
@@ -841,6 +888,8 @@ begin
 
   return pid;
 end $$;
+revoke all on function seed_practice(text, date) from public, anon;
+grant execute on function seed_practice(text, date) to authenticated;
 
 -- Create your first practice (edit the name and kickoff date), then link users:
 --   select seed_practice('Demo Practice', current_date);
