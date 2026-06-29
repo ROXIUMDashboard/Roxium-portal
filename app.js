@@ -1738,6 +1738,17 @@ $('btnInvite').onclick = async ()=>{
   }finally{ $('btnInvite').disabled = false; }
 };
 
+$('btnDeleteAccessClient')?.addEventListener('click', async ()=>{
+  if(!isTeamView()) return;
+  const pid = $('accessPractice')?.value;
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  if(!p){
+    const el=$('accessDelMsg'); if(el) el.textContent='Select a practice in the dropdown above first.';
+    return;
+  }
+  await deletePractice(p.id, p.name, { flash: t=>{ const el=$('accessDelMsg'); if(el) el.textContent=t; } });
+});
+
 $('btnClientInvite').onclick = async ()=>{
   if(!canSeeAccessTab() || !practiceId) return;
   const email = $('clientInviteEmail').value.trim();
@@ -2205,25 +2216,29 @@ async function removeSource(pid, source){
   loadSheetSources(); refreshOnboardChecklist(pid);
   if(practiceId===pid) loadAll();   // refresh the open dashboard so the channel disappears now
 }
-async function deletePractice(id, name){
+async function deletePractice(id, name, opts={}){
   if(!isTeamView()) return;
-  // single themed dialog: confirmation message + type-the-name-to-confirm guard
+  const flash = opts.flash || adminDelFlash;
   const ok = await uiConfirm(`Delete “${name}”?`,
     `This permanently removes the practice and <b>all</b> of its data — KPIs, deliverables, roadmap, video pipeline, history, updates and its client logins. This cannot be undone.`,
     { danger:true, confirmLabel:'Delete practice', requireText:name });
   if(!ok) return;
-  adminDelFlash('Deleting…');
+  flash('Deleting…');
   try{
     const { error } = await sb.rpc('delete_practice', { p_id: id });
     if(error) throw error;
     delete selByPractice[id];
-    if(practiceId===id){ practiceId = null; }  // we deleted the open one
+    delete chanByPractice[id];
+    if(practiceId===id){ practiceId = null; }
     await loadTeamPractices();
-    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;  // fall back to another practice
+    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;
     renderAdminClients();
-    adminDelFlash(`"${name}" was deleted.`);
+    flash(`"${name}" was deleted.`);
+    const ap = $('accessPractice');
+    if(ap?.value) loadAccessRoster(ap.value);
+    else if($('accessRoster')) $('accessRoster').innerHTML = '<div class="note">Select a practice to manage access.</div>';
     if(practiceId) loadAll();
-  }catch(e){ adminDelFlash('Delete failed: '+(e.message||e)); }
+  }catch(e){ flash('Delete failed: '+(e.message||e)); }
 }
 
 /* ---- DANGER ZONE: reset all data for the currently-selected practice (team only) ---- */

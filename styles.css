@@ -489,7 +489,8 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .checklabel input[type=checkbox]:hover{border-color:var(--gold)}
 .checklabel input[type=checkbox]:checked{background:var(--gold);border-color:var(--gold)}
 .checklabel input[type=checkbox]:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(201,168,76,.5)}
-.access-btns{display:flex;gap:8px;flex-wrap:wrap}
+.access-delete-row{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.access-delete-row .note{margin:0}
 
 /* Access roster (admin + client owners) */
 /* flush on the dark page — no card box / lighter fill (incl. the empty-state strip) */
