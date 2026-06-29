@@ -284,10 +284,10 @@ async function loadTeamPractices(){
   const sel = $('accessPractice');
   if(sel){
     const keep = sel.value;
-    sel.innerHTML = list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
-    if(list.some(p=>p.id===keep)) sel.value = keep;
-    else if(practiceId && list.some(p=>p.id===practiceId)) sel.value = practiceId;
-    else if(list[0]) sel.value = list[0].id;
+    sel.innerHTML = `<option value="">— Select client —</option>`
+      + list.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if(keep && list.some(p=>p.id===keep)) sel.value = keep;
+    else sel.value = '';
     if(!sel.dataset.wired){
       sel.dataset.wired = '1';
       sel.onchange = ()=> loadAccessRoster(sel.value);
@@ -1652,7 +1652,11 @@ $('btnPromoteAdmin').onclick = async ()=>{
 };
 
 async function loadAccessRoster(pid){
-  const wrap = $('accessRoster'); if(!wrap || !pid) return;
+  const wrap = $('accessRoster'); if(!wrap) return;
+  if(!pid){
+    wrap.innerHTML = '<div class="note">Select a client above to view and manage access.</div>';
+    return;
+  }
   const { data, error } = await sb.rpc('get_practice_roster', { p_practice: pid });
   if(error){ wrap.innerHTML = `<div class="note">Could not load roster — run migration 2026-06-24_practice_invites_and_access.sql</div>`; return; }
   renderRoster(wrap, data, {
@@ -2089,8 +2093,7 @@ function renderAdminClients(){
     else countEl.textContent = `${total} client${total===1?'':'s'}`;
   }
   wrap.innerHTML = (list.length ? list.map(p=> `<div class="clientrow2">
-      <div class="ccol"><span class="cname">${esc(p.name)}</span>
-        <button class="btn ghost sm danger" data-delpractice="${p.id}" data-name="${esc(p.name)}">Delete client</button></div>
+      <div class="ccol"><span class="cname">${esc(p.name)}</span></div>
       ${clientWorkbookBlock(p)}
       ${clientSourcesHTML(p.id)}
     </div>`).join('') : (query
@@ -2101,7 +2104,6 @@ function renderAdminClients(){
 // (Re)bind all client-card handlers — called after a full render or a sources refresh.
 function wireAdminClients(){
   const wrap = $('adminClientList'); if(!wrap) return;
-  wrap.querySelectorAll('[data-delpractice]').forEach(b=> b.onclick = ()=> deletePractice(b.dataset.delpractice, b.dataset.name));
   wrap.querySelectorAll('[data-saveworkbook]').forEach(b=> b.onclick = ()=> saveWorkbook(b.dataset.saveworkbook));
   wrap.querySelectorAll('[data-detecttabs]').forEach(b=> b.onclick = ()=> detectTabs(b.dataset.detecttabs));
   wrap.querySelectorAll('[data-findwb]').forEach(b=> b.onclick = ()=> findWorkbook(b.dataset.findwb, b.dataset.name));
@@ -2351,7 +2353,7 @@ async function deletePractice(id, name, opts={}){
     flash(`"${name}" was deleted.`);
     const ap = $('accessPractice');
     if(ap?.value) loadAccessRoster(ap.value);
-    else if($('accessRoster')) $('accessRoster').innerHTML = '<div class="note">Select a practice to manage access.</div>';
+    else if($('accessRoster')) $('accessRoster').innerHTML = '<div class="note">Select a client above to view and manage access.</div>';
     if(practiceId) loadAll();
   }catch(e){ flash('Delete failed: '+(e.message||e)); }
 }
