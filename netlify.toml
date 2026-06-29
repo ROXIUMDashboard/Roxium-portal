@@ -4,13 +4,30 @@
 [build]
   publish = "."
 
-# Security headers
+# Security headers (all routes)
 [[headers]]
   for = "/*"
   [headers.values]
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Don't let browsers cache HTML/JS/CSS across deploys — without this, users keep
+# old app.js/styles.css even after Netlify publishes a new build.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
 
 # Single-page app: serve index.html for all routes (magic-link redirects land cleanly)
 [[redirects]]
