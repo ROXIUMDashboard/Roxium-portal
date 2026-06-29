@@ -96,7 +96,24 @@ const getChan = () => (practiceId && practiceId in chanByPractice) ? chanByPract
 const setChan = c => { if(!practiceId) return; if(c==null||c==='all') delete chanByPractice[practiceId]; else chanByPractice[practiceId]=c; };
 // canonical channel/source key — fold Meta's aliases into 'marketing' so a source is
 // attributed to exactly one channel (no split/duplicate channels, consistent math).
-const sourceKey = s => (!s || s==='meta' || s==='coefficient') ? 'marketing' : s;
+const sourceKey = s => (!s || s==='meta' || s==='coefficient') ? 'marketing' : String(s).trim();
+
+// One row per (period, canonical source) — keeps marketing/meta/coefficient from
+// double-counting in aggregate, and uses the most recently updated row per key.
+function normalizeKpiRows(rows){
+  const byKey = new Map();
+  const ordered = [...rows].sort((a,b)=> new Date(a.updated_at||0) - new Date(b.updated_at||0));
+  for(const r of ordered){
+    const canon = sourceKey(r.source);
+    byKey.set(`${r.period}|${canon}`, { ...r, source: canon });
+  }
+  return [...byKey.values()];
+}
+
+// Channels that currently have KPI data for this practice (after normalization).
+function kpiSourcesPresent(){
+  return [...new Set(normalizeKpiRows(data.kpiRaw||[]).map(r=> r.source))];
+}
 // Known source presets (Meta = the legacy 'marketing' source). Each is one TAB in a
 // client's master workbook; the list seeds the admin "add source" picker and channel
 // labels. Sources are open-ended — a custom key works too, this is just the menu.
@@ -408,22 +425,17 @@ const KPI_ADDITIVE = new Set(['spend','impr','clicks','lpv','reach','page_engage
 // Build the per-period rows the dashboard renders, honoring the selected channel.
 // 'all' sums every channel together; a specific channel filters to just its rows.
 function computeKpi(){
-  const rows = data.kpiRaw || [];
-  // derive the channel set from the CURRENT KPI rows; if the selected channel is no
-  // longer present (source removed / data changed), fall back to the aggregate so the
-  // view never shows a stale/empty channel.
-  const present = new Set(rows.map(r => sourceKey(r.source)));
+  const rows = normalizeKpiRows(data.kpiRaw || []);
+  const present = new Set(rows.map(r => r.source));
   let chan = getChan();
   if(chan!=='all' && !present.has(chan)){ chan = 'all'; setChan('all'); }
-  // per-channel: that source's rows only. all: every present source (additive metrics
-  // sum across channels; ratios like CTR/CPM/CPC are re-derived from the summed totals).
-  const scoped = chan==='all' ? rows : rows.filter(r => sourceKey(r.source) === chan);
+  const scoped = chan==='all' ? rows : rows.filter(r => r.source === chan);
   return mergeKpiByPeriod(scoped);
 }
 
 // Distinct channels present in the raw data, in CHANNELS order then any extras.
 function channelsPresent(){
-  const present = new Set((data.kpiRaw||[]).map(r => sourceKey(r.source)));
+  const present = new Set(kpiSourcesPresent());
   const ordered = CHANNELS.map(c=>c.source).filter(s=> present.has(s));
   for(const s of present) if(!ordered.includes(s)) ordered.push(s);
   return ordered;
@@ -2020,7 +2032,7 @@ async function saveWorkbook(pid){
 // Call sync-coefficient and return the parsed JSON body even on non-2xx (invoke()
 // throws but the real reason is in error.context). Shared by detect/find/sync calls.
 async function invokeSyncFn(body){
-  const { data, error } = await sb.functions.invoke('sync-coefficient', { body });
+  const { data, error } = await sb.functions.invoke('sync-coefficient', { body: { ...body, _ts: Date.now() } });
   let out = data;
   if(error){ try{ out = await error.context.json(); }catch(_){ /* not json */ } if(!out) throw error; }
   if(!out?.ok) throw new Error(out?.error || (error && error.message) || 'Request failed');
@@ -2101,10 +2113,10 @@ $('adminTabs')?.addEventListener('click', e=>{
 // System tab · "Test & list workbooks" — proves the folder is reachable + shared.
 $('btnListWorkbooks')?.addEventListener('click', async ()=>{
   if(!isTeamView()) return;
-  const out = $('folderWorkbooks'); if(out) out.innerHTML = '<div class="note">Listing workbooks…</div>';
+  const out = $('folderWorkbooks'); if(out) out.innerHTML = '<div class="note">Refreshing folder contents…</div>';
   try{
     const folder = (appSettings.master_reporting_drive_folder||'').trim();
-    const r = await invokeSyncFn({ action:'list_workbooks', folder_id: folder||undefined });
+    const r = await invokeSyncFn({ action:'list_workbooks', folder_id: folder||undefined, refresh: true });
     if(!r.files || !r.files.length){ if(out) out.innerHTML = '<div class="note">No spreadsheets found — is the folder shared with the service account?</div>'; return; }
     if(out) out.innerHTML = `<div class="note">${r.file_count} workbook(s) in the master folder:</div>` +
       r.files.map(f=> `<div class="dtab"><b>${esc(f.name)}</b></div>`).join('');
@@ -2117,12 +2129,14 @@ async function findWorkbook(pid, name){
   if(!isTeamView()) return;
   const out = document.getElementById('detect-'+pid); if(!out) return;
   const folder = (appSettings.master_reporting_drive_folder||'').trim();
-  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> (top of this section) first.</div>'; return; }
-  out.innerHTML = '<div class="note">Searching the master folder…</div>';
+  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> under Admin → System first.</div>'; return; }
+  out.innerHTML = '<div class="note">Refreshing folder contents…</div>';
   try{
-    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
-    // show EVERY workbook currently in the folder (re-queried live) so newly-added
-    // sheets appear — with the best name match floated to the top.
+    const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name, refresh: true });
+    if(!r.files && !(r.candidates||[]).length && !r.match){
+      out.innerHTML = '<div class="ssbad">Discovery response missing folder list — redeploy <code>sync-coefficient</code> from latest main.</div>';
+      return;
+    }
     const files = (r.files && r.files.length) ? r.files : (r.match ? [r.match] : (r.candidates||[]));
     if(!files.length){ out.innerHTML = `<div class="note">No Google Sheets found in the master folder. Make sure the new workbook is a Google Sheet (not an uploaded .xlsx) and the folder is shared with the service account.</div>`; return; }
     const matchId = r.match?.id;

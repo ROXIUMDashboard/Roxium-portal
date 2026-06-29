@@ -473,13 +473,14 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 .onboard-steps li.onboard-done{color:var(--text);list-style-type:'✓ '}
 .onboard-steps li.onboard-pending{list-style-type:'○ '}
 .onboard-hint{margin:8px 0 0;font-size:11.5px}
-/* invite-row action cell: a small label-style checkbox over the button, mirroring the
-   "label on top / control below" rhythm of the other fields so the row stays symmetrical */
-.invite-actions{display:flex;flex-direction:column;justify-content:flex-end;gap:6px;align-self:stretch}
-.invite-actions .checklabel{display:inline-flex;align-items:center;gap:6px;margin-bottom:6px;
-  font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
-.invite-actions .checklabel input[type=checkbox]{width:11px;height:11px}
-.invite-actions .btn{align-self:flex-start}
+/* invite row — checkbox + button as separate grid cells, aligned with other fields */
+.invite-entry{align-items:end}
+.invite-entry .f{display:flex;flex-direction:column;justify-content:flex-end}
+.invite-check{display:inline-flex !important;align-items:center;gap:5px;margin-bottom:0 !important;
+  font-size:10px;letter-spacing:.18em;text-transform:uppercase;min-height:42px}
+.invite-check input[type=checkbox]{width:10px !important;height:10px !important;min-width:10px;min-height:10px}
+.invite-send .invite-send-spacer{display:block;font-size:10px;line-height:1;margin-bottom:6px;visibility:hidden}
+.invite-send .btn{width:100%;min-height:42px;padding:10px 14px;box-sizing:border-box}
 .checklabel{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:8px;cursor:pointer;letter-spacing:.04em}
 /* custom dark/gold checkbox — hide native, draw a themed box with a gold check */
 .checklabel input[type=checkbox]{appearance:none;-webkit-appearance:none;-moz-appearance:none;flex:0 0 auto;
