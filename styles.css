@@ -300,8 +300,16 @@ a.btn{text-decoration:none;display:inline-block}
 
 /* searchable client switcher (team) */
 .switcher{position:relative}
-.switcher-input{min-width:200px}
-.switcher-results{position:absolute;top:calc(100% + 4px);right:0;left:0;min-width:240px;max-height:320px;overflow-y:auto;background:var(--surface2);border:1px solid var(--gold);border-radius:3px;z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.switcher-btn{display:flex;align-items:center;gap:8px;min-width:200px;max-width:280px;cursor:pointer;text-align:left}
+.switcher-btn-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switcher-caret{font-size:10px;color:var(--gold);flex-shrink:0}
+.switcher-pop{position:absolute;top:calc(100% + 4px);right:0;left:0;min-width:280px;background:var(--surface2);
+  border:1px solid var(--gold);border-radius:3px;z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.4);overflow:hidden}
+.switcher-search{display:block;width:100%;box-sizing:border-box;border:none;border-bottom:1px solid var(--line);
+  background:var(--ink);color:var(--cream);font-family:'Jost';font-size:13px;padding:10px 12px;border-radius:0}
+.switcher-search:focus{outline:none;background:var(--surface)}
+.switcher-search::placeholder{color:var(--muted)}
+.switcher-results{max-height:280px;overflow-y:auto}
 .switcher-item{display:block;width:100%;text-align:left;background:none;border:none;color:var(--cream);font-family:'Jost';font-size:13px;padding:9px 12px;cursor:pointer;letter-spacing:.02em}
 .switcher-item:hover{background:rgba(201,168,76,.12);color:var(--gold)}
 .switcher-item.current{color:var(--gold)}
@@ -416,8 +424,8 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
   /* header: let controls wrap, switcher goes full-width */
   .bar{height:auto;flex-wrap:wrap;gap:10px;padding:10px 0}
   .right{flex-wrap:wrap;gap:10px;width:100%}
-  #practiceSwitcher,.switcher-input{width:100%}
-  .switcher-results{width:100%}
+  #practiceSwitcher,.switcher-btn{width:100%;max-width:none}
+  .switcher-pop{width:100%}
   .practice{display:none}                      /* drop the email/role label on phones */
 
   /* hero */
@@ -596,6 +604,11 @@ select option{background:var(--surface2);color:var(--cream)}
 #whoami.editable{cursor:pointer;border-bottom:1px dotted transparent}
 #whoami.editable:hover{border-bottom-color:var(--gold);color:var(--cream)}
 .deployrow{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap}
+.deploy-msg{font-size:12.5px;letter-spacing:.02em}
+.deploy-msg.pending{color:var(--muted)}
+.deploy-msg.ok{color:var(--green)}
+.deploy-msg.err{color:#e07070}
+.deploy-hint{margin:0}
 @media(max-width:640px){.srcrow{grid-template-columns:1fr 1fr;gap:6px}.srcrow .srcname{grid-column:1/-1}}
 .dtab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;
   padding:6px 9px;border:1px solid var(--line);border-radius:3px;background:var(--ink)}

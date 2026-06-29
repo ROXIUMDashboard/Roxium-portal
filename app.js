@@ -227,34 +227,52 @@ $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.h
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
 let switcherWired = false;
+function updateSwitcherLabel(){
+  const el = $('practiceCurrentName');
+  const p = (practicesList||[]).find(x=> x.id===practiceId);
+  if(el) el.textContent = p ? p.name : 'Select client…';
+}
 function buildSwitcher(list){
   practicesList = list || [];
-  const cur = practicesList.find(p=>p.id===practiceId);
-  $('practiceSearch').value = cur ? cur.name : '';
+  updateSwitcherLabel();
   if(switcherWired) return;
   switcherWired = true;
-  const input = $('practiceSearch'), results = $('practiceResults');
-  const draw = (q)=>{
+  const root = $('practiceSwitcher');
+  const btn = $('practiceSwitcherBtn');
+  const pop = $('practiceSwitcherPop');
+  const input = $('practiceSearch');
+  const results = $('practiceResults');
+  const setOpen = o=>{
+    if(!pop) return;
+    pop.classList.toggle('hidden', !o);
+    btn?.setAttribute('aria-expanded', o?'true':'false');
+    root?.classList.toggle('open', o);
+    if(o){ input.value=''; draw(''); setTimeout(()=> input?.focus(), 0); }
+  };
+  const draw = q=>{
     const ql = (q||'').trim().toLowerCase();
     const matches = practicesList.filter(p=> p.name.toLowerCase().includes(ql));
     results.innerHTML = matches.length
       ? matches.map(p=>`<button type="button" class="switcher-item${p.id===practiceId?' current':''}" data-id="${p.id}">${esc(p.name)}</button>`).join('')
-      : '<div class="switcher-empty">No matches</div>';
+      : '<div class="switcher-empty">No matches — try another name</div>';
     results.querySelectorAll('.switcher-item').forEach(b=> b.onclick = ()=>{
       practiceId = b.dataset.id;
-      const p = practicesList.find(x=>x.id===practiceId);
-      input.value = p ? p.name : '';
-      results.classList.add('hidden');
-      input.blur();
-      // each practice defaults to ITS OWN latest reported month (don't carry a
-      // selected/edited month across practices — that's the "stuck on old month" bug)
-      loadAll();   // month selection is per-practice (selByPractice), so nothing to reset
+      updateSwitcherLabel();
+      setOpen(false);
+      btn?.focus();
+      loadAll();
     });
   };
-  input.addEventListener('focus', ()=>{ input.select(); draw(''); results.classList.remove('hidden'); });
-  input.addEventListener('input', ()=>{ draw(input.value); results.classList.remove('hidden'); });
-  input.addEventListener('keydown', e=>{ if(e.key==='Escape'){ results.classList.add('hidden'); input.blur(); } });
-  document.addEventListener('click', e=>{ if(!$('practiceSwitcher').contains(e.target)) results.classList.add('hidden'); });
+  btn?.addEventListener('click', e=>{ e.stopPropagation(); setOpen(pop?.classList.contains('hidden')); });
+  input?.addEventListener('input', ()=> draw(input.value));
+  input?.addEventListener('keydown', e=>{
+    if(e.key==='Escape'){ setOpen(false); btn?.focus(); }
+    else if(e.key==='Enter'){
+      const first = results.querySelector('.switcher-item');
+      if(first){ first.click(); e.preventDefault(); }
+    }
+  });
+  document.addEventListener('click', e=>{ if(root && !root.contains(e.target)) setOpen(false); });
 }
 
 // Team: (re)load every practice and refresh the switcher + admin access dropdown.
@@ -1766,6 +1784,26 @@ $('btnClientInvite').onclick = async ()=>{
 
 // ---- Admin: per-client sheet config + delete ----
 const adminDelFlash = t=>{ const el=$('adminDelMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+const deployFlashByPractice = {};
+function setDeployMsg(pid, text, kind){
+  clearTimeout(deployFlashByPractice[pid]?._timer);
+  if(!text) delete deployFlashByPractice[pid];
+  else{
+    deployFlashByPractice[pid] = { text, kind };
+    if(kind==='ok' || kind==='err'){
+      deployFlashByPractice[pid]._timer = setTimeout(()=>{
+        delete deployFlashByPractice[pid];
+        const el = document.getElementById('deploy-msg-'+pid);
+        if(el){ el.textContent=''; el.className='deploy-msg'; }
+      }, kind==='ok' ? 10000 : 14000);
+    }
+  }
+  const el = document.getElementById('deploy-msg-'+pid);
+  if(el){
+    el.textContent = text || '';
+    el.className = 'deploy-msg' + (kind ? ' '+kind : '');
+  }
+}
 // per-client reporting-sheet sources, keyed 'practiceId::source' (one per ad channel)
 let sheetSources = {};
 const ssKey = (pid, source)=> `${pid}::${source||'marketing'}`;
@@ -1974,7 +2012,8 @@ function clientSourcesHTML(pid){
     ${addSourceRow(pid)}
     <div class="deployrow">
       <button class="btn sm" data-deploy="${pid}">Deploy setup</button>
-      <span class="note">Saves the tab mappings &amp; runs a sync to confirm.</span>
+      <span class="deploy-msg${deployFlashByPractice[pid]?.kind ? ' '+deployFlashByPractice[pid].kind : ''}" id="deploy-msg-${pid}">${deployFlashByPractice[pid]?.text ? esc(deployFlashByPractice[pid].text) : ''}</span>
+      <span class="note deploy-hint">Saves tab mappings &amp; runs sync to confirm.</span>
     </div>
   </div>`;
 }
@@ -2086,14 +2125,21 @@ function refreshClientSources(pid){
 // Deploy: mappings are already saved on dropdown change — this confirms and runs a sync.
 async function deployClient(pid){
   if(!isTeamView()) return;
-  adminDelFlash('Deploying — running sync…');
+  const btn = document.querySelector(`[data-deploy="${pid}"]`);
+  if(btn) btn.disabled = true;
+  setDeployMsg(pid, 'Deploying — running sync…', 'pending');
   try{
     const r = await invokeSyncFn({ action:'sync', trigger:'manual' });
     await loadSheetSources();
-    adminDelFlash(`Deployed · synced ${r.upserted ?? 0} row(s)${r.months_seen && r.months_seen.length ? ` · ${r.months_seen.join(', ')}` : ''}.`);
+    const months = r.months_seen && r.months_seen.length ? ` · ${r.months_seen.join(', ')}` : '';
+    setDeployMsg(pid, `✓ Sync successful · ${r.upserted ?? 0} row(s)${months}`, 'ok');
     refreshOnboardChecklist(pid);
     if(practiceId===pid) loadAll();
-  }catch(e){ adminDelFlash('Deploy failed: '+(e.message||String(e))); }
+  }catch(e){
+    setDeployMsg(pid, 'Sync failed: '+(e.message||String(e)), 'err');
+  }finally{
+    if(btn) btn.disabled = false;
+  }
 }
 // Save the client's master workbook id (the one sheet every source tab reads from).
 async function saveWorkbook(pid){
