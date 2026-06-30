@@ -2223,14 +2223,21 @@ $('btnSyncNow').onclick = async ()=>{
     }
     if(!body?.ok) throw new Error(body?.error || (error && error.message) || 'Sync failed');
     const data2 = body;
-    const skip = data2.skipped_count || 0;
     const parts = [`Synced ${data2.upserted ?? 0} row(s)`];
-    if(skip) parts.push(`skipped ${skip}`);
     const months = monthsList(data2.months_seen);
     if(months) parts.push(`months: ${months}`);
-    if(data2.rows_seen === 0){
-      // surface the first concrete skip reason (e.g. "no tab configured") so the
-      // admin knows exactly what to fix instead of a generic "check headers".
+    // surface WHY rows were missed: per-source skipped daily-row counts + sample reasons
+    const missed = [];
+    (data2.reports||[]).forEach(r=>{
+      if(r && r.skipped_rows){
+        const samp = [...new Set((r.skipped_samples||[]).map(x=> x && (x.reason + (x.value!=null ? ` (${x.value})` : ''))).filter(Boolean))].slice(0,2);
+        missed.push(`${r.skipped_rows} row(s) skipped${samp.length ? ' — '+samp.join('; ') : ''}`);
+      }
+    });
+    (data2.skipped||[]).forEach(s=>{ if(s && s.reason && s.skipped_rows==null) missed.push(s.reason); });
+    if(missed.length) parts.push(missed.slice(0,3).join(' · '));
+    else if(data2.skipped_count) parts.push(`skipped ${data2.skipped_count}`);
+    if(data2.rows_seen === 0 && !missed.length){
       const why = (data2.skipped||[]).map(s=> s && s.reason).find(Boolean);
       parts.push(why ? `no rows parsed — ${why}` : 'no rows parsed — check the source tab names and headers');
     }
