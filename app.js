@@ -486,12 +486,11 @@ function mergeKpiByPeriod(rows){
 /* ---------------- KPI trend charts (Chart.js) ---------------- */
 let kpiChartInstances = [];
 let investChartRef = null;
-const CHART_PALETTE = ['#C9A84C','#8B9DAF','#6B8F71','#9A7FB8','#C97B6B','#5A8FA8'];
 const INVEST_SERIES = [
-  { key:'spend',  label:'Spend',        color:'#C9A84C', field:'spend',  axis:'y',  format:'dollar' },
-  { key:'reach',  label:'Reach',        color:'#7BA4D4', field:'reach',  axis:'y1', format:'num' },
-  { key:'impr',   label:'Impressions',  color:'#6B8F71', field:'impr',   axis:'y2', format:'num' },
-  { key:'clicks', label:'Link Clicks', color:'#9A7FB8', field:'clicks', axis:'y3', format:'num' },
+  { key:'spend',  label:'Spend',        color:'#C9A84C', field:'spend',  axis:'y',  format:'dollar', normalize:false },
+  { key:'reach',  label:'Reach',        color:'#7BA4D4', field:'reach',  axis:'y1', format:'num',    normalize:true },
+  { key:'impr',   label:'Impressions',  color:'#6B8F71', field:'impr',   axis:'y1', format:'num',    normalize:true },
+  { key:'clicks', label:'Link Clicks', color:'#9A7FB8', field:'clicks', axis:'y1', format:'num',    normalize:true },
 ];
 const INVEST_METRICS_KEY = 'roxium_invest_metrics';
 let investMetricEnabled = (()=>{
@@ -511,6 +510,18 @@ function investAxisTickFmt(format){
   if(format==='dollar') return v=> '$'+Number(v).toLocaleString();
   return v=> Number(v).toLocaleString();
 }
+function normalizeToTrend(vals){
+  const nums = vals.map(v=> (v==null || Number.isNaN(Number(v))) ? null : Number(v));
+  const present = nums.filter(v=> v!=null);
+  if(!present.length) return nums;
+  const min = Math.min(...present), max = Math.max(...present);
+  const span = max - min;
+  if(span === 0) return nums.map(v=> v==null ? null : 50);
+  return nums.map(v=> v==null ? null : ((v - min) / span) * 100);
+}
+function investRightAxisVisible(enabled){
+  return INVEST_SERIES.some(s=> s.axis==='y1' && enabled[s.key]);
+}
 function buildInvestChartOptions(labels, highlightIdx, enabled){
   const cream = '#F2EDE3', muted = '#9A948A', line = 'rgba(201,168,76,.12)';
   const opts = {
@@ -521,10 +532,29 @@ function buildInvestChartOptions(labels, highlightIdx, enabled){
       tooltip: {
         backgroundColor: 'rgba(13,12,16,.94)', borderColor: 'rgba(201,168,76,.35)', borderWidth: 1,
         titleColor: '#C9A84C', bodyColor: cream, padding: 10,
+        callbacks: {
+          label(ctx){
+            const s = INVEST_SERIES[ctx.datasetIndex];
+            const raw = ctx.dataset.rawValues?.[ctx.dataIndex];
+            const fmt = investAxisTickFmt(s.format);
+            return `${s.label}: ${raw==null ? '—' : fmt(raw)}`;
+          },
+        },
       },
     },
     scales: {
       x: { ticks: { color: muted, font: { family: 'Jost', size: 10 }, maxRotation: 0 }, grid: { color: line } },
+      y: {
+        type: 'linear', position: 'left', beginAtZero: true, display: !!enabled.spend,
+        ticks: { color: INVEST_SERIES[0].color, font: { family: 'Jost', size: 10 }, callback: investAxisTickFmt('dollar') },
+        grid: { color: line },
+      },
+      y1: {
+        type: 'linear', position: 'right', beginAtZero: true, max: 100,
+        display: investRightAxisVisible(enabled),
+        ticks: { color: muted, font: { family: 'Jost', size: 10 }, callback: v=> Math.round(v)+'%' },
+        grid: { drawOnChartArea: false },
+      },
     },
     elements: {
       point: {
@@ -536,17 +566,6 @@ function buildInvestChartOptions(labels, highlightIdx, enabled){
       line: { tension: 0.32, borderWidth: 2 },
     },
   };
-  INVEST_SERIES.forEach((s, i)=>{
-    opts.scales[s.axis] = {
-      type: 'linear', position: s.axis==='y' ? 'left' : 'right', beginAtZero: true,
-      display: !!enabled[s.key],
-      offset: s.axis!=='y',
-      ticks: { color: s.color, font: { family: 'Jost', size: 10 }, callback: investAxisTickFmt(s.format) },
-      grid: s.axis==='y'
-        ? { color: line }
-        : { drawOnChartArea: false },
-    };
-  });
   return opts;
 }
 function syncInvestFilterButtons(){
@@ -561,8 +580,9 @@ function updateInvestChartVisibility(){
   INVEST_SERIES.forEach((s, i)=>{
     const on = !!investMetricEnabled[s.key];
     investChartRef.setDatasetVisibility(i, on);
-    if(investChartRef.options.scales[s.axis]) investChartRef.options.scales[s.axis].display = on;
   });
+  if(investChartRef.options.scales.y) investChartRef.options.scales.y.display = !!investMetricEnabled.spend;
+  if(investChartRef.options.scales.y1) investChartRef.options.scales.y1.display = investRightAxisVisible(investMetricEnabled);
   investChartRef.update();
   syncInvestFilterButtons();
 }
@@ -579,17 +599,6 @@ function bindInvestFilters(){
   });
   syncInvestFilterButtons();
 }
-const CHART_METRICS = [
-  { key:'impr',   label:'Impressions',  def: CORE_METRICS.find(x=>x.k==='impr') },
-  { key:'reach',  label:'Reach',      def: CORE_METRICS.find(x=>x.k==='reach') },
-  { key:'spend',  label:'Amount Spent', def: CORE_METRICS.find(x=>x.k==='spend') },
-  { key:'clicks', label:'Link Clicks', def: CORE_METRICS.find(x=>x.k==='clicks') },
-  { key:'ctr',    label:'CTR',        def: CORE_METRICS.find(x=>x.k==='ctr') },
-  { key:'cpm',    label:'CPM',        def: CORE_METRICS.find(x=>x.k==='cpm') },
-  { key:'cpc',    label:'CPC',        def: CORE_METRICS.find(x=>x.k==='cpc') },
-  { key:'cons',   label:'Consults',   def: { k:'cons', fmt:v=>fmtNum(v) }, raw:true },
-  { key:'leads',  label:'Leads',      def: { k:'leads', fmt:v=>fmtNum(v) }, raw:true },
-];
 function destroyKpiCharts(){
   kpiChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
   kpiChartInstances = [];
@@ -602,38 +611,6 @@ function kpiTimeSeries(endPeriod){
   const merged = mergeKpiByPeriod(scoped).sort((a,b)=> String(a.period).localeCompare(String(b.period)));
   const end = endPeriod || merged[merged.length-1]?.period;
   return end ? merged.filter(r=> String(r.period) <= String(end)) : merged;
-}
-function chartBaseOptions(labels, highlightIdx){
-  const cream = '#F2EDE3', muted = '#9A948A', line = 'rgba(201,168,76,.12)';
-  return {
-    responsive: true, maintainAspectRatio: false, animation: { duration: 420 },
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: { labels: { color: cream, font: { family: 'Jost', size: 11 }, boxWidth: 12 } },
-      tooltip: {
-        backgroundColor: 'rgba(13,12,16,.94)', borderColor: 'rgba(201,168,76,.35)', borderWidth: 1,
-        titleColor: '#C9A84C', bodyColor: cream, padding: 10,
-      },
-    },
-    scales: {
-      x: { ticks: { color: muted, font: { family: 'Jost', size: 10 }, maxRotation: 0 }, grid: { color: line } },
-      y: { ticks: { color: muted, font: { family: 'Jost', size: 10 } }, grid: { color: line }, beginAtZero: true },
-    },
-    elements: {
-      point: {
-        radius: ctx=> ctx.dataIndex===highlightIdx ? 6 : 3,
-        hoverRadius: 7,
-        borderWidth: 2,
-        backgroundColor: ctx=> ctx.dataIndex===highlightIdx ? '#F2EDE3' : 'transparent',
-      },
-      line: { tension: 0.32, borderWidth: 2 },
-    },
-  };
-}
-function metricSeriesValue(def, row){
-  if(!def || !row) return null;
-  if(def.raw) return N(row, def.k);
-  return metricValue(def, row);
 }
 function renderKpiCharts(viewPeriod, isLive){
   const wrap = $('kpiCharts');
@@ -652,11 +629,6 @@ function renderKpiCharts(viewPeriod, isLive){
   const viewLbl = viewPeriod ? periodLabel(viewPeriod) : 'latest month';
   const liveNote = isLive ? ' · live' : ' · archived snapshot';
 
-  const trendMetrics = CHART_METRICS.filter(m=>{
-    if(m.raw) return series.some(r=> N(r, m.key)!=null);
-    return series.some(r=> metricSeriesValue(m.def, r)!=null);
-  });
-
   wrap.innerHTML = `
     <div class="kpi-charts-head">
       <span class="chanlabel">Trend through ${esc(viewLbl)}${liveNote}</span>
@@ -664,60 +636,39 @@ function renderKpiCharts(viewPeriod, isLive){
     </div>
     <div class="chartpanel chartpanel-invest">
       <div class="charttitle">Investment &amp; performance</div>
-      <div class="chartsub">Spend vs reach, impressions, and link clicks over time</div>
+      <div class="chartsub">Spend ($, left) · reach, impressions, and link clicks on the right, each scaled to its own range so trends line up</div>
       <div class="chart-filters" role="group" aria-label="Investment chart metrics">${INVEST_SERIES.map(s=>`
         <button type="button" class="chart-filter${investMetricEnabled[s.key]?' on':''}" data-metric="${s.key}" aria-pressed="${investMetricEnabled[s.key]?'true':'false'}">
           <span class="cf-box" style="--cf:${s.color}"></span>
           <span class="cf-label">${esc(s.label)}</span>
         </button>`).join('')}</div>
       <div class="chartbox chartbox-lg"><canvas id="chartInvest"></canvas></div>
-    </div>
-    <div class="chartgrid">${trendMetrics.map((m,i)=>`
-      <div class="chartpanel">
-        <div class="charttitle">${esc(m.label)}</div>
-        <div class="chartbox"><canvas id="chartMetric${i}"></canvas></div>
-      </div>`).join('')}</div>`;
+    </div>`;
 
   const investOpts = buildInvestChartOptions(labels, hi, investMetricEnabled);
   const invest = new Chart($('chartInvest'), {
     type: 'line',
     data: {
       labels,
-      datasets: INVEST_SERIES.map(s=> ({
-        label: s.label,
-        data: series.map(r=> N(r, s.field)),
-        yAxisID: s.axis,
-        borderColor: s.color,
-        backgroundColor: s.key==='spend' ? 'rgba(201,168,76,.08)' : 'transparent',
-        fill: s.key==='spend',
-        hidden: !investMetricEnabled[s.key],
-      })),
+      datasets: INVEST_SERIES.map(s=> {
+        const rawValues = series.map(r=> N(r, s.field));
+        return {
+          label: s.label,
+          data: s.normalize ? normalizeToTrend(rawValues) : rawValues,
+          rawValues,
+          yAxisID: s.axis,
+          borderColor: s.color,
+          backgroundColor: s.key==='spend' ? 'rgba(201,168,76,.08)' : 'transparent',
+          fill: s.key==='spend',
+          hidden: !investMetricEnabled[s.key],
+        };
+      }),
     },
     options: investOpts,
   });
   investChartRef = invest;
   kpiChartInstances.push(invest);
   bindInvestFilters();
-
-  trendMetrics.forEach((m,i)=>{
-    const vals = series.map(r=> metricSeriesValue(m.def, r));
-    const opts = chartBaseOptions(labels, hi);
-    if(m.key==='spend' || m.key==='cpm' || m.key==='cpc') opts.scales.y.ticks.callback = v=> '$'+Number(v).toLocaleString();
-    if(m.key==='ctr') opts.scales.y.ticks.callback = v=> (v*100).toFixed(1)+'%';
-    const ch = new Chart($('chartMetric'+i), {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: m.label, data: vals,
-          borderColor: CHART_PALETTE[i % CHART_PALETTE.length],
-          backgroundColor: 'rgba(201,168,76,.06)', fill: true,
-        }],
-      },
-      options: opts,
-    });
-    kpiChartInstances.push(ch);
-  });
 }
 
 /* ---------------- formatters ---------------- */
