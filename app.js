@@ -203,6 +203,7 @@ function syncChrome(){
   $('btnAdmin').classList.toggle('hidden', !teamView || adminMode);
   $('btnAdmin').textContent = '⚙ Admin';
   $('btnPreview').classList.toggle('hidden', !realTeam || adminMode);
+  $('btnAddMilestone')?.classList.toggle('hidden', !teamView || adminMode);
   $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
   document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
   $('tabnav').classList.toggle('hidden', adminMode);
@@ -482,6 +483,146 @@ function mergeKpiByPeriod(rows){
   return [...byPeriod.values()];
 }
 
+/* ---------------- KPI trend charts (Chart.js) ---------------- */
+let kpiChartInstances = [];
+const CHART_PALETTE = ['#C9A84C','#8B9DAF','#6B8F71','#9A7FB8','#C97B6B','#5A8FA8'];
+const CHART_METRICS = [
+  { key:'impr',   label:'Impressions',  def: CORE_METRICS.find(x=>x.k==='impr') },
+  { key:'reach',  label:'Reach',      def: CORE_METRICS.find(x=>x.k==='reach') },
+  { key:'spend',  label:'Amount Spent', def: CORE_METRICS.find(x=>x.k==='spend') },
+  { key:'clicks', label:'Link Clicks', def: CORE_METRICS.find(x=>x.k==='clicks') },
+  { key:'ctr',    label:'CTR',        def: CORE_METRICS.find(x=>x.k==='ctr') },
+  { key:'cpm',    label:'CPM',        def: CORE_METRICS.find(x=>x.k==='cpm') },
+  { key:'cpc',    label:'CPC',        def: CORE_METRICS.find(x=>x.k==='cpc') },
+  { key:'cons',   label:'Consults',   def: { k:'cons', fmt:v=>fmtNum(v) }, raw:true },
+  { key:'leads',  label:'Leads',      def: { k:'leads', fmt:v=>fmtNum(v) }, raw:true },
+];
+function destroyKpiCharts(){
+  kpiChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
+  kpiChartInstances = [];
+}
+function kpiTimeSeries(endPeriod){
+  const chan = getChan();
+  const rows = normalizeKpiRows(data.kpiRaw || []).filter(r=> r.practice_id===practiceId);
+  const scoped = chan==='all' ? rows : rows.filter(r=> r.source===chan);
+  const merged = mergeKpiByPeriod(scoped).sort((a,b)=> String(a.period).localeCompare(String(b.period)));
+  const end = endPeriod || merged[merged.length-1]?.period;
+  return end ? merged.filter(r=> String(r.period) <= String(end)) : merged;
+}
+function chartBaseOptions(labels, highlightIdx){
+  const cream = '#F2EDE3', muted = '#9A948A', line = 'rgba(201,168,76,.12)';
+  return {
+    responsive: true, maintainAspectRatio: false, animation: { duration: 420 },
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { color: cream, font: { family: 'Jost', size: 11 }, boxWidth: 12 } },
+      tooltip: {
+        backgroundColor: 'rgba(13,12,16,.94)', borderColor: 'rgba(201,168,76,.35)', borderWidth: 1,
+        titleColor: '#C9A84C', bodyColor: cream, padding: 10,
+      },
+    },
+    scales: {
+      x: { ticks: { color: muted, font: { family: 'Jost', size: 10 }, maxRotation: 0 }, grid: { color: line } },
+      y: { ticks: { color: muted, font: { family: 'Jost', size: 10 } }, grid: { color: line }, beginAtZero: true },
+    },
+    elements: {
+      point: {
+        radius: ctx=> ctx.dataIndex===highlightIdx ? 6 : 3,
+        hoverRadius: 7,
+        borderWidth: 2,
+        backgroundColor: ctx=> ctx.dataIndex===highlightIdx ? '#F2EDE3' : 'transparent',
+      },
+      line: { tension: 0.32, borderWidth: 2 },
+    },
+  };
+}
+function metricSeriesValue(def, row){
+  if(!def || !row) return null;
+  if(def.raw) return N(row, def.k);
+  return metricValue(def, row);
+}
+function renderKpiCharts(viewPeriod, isLive){
+  const wrap = $('kpiCharts');
+  if(!wrap || typeof Chart==='undefined'){ if(wrap) wrap.classList.add('hidden'); return; }
+  destroyKpiCharts();
+  const series = kpiTimeSeries(viewPeriod);
+  if(series.length < 2){
+    wrap.classList.add('hidden');
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.classList.remove('hidden');
+  const labels = series.map(r=> periodLabel(r.period));
+  const hi = viewPeriod ? series.findIndex(r=> String(r.period)===String(viewPeriod)) : series.length-1;
+  const chanLbl = getChan()==='all' ? 'All channels' : channelLabel(getChan());
+  const viewLbl = viewPeriod ? periodLabel(viewPeriod) : 'latest month';
+  const liveNote = isLive ? ' · live' : ' · archived snapshot';
+
+  const trendMetrics = CHART_METRICS.filter(m=>{
+    if(m.raw) return series.some(r=> N(r, m.key)!=null);
+    return series.some(r=> metricSeriesValue(m.def, r)!=null);
+  });
+
+  wrap.innerHTML = `
+    <div class="kpi-charts-head">
+      <span class="chanlabel">Trend through ${esc(viewLbl)}${liveNote}</span>
+      <span class="note">${esc(chanLbl)} · ${series.length} month${series.length===1?'':'s'}</span>
+    </div>
+    <div class="chartpanel chartpanel-invest">
+      <div class="charttitle">Investment &amp; performance</div>
+      <div class="chartsub">Spend vs reach, impressions, and link clicks over time</div>
+      <div class="chartbox chartbox-lg"><canvas id="chartInvest"></canvas></div>
+    </div>
+    <div class="chartgrid">${trendMetrics.map((m,i)=>`
+      <div class="chartpanel">
+        <div class="charttitle">${esc(m.label)}</div>
+        <div class="chartbox"><canvas id="chartMetric${i}"></canvas></div>
+      </div>`).join('')}</div>`;
+
+  const spend = series.map(r=> N(r,'spend'));
+  const investOpts = chartBaseOptions(labels, hi);
+  investOpts.scales.y1 = {
+    position: 'right', beginAtZero: true,
+    ticks: { color: '#9A948A', font: { family: 'Jost', size: 10 } },
+    grid: { drawOnChartArea: false },
+  };
+  investOpts.scales.y.ticks.callback = v=> '$'+Number(v).toLocaleString();
+  const invest = new Chart($('chartInvest'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label:'Spend', data: spend, yAxisID:'y', borderColor: CHART_PALETTE[0], backgroundColor: 'rgba(201,168,76,.08)', fill: true },
+        { label:'Reach', data: series.map(r=> N(r,'reach')), yAxisID:'y1', borderColor: CHART_PALETTE[1] },
+        { label:'Impressions', data: series.map(r=> N(r,'impr')), yAxisID:'y1', borderColor: CHART_PALETTE[2] },
+        { label:'Link Clicks', data: series.map(r=> N(r,'clicks')), yAxisID:'y1', borderColor: CHART_PALETTE[3] },
+      ],
+    },
+    options: investOpts,
+  });
+  kpiChartInstances.push(invest);
+
+  trendMetrics.forEach((m,i)=>{
+    const vals = series.map(r=> metricSeriesValue(m.def, r));
+    const opts = chartBaseOptions(labels, hi);
+    if(m.key==='spend' || m.key==='cpm' || m.key==='cpc') opts.scales.y.ticks.callback = v=> '$'+Number(v).toLocaleString();
+    if(m.key==='ctr') opts.scales.y.ticks.callback = v=> (v*100).toFixed(1)+'%';
+    const ch = new Chart($('chartMetric'+i), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: m.label, data: vals,
+          borderColor: CHART_PALETTE[i % CHART_PALETTE.length],
+          backgroundColor: 'rgba(201,168,76,.06)', fill: true,
+        }],
+      },
+      options: opts,
+    });
+    kpiChartInstances.push(ch);
+  });
+}
+
 /* ---------------- formatters ---------------- */
 const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
@@ -556,6 +697,7 @@ function render(){
   // KPI cards + status board — driven by the real ad metric model; only metrics
   // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
+    renderKpiCharts(viewPeriod, isLive);
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
       clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
     // delta vs the previous month's snapshot; lowerBetter flips colour for cost metrics
@@ -1097,6 +1239,7 @@ async function autoAdvanceMilestones(){
   // apply: below current = done, current = current, above = upcoming
   for(let i=0;i<n;i++){
     const want = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'upcoming';
+    if(miles[i].status_manual) continue;
     if(miles[i].status !== want){
       await sb.from('milestones').update({ status: want }).eq('id', miles[i].id);
       if(want==='current') await notifyClient('milestone', `You've reached: ${miles[i].name}.`);
@@ -1374,14 +1517,31 @@ function openVideoDetail(id){
 }
 function closeModal(){ const m=$('modal'); m.classList.remove('open'); m.innerHTML=''; }
 
-/* ---- MILESTONES: original display; team edits date + status (status change notifies client) ---- */
+/* ---- MILESTONES: client timeline + team editable / draggable list ---- */
+const MILE_PHASE_DEFAULT = 'Roadmap';
+function sortedMilestones(){ return [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0)); }
+function milestonePhases(){
+  const phases = [];
+  const seen = new Set();
+  sortedMilestones().forEach(m=>{
+    const p = (m.phase||'').trim() || MILE_PHASE_DEFAULT;
+    if(!seen.has(p)){ seen.add(p); phases.push(p); }
+  });
+  return phases.length ? phases : [MILE_PHASE_DEFAULT];
+}
 function renderTimeline(isTeam){
   const wrap = $('timeline');
-  if(!data.miles.length){ wrap.innerHTML = '<p class="note">Roadmap milestones will appear here at kickoff.</p>'; return; }
-  wrap.innerHTML = data.miles.map(m=>{
+  if(!data.miles.length){
+    wrap.innerHTML = '<p class="note">Roadmap milestones will appear here at kickoff.</p>';
+    return;
+  }
+  if(isTeam) renderMilestoneTeamList(wrap);
+  else renderMilestoneClientTimeline(wrap);
+}
+function renderMilestoneClientTimeline(wrap){
+  wrap.className = 'timeline';
+  wrap.innerHTML = sortedMilestones().map(m=>{
     const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
-    // Done → show the real completion date prominently. Not-done → show the planned
-    // month, de-emphasized (it's a projection, not a commitment).
     let dateEl = '';
     if(m.status==='done'){
       const dd = m.completed_on || m.target_date;
@@ -1389,22 +1549,187 @@ function renderTimeline(isTeam){
     } else if(m.target_date){
       dateEl = `<span class="tldate-plan">Planned · ${esc(prettyDate(m.target_date,'month'))}</span>`;
     }
-    // status is auto-advanced by deliverable %; team can still edit only the planned date
-    const doneBadge = (m.status==='done' && m.completed_on)
-      ? `<span class="tldate-done sm">✓ ${esc(prettyDate(m.completed_on))}</span>` : '';
-    const teamCtl = isTeam
-      ? `<div class="tldate"><label class="tldate-lbl">Planned date</label><input type="date" class="dateedit" data-id="${m.id}" value="${m.target_date||''}">${doneBadge}</div>`
-      : '';
+    const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
+    const link = m.link_url ? `<a class="mslink" href="${esc(m.link_url)}" target="_blank" rel="noopener">View link</a>` : '';
     return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
-       <div class="d">${esc(m.detail||'')}</div>
-       <span class="tag">${tagLabel}</span>${isTeam?'':dateEl}${teamCtl}</div>`;
+       <div class="d">${esc(m.detail||'')}</div>${prog}${link}
+       <span class="tag">${tagLabel}</span>${dateEl}</div>`;
   }).join('');
-  if(isTeam){
-    wrap.querySelectorAll('.dateedit').forEach(inp=>{
-      inp.onchange = ()=> updateRow('milestones', inp.dataset.id, { target_date: inp.value||null });
-    });
-  }
 }
+function renderMilestoneTeamList(wrap){
+  wrap.className = 'mslist';
+  const phases = milestonePhases();
+  wrap.innerHTML = phases.map(phase=>{
+    const items = sortedMilestones().filter(m=> ((m.phase||'').trim() || MILE_PHASE_DEFAULT)===phase);
+    return `<div class="msphase" data-phase="${esc(phase)}">
+      <div class="msphase-head"><span class="chanlabel">${esc(phase)}</span><span class="note">${items.length} milestone${items.length===1?'':'s'}</span></div>
+      <div class="msphase-items">${items.map(m=> milestoneTeamRow(m)).join('')}</div>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('.msrow[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{
+      e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain', row.dataset.id);
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('over'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('over'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); row.classList.remove('over');
+      const from = e.dataTransfer.getData('text/plain');
+      if(from && from!==row.dataset.id) await reorderMilestones(from, row.dataset.id);
+    });
+    row.querySelector('.msedit')?.addEventListener('click', e=>{ e.stopPropagation(); openMilestoneEditor(row.dataset.id); });
+  });
+}
+function milestoneTeamRow(m){
+  const tag = m.status==='done'?'Complete':m.status==='current'?'Current':'Up next';
+  const dates = [
+    m.target_date ? `Planned ${prettyDate(m.target_date,'month')}` : null,
+    m.completed_on ? `Done ${prettyDate(m.completed_on)}` : null,
+  ].filter(Boolean).join(' · ');
+  const owner = m.owner_seat ? `<span class="msowner">${esc(m.owner_seat)}</span>` : '';
+  const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
+  return `<div class="msrow ${m.status}" draggable="true" data-id="${m.id}">
+    <span class="grip" title="Drag to reorder">⋮⋮</span>
+    <div class="msrow-main">
+      <div class="msrow-title">${esc(m.name)} ${owner} ${prog}</div>
+      <div class="msrow-meta">${esc(tag)}${dates? ' · '+esc(dates):''}${m.status_manual?' · manual status':''}</div>
+    </div>
+    <button type="button" class="btn ghost xs msedit">Edit</button>
+  </div>`;
+}
+async function reorderMilestones(fromId, toId){
+  const list = sortedMilestones();
+  const fromIdx = list.findIndex(m=> m.id===fromId);
+  const toIdx = list.findIndex(m=> m.id===toId);
+  if(fromIdx<0 || toIdx<0) return;
+  const phase = (list[fromIdx].phase||'').trim() || MILE_PHASE_DEFAULT;
+  const phaseItems = list.filter(m=> ((m.phase||'').trim()||MILE_PHASE_DEFAULT)===phase);
+  const fLocal = phaseItems.findIndex(m=> m.id===fromId);
+  const tLocal = phaseItems.findIndex(m=> m.id===toId);
+  if(fLocal<0 || tLocal<0) return;
+  const moved = phaseItems.splice(fLocal, 1)[0];
+  phaseItems.splice(tLocal, 0, moved);
+  for(let i=0;i<phaseItems.length;i++){
+    await sb.from('milestones').update({ sort: i+1 }).eq('id', phaseItems[i].id);
+  }
+  await loadAll();
+}
+async function logMilestoneHistory(mid, field, oldVal, newVal){
+  if(String(oldVal??'')===String(newVal??'')) return;
+  try{
+    await sb.from('milestone_history').insert({
+      milestone_id: mid, practice_id: practiceId, field,
+      old_value: oldVal==null ? null : String(oldVal),
+      new_value: newVal==null ? null : String(newVal),
+      changed_by: me?.id || null,
+    });
+  }catch(_){ /* table may not exist until migration */ }
+}
+async function saveMilestonePatch(id, patch, { logFields=true }={}){
+  const prev = data.miles.find(m=> m.id===id);
+  if(!prev) return { error: 'not found' };
+  const { error } = await sb.from('milestones').update(patch).eq('id', id);
+  if(!error && logFields){
+    for(const [k,v] of Object.entries(patch)){
+      if(k==='sort') continue;
+      await logMilestoneHistory(id, k, prev[k], v);
+    }
+  }
+  return { error };
+}
+async function openMilestoneEditor(id){
+  const m = data.miles.find(x=> x.id===id);
+  if(!m) return;
+  let histHtml = '';
+  try{
+    const { data: hist } = await sb.from('milestone_history')
+      .select('*').eq('milestone_id', id).order('changed_at',{ascending:false}).limit(8);
+    if(hist?.length){
+      histHtml = `<div class="mshist"><div class="chanlabel">Recent changes</div>`+
+        hist.map(h=>`<div class="mshist-row"><span>${esc(h.field)}</span><span class="note">${esc(h.old_value||'—')} → ${esc(h.new_value||'—')}</span><span class="note">${new Date(h.changed_at).toLocaleString()}</span></div>`).join('')+
+        `</div>`;
+    }
+  }catch(_){}
+  const mileSel = MILE_OPTS.map(([v,l])=>`<option value="${v}"${v===m.status?' selected':''}>${l}</option>`).join('');
+  $('modal').innerHTML = `<div class="modalcard modalcard-wide">
+    <div class="modalhead"><h3>Edit milestone</h3><button class="modalx" id="mCancelX">✕</button></div>
+    <div class="modalbody">
+      <label class="mlabel">Title</label><input class="cellinput mfield" id="mName" value="${esc(m.name)}">
+      <label class="mlabel">Description</label><textarea class="cellinput mfield mtextarea" id="mDesc" rows="2">${esc(m.detail||'')}</textarea>
+      <div class="mform-row">
+        <div><label class="mlabel">Phase</label><input class="cellinput mfield" id="mPhase" value="${esc(m.phase||MILE_PHASE_DEFAULT)}"></div>
+        <div><label class="mlabel">Owner seat</label><input class="cellinput mfield" id="mOwner" value="${esc(m.owner_seat||'')}" placeholder="AL"></div>
+      </div>
+      <div class="mform-row">
+        <div><label class="mlabel">Planned date</label><input type="date" class="cellinput mfield" id="mTarget" value="${m.target_date||''}"></div>
+        <div><label class="mlabel">Completion date</label><input type="date" class="cellinput mfield" id="mDone" value="${m.completed_on||''}"></div>
+      </div>
+      <div class="mform-row">
+        <div><label class="mlabel">Status</label><select class="cellinput mfield" id="mStatus">${mileSel}</select></div>
+        <div><label class="mlabel">Progress %</label><input type="number" class="cellinput mfield" id="mProg" min="0" max="100" value="${m.progress_pct??''}" placeholder="0–100"></div>
+      </div>
+      <label class="mlabel">Link URL</label><input class="cellinput mfield" id="mUrl" value="${esc(m.link_url||'')}" placeholder="https://…">
+      <label class="mlabel">Notes</label><textarea class="cellinput mfield mtextarea" id="mNotes" rows="2" placeholder="Internal notes">${esc(m.notes||'')}</textarea>
+      ${histHtml}
+      <p class="note" id="mMsg"></p>
+    </div>
+    <div class="modalfoot">
+      <button class="btn danger ghost" id="mDelete">Delete</button>
+      <button class="btn ghost" id="mCancel">Cancel</button>
+      <button class="btn" id="mSave">Save</button>
+    </div>
+  </div>`;
+  $('modal').classList.add('open');
+  $('mCancel').onclick = closeModal;
+  $('mCancelX').onclick = closeModal;
+  $('mDelete').onclick = async ()=>{
+    if(!await uiConfirm('Delete milestone?', `Remove “${esc(m.name)}” from the roadmap?`, { danger:true, confirmLabel:'Delete' })) return;
+    const { error } = await sb.from('milestones').delete().eq('id', id);
+    if(error){ $('mMsg').textContent = error.message; return; }
+    closeModal(); loadAll();
+  };
+  $('mSave').onclick = async ()=>{
+    const status = $('mStatus').value;
+    const patch = {
+      name: $('mName').value.trim() || m.name,
+      detail: $('mDesc').value.trim() || null,
+      phase: $('mPhase').value.trim() || MILE_PHASE_DEFAULT,
+      owner_seat: $('mOwner').value.trim() || null,
+      target_date: $('mTarget').value || null,
+      completed_on: $('mDone').value || null,
+      status,
+      status_manual: status !== m.status ? true : (m.status_manual || false),
+      progress_pct: $('mProg').value==='' ? null : Math.max(0, Math.min(100, +$('mProg').value)),
+      link_url: $('mUrl').value.trim() || null,
+      notes: $('mNotes').value.trim() || null,
+    };
+    if(status==='done' && !patch.completed_on) patch.completed_on = new Date().toISOString().slice(0,10);
+    $('mMsg').textContent = 'Saving…';
+    const prevStatus = m.status;
+    const { error } = await saveMilestonePatch(id, patch);
+    if(error){ $('mMsg').textContent = error.message; return; }
+    if(prevStatus!==status && (status==='current'||status==='done')){
+      const verb = status==='done' ? 'completed' : 'now underway';
+      await notifyClient('milestone', `Milestone ${verb}: ${patch.name}.`);
+    }
+    closeModal(); loadAll();
+  };
+}
+async function addMilestone(){
+  if(!isTeamView() || !practiceId) return;
+  const name = await uiPrompt('New milestone', 'Add a roadmap milestone for this practice.', '', 'Milestone title');
+  if(name===null || !name.trim()) return;
+  const maxSort = Math.max(0, ...data.miles.map(m=> m.sort||0));
+  const { error } = await sb.from('milestones').insert({
+    practice_id: practiceId, name: name.trim(), detail: null, status: 'upcoming',
+    phase: MILE_PHASE_DEFAULT, sort: maxSort+1, status_manual: true,
+  });
+  flash(error ? error.message : 'Milestone added.'); if(!error) loadAll();
+}
+$('btnAddMilestone')?.addEventListener('click', ()=> addMilestone());
 async function updateMilestoneStatus(id, status){
   const prev = data.miles.find(m=>m.id===id);
   await sb.from('milestones').update({ status }).eq('id', id);

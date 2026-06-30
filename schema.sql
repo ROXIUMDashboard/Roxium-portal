@@ -108,6 +108,12 @@ create table if not exists milestones (
   status text not null default 'upcoming' check (status in ('done','current','upcoming')),
   target_date date,                -- planned date (de-emphasized in the UI)
   completed_on date,               -- auto-stamped when status becomes 'done'
+  owner_seat text,
+  phase text default 'Roadmap',
+  progress_pct int check (progress_pct is null or (progress_pct >= 0 and progress_pct <= 100)),
+  notes text,
+  link_url text,
+  status_manual boolean not null default false,
   sort int default 0
 );
 

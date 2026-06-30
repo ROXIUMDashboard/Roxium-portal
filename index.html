@@ -6,9 +6,10 @@
 <title>ROXIUM · Client Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=52">
+<link rel="stylesheet" href="styles.css?v=53">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -69,8 +70,13 @@
 
     <!-- Milestone timeline -->
     <section class="view" data-view="roadmap">
-      <h2>Your <em>roadmap</em></h2>
-      <div class="sub">Every milestone, where you stand today, and what happens next.</div>
+      <div class="sechead">
+        <div>
+          <h2>Your <em>roadmap</em></h2>
+          <div class="sub">Every milestone, where you stand today, and what happens next.</div>
+        </div>
+        <button class="btn ghost sm teamonly hidden" id="btnAddMilestone" type="button">+ Add milestone</button>
+      </div>
       <div class="timeline" id="timeline"></div>
     </section>
 
@@ -105,6 +111,7 @@
           <div class="mp-field"><span class="mp-label">Month</span><div id="metricsPicker" class="monthsel"></div></div>
         </div>
       </div>
+      <div id="kpiCharts" class="kpi-charts hidden"></div>
       <div class="cards" id="kpiCards"></div>
       <div class="status" id="statusBoard" style="margin-top:16px"></div>
     </section>
@@ -242,7 +249,7 @@
       <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in the Admin tab.)</div>
 
       <h3>Deliverables, roadmap & video pipeline</h3>
-      <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. Roadmap: the date under each milestone is editable (dates are set automatically per practice at kickoff — change one only if a date shifts). Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
+      <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. <b>Roadmap milestones:</b> click any milestone on the Roadmap tab to edit all fields, drag to reorder, or use <b>+ Add milestone</b>. Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
 
       <h3>Post an update</h3>
       <div class="entry">
@@ -274,14 +281,14 @@
 
     <footer>
       <span>ROXIUM · Practice Growth Systems</span>
-      <span id="portalBuild">build 52</span><span> · Live KPI Data</span>
+      <span id="portalBuild">build 53</span><span> · Live KPI Data</span>
     </footer>
   </div>
 </div>
 
 <div id="modal" class="modal"></div>
 
-<script src="config.js?v=52"></script>
-<script src="app.js?v=52"></script>
+<script src="config.js?v=53"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>
