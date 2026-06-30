@@ -161,6 +161,14 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .chartbox{position:relative;height:200px}
 .chartbox-lg{height:260px}
 .chartgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.chart-filters{display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:12px}
+.chart-filter{display:inline-flex;align-items:center;gap:7px;padding:5px 2px;background:none;border:none;cursor:pointer;font-family:'Jost',sans-serif;font-size:12px;color:var(--cream);letter-spacing:.02em;line-height:1}
+.chart-filter:hover .cf-box{box-shadow:0 0 0 1px color-mix(in srgb,var(--cf) 55%,transparent)}
+.chart-filter:focus{outline:none}
+.chart-filter:focus-visible .cf-box{outline:1px solid var(--cream);outline-offset:2px}
+.cf-box{flex-shrink:0;width:14px;height:14px;border:2px solid var(--cf);border-radius:2px;background:transparent;transition:background-color .15s ease,box-shadow .15s ease}
+.chart-filter.on .cf-box{background:var(--cf)}
+.cf-label{color:var(--cream)}
 
 /* kpi cards + status */
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
