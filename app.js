@@ -485,125 +485,21 @@ function mergeKpiByPeriod(rows){
 
 /* ---------------- KPI trend charts (Chart.js) ---------------- */
 let kpiChartInstances = [];
-let investChartRef = null;
-const INVEST_SERIES = [
-  { key:'spend',  label:'Spend',        color:'#C9A84C', field:'spend',  axis:'y',  format:'dollar', normalize:false },
-  { key:'reach',  label:'Reach',        color:'#7BA4D4', field:'reach',  axis:'y1', format:'num',    normalize:true },
-  { key:'impr',   label:'Impressions',  color:'#6B8F71', field:'impr',   axis:'y1', format:'num',    normalize:true },
-  { key:'clicks', label:'Link Clicks', color:'#9A7FB8', field:'clicks', axis:'y1', format:'num',    normalize:true },
+// ONE chart per metric, each with its OWN Y-axis auto-scaled to its data. No shared
+// axis, no normalization, no percentage axis — raw stored monthly values only, so the
+// last point of each chart equals that metric's KPI card for the same month.
+const CHART_METRICS = [
+  { field:'spend',  label:'Spend',       kind:'dollar', color:'#C9A84C' },
+  { field:'reach',  label:'Reach',       kind:'num',    color:'#7BA4D4' },
+  { field:'impr',   label:'Impressions', kind:'num',    color:'#6B8F71' },
+  { field:'clicks', label:'Link Clicks', kind:'num',    color:'#9A7FB8' },
 ];
-const INVEST_METRICS_KEY = 'roxium_invest_metrics';
-let investMetricEnabled = (()=>{
-  try{
-    const raw = sessionStorage.getItem(INVEST_METRICS_KEY);
-    if(raw){
-      const p = JSON.parse(raw);
-      return Object.fromEntries(INVEST_SERIES.map(s=> [s.key, p[s.key]!==false]));
-    }
-  }catch(_){}
-  return Object.fromEntries(INVEST_SERIES.map(s=> [s.key, true]));
-})();
-function saveInvestMetricPrefs(){
-  try{ sessionStorage.setItem(INVEST_METRICS_KEY, JSON.stringify(investMetricEnabled)); }catch(_){}
-}
-function investAxisTickFmt(format){
-  if(format==='dollar') return v=> '$'+Number(v).toLocaleString();
-  return v=> Number(v).toLocaleString();
-}
-function normalizeToTrend(vals){
-  const nums = vals.map(v=> (v==null || Number.isNaN(Number(v))) ? null : Number(v));
-  const present = nums.filter(v=> v!=null);
-  if(!present.length) return nums;
-  const min = Math.min(...present), max = Math.max(...present);
-  const span = max - min;
-  if(span === 0) return nums.map(v=> v==null ? null : 50);
-  return nums.map(v=> v==null ? null : ((v - min) / span) * 100);
-}
-function investRightAxisVisible(enabled){
-  return INVEST_SERIES.some(s=> s.axis==='y1' && enabled[s.key]);
-}
-function buildInvestChartOptions(labels, highlightIdx, enabled){
-  const cream = '#F2EDE3', muted = '#9A948A', line = 'rgba(201,168,76,.12)';
-  const opts = {
-    responsive: true, maintainAspectRatio: false, animation: { duration: 420 },
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: 'rgba(13,12,16,.94)', borderColor: 'rgba(201,168,76,.35)', borderWidth: 1,
-        titleColor: '#C9A84C', bodyColor: cream, padding: 10,
-        callbacks: {
-          label(ctx){
-            const s = INVEST_SERIES[ctx.datasetIndex];
-            const raw = ctx.dataset.rawValues?.[ctx.dataIndex];
-            const fmt = investAxisTickFmt(s.format);
-            return `${s.label}: ${raw==null ? '—' : fmt(raw)}`;
-          },
-        },
-      },
-    },
-    scales: {
-      x: { ticks: { color: muted, font: { family: 'Jost', size: 10 }, maxRotation: 0 }, grid: { color: line } },
-      y: {
-        type: 'linear', position: 'left', beginAtZero: true, display: !!enabled.spend,
-        ticks: { color: INVEST_SERIES[0].color, font: { family: 'Jost', size: 10 }, callback: investAxisTickFmt('dollar') },
-        grid: { color: line },
-      },
-      y1: {
-        type: 'linear', position: 'right', beginAtZero: true, max: 100,
-        display: investRightAxisVisible(enabled),
-        ticks: { color: muted, font: { family: 'Jost', size: 10 }, callback: v=> Math.round(v)+'%' },
-        grid: { drawOnChartArea: false },
-      },
-    },
-    elements: {
-      point: {
-        radius: ctx=> ctx.dataIndex===highlightIdx ? 6 : 3,
-        hoverRadius: 7,
-        borderWidth: 2,
-        backgroundColor: ctx=> ctx.dataIndex===highlightIdx ? '#F2EDE3' : 'transparent',
-      },
-      line: { tension: 0.32, borderWidth: 2 },
-    },
-  };
-  return opts;
-}
-function syncInvestFilterButtons(){
-  document.querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
-    const on = !!investMetricEnabled[btn.dataset.metric];
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-function updateInvestChartVisibility(){
-  if(!investChartRef) return;
-  INVEST_SERIES.forEach((s, i)=>{
-    const on = !!investMetricEnabled[s.key];
-    investChartRef.setDatasetVisibility(i, on);
-  });
-  if(investChartRef.options.scales.y) investChartRef.options.scales.y.display = !!investMetricEnabled.spend;
-  if(investChartRef.options.scales.y1) investChartRef.options.scales.y1.display = investRightAxisVisible(investMetricEnabled);
-  investChartRef.update();
-  syncInvestFilterButtons();
-}
-function bindInvestFilters(){
-  document.querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
-    btn.onclick = ()=>{
-      const key = btn.dataset.metric;
-      const enabledCount = INVEST_SERIES.filter(s=> investMetricEnabled[s.key]).length;
-      if(investMetricEnabled[key] && enabledCount <= 1) return;
-      investMetricEnabled[key] = !investMetricEnabled[key];
-      saveInvestMetricPrefs();
-      updateInvestChartVisibility();
-    };
-  });
-  syncInvestFilterButtons();
-}
 function destroyKpiCharts(){
   kpiChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
   kpiChartInstances = [];
-  investChartRef = null;
 }
+// Monthly series (merged exactly like the KPI cards) up to and including the viewed
+// month, so charts and cards always agree.
 function kpiTimeSeries(endPeriod){
   const chan = getChan();
   const rows = normalizeKpiRows(data.kpiRaw || []).filter(r=> r.practice_id===practiceId);
@@ -612,63 +508,75 @@ function kpiTimeSeries(endPeriod){
   const end = endPeriod || merged[merged.length-1]?.period;
   return end ? merged.filter(r=> String(r.period) <= String(end)) : merged;
 }
+const chartAxisFmt = kind => kind==='dollar'
+  ? (v=> '$'+Number(v).toLocaleString())
+  : (v=> Number(v).toLocaleString());
+const formatMetric = (kind, v)=> v==null ? '—'
+  : (kind==='dollar' ? '$'+Math.round(v).toLocaleString() : Math.round(v).toLocaleString());
+function hexToRgba(hex, a){
+  const n = hex.replace('#',''); const r=parseInt(n.slice(0,2),16), g=parseInt(n.slice(2,4),16), b=parseInt(n.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function buildMetricChartOptions(kind, highlightIdx){
+  const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
+  return {
+    responsive:true, maintainAspectRatio:false, animation:{ duration:420 },
+    interaction:{ mode:'index', intersect:false },
+    plugins:{
+      legend:{ display:false },
+      tooltip:{
+        backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1,
+        titleColor:'#C9A84C', bodyColor:cream, padding:10, displayColors:false,
+        callbacks:{ label(ctx){ const v=ctx.parsed.y; return v==null ? '—' : chartAxisFmt(kind)(v); } },
+      },
+    },
+    scales:{
+      x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:12 }, grid:{ color:line } },
+      // own axis, auto-scaled to this metric's range (beginAtZero for honest magnitude)
+      y:{ beginAtZero:true, ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxTicksLimit:5, callback:chartAxisFmt(kind) }, grid:{ color:line } },
+    },
+    elements:{
+      point:{ radius:ctx=> ctx.dataIndex===highlightIdx ? 5 : 2.5, hoverRadius:6, borderWidth:2,
+        backgroundColor:ctx=> ctx.dataIndex===highlightIdx ? '#F2EDE3' : 'transparent' },
+      line:{ tension:0.32, borderWidth:2 },
+    },
+  };
+}
 function renderKpiCharts(viewPeriod, isLive){
   const wrap = $('kpiCharts');
   if(!wrap || typeof Chart==='undefined'){ if(wrap) wrap.classList.add('hidden'); return; }
   destroyKpiCharts();
   const series = kpiTimeSeries(viewPeriod);
-  if(series.length < 2){
-    wrap.classList.add('hidden');
-    wrap.innerHTML = '';
-    return;
-  }
-  wrap.classList.remove('hidden');
+  if(series.length < 2){ wrap.classList.add('hidden'); wrap.innerHTML=''; return; }   // need ≥2 months to show a trend
   const labels = series.map(r=> periodLabel(r.period));
   const hi = viewPeriod ? series.findIndex(r=> String(r.period)===String(viewPeriod)) : series.length-1;
+  const hiIdx = hi<0 ? series.length-1 : hi;
+  // only metrics that actually have data across the series get a chart
+  const metrics = CHART_METRICS.filter(m=> series.some(r=> N(r,m.field)!=null));
+  if(!metrics.length){ wrap.classList.add('hidden'); wrap.innerHTML=''; return; }
+  wrap.classList.remove('hidden');
   const chanLbl = getChan()==='all' ? 'All channels' : channelLabel(getChan());
   const viewLbl = viewPeriod ? periodLabel(viewPeriod) : 'latest month';
-  const liveNote = isLive ? ' · live' : ' · archived snapshot';
-
   wrap.innerHTML = `
     <div class="kpi-charts-head">
-      <span class="chanlabel">Trend through ${esc(viewLbl)}${liveNote}</span>
-      <span class="note">${esc(chanLbl)} · ${series.length} month${series.length===1?'':'s'}</span>
+      <span class="chanlabel">Are we improving?</span>
+      <span class="note">${esc(chanLbl)} · trend through ${esc(viewLbl)}${isLive?' · live':' · archived'} · ${series.length} months</span>
     </div>
-    <div class="chartpanel chartpanel-invest">
-      <div class="charttitle">Investment &amp; performance</div>
-      <div class="chartsub">Spend ($, left) · reach, impressions, and link clicks on the right, each scaled to its own range so trends line up</div>
-      <div class="chart-filters" role="group" aria-label="Investment chart metrics">${INVEST_SERIES.map(s=>`
-        <button type="button" class="chart-filter${investMetricEnabled[s.key]?' on':''}" data-metric="${s.key}" aria-pressed="${investMetricEnabled[s.key]?'true':'false'}">
-          <span class="cf-box" style="--cf:${s.color}"></span>
-          <span class="cf-label">${esc(s.label)}</span>
-        </button>`).join('')}</div>
-      <div class="chartbox chartbox-lg"><canvas id="chartInvest"></canvas></div>
-    </div>`;
-
-  const investOpts = buildInvestChartOptions(labels, hi, investMetricEnabled);
-  const invest = new Chart($('chartInvest'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: INVEST_SERIES.map(s=> {
-        const rawValues = series.map(r=> N(r, s.field));
-        return {
-          label: s.label,
-          data: s.normalize ? normalizeToTrend(rawValues) : rawValues,
-          rawValues,
-          yAxisID: s.axis,
-          borderColor: s.color,
-          backgroundColor: s.key==='spend' ? 'rgba(201,168,76,.08)' : 'transparent',
-          fill: s.key==='spend',
-          hidden: !investMetricEnabled[s.key],
-        };
-      }),
-    },
-    options: investOpts,
+    <div class="chartgrid">${metrics.map(m=>`
+      <div class="chartcard">
+        <div class="chartcard-h"><span class="cc-title">${esc(m.label)}</span>
+          <span class="cc-latest" style="--cc:${m.color}">${formatMetric(m.kind, N(series[hiIdx], m.field))}</span></div>
+        <div class="chartbox"><canvas id="chart_${m.field}"></canvas></div>
+      </div>`).join('')}</div>`;
+  metrics.forEach(m=>{
+    const raw = series.map(r=> N(r, m.field));
+    const c = new Chart($('chart_'+m.field), {
+      type:'line',
+      data:{ labels, datasets:[{ data:raw, borderColor:m.color, backgroundColor:hexToRgba(m.color,.08), fill:true, spanGaps:true }] },
+      options: buildMetricChartOptions(m.kind, hiIdx),
+    });
+    kpiChartInstances.push(c);
   });
-  investChartRef = invest;
-  kpiChartInstances.push(invest);
-  bindInvestFilters();
 }
 
 /* ---------------- formatters ---------------- */

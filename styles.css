@@ -167,6 +167,14 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .chart-filter:focus-visible .cf-box{outline:1px solid var(--cream);outline-offset:2px}
 .cf-box{flex-shrink:0;width:14px;height:14px;border:2px solid var(--cf);border-radius:2px;background:transparent;transition:background-color .15s ease,box-shadow .15s ease}
 .chart-filter.on .cf-box{background:var(--cf)}
+/* one trend chart per metric — own auto-scaled axis, no shared/percentage axis */
+.chartgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:6px}
+.chartcard{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:12px 14px 10px;animation:viewin .22s ease}
+.chartcard-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
+.cc-title{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.cc-latest{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--cc,var(--gold));font-variant-numeric:tabular-nums}
+.chartcard .chartbox{height:152px}
+@media(max-width:640px){.chartgrid{grid-template-columns:1fr}}
 .cf-label{color:var(--cream)}
 
 /* kpi cards + status */
