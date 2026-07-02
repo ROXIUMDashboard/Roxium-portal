@@ -107,7 +107,19 @@ If your **custom domain** is on the Worker but only **Pages** received the GitHu
 - **Or** Worker with `prepare-pages.sh` + `wrangler deploy`  
 - Disable the unused integration to avoid drift
 
-### 5. Caching
+### 5. Caching (stale build 55 with fresh version.json)
+
+If `/version.json` shows the new SHA but the footer still says **build 55** and the UI looks old, your browser or Cloudflare cached **index.html** and **app.js** from an earlier deploy. `version.json` is often fetched fresh because it is a new file with no prior cache entry.
+
+**Fix once:**
+
+1. Cloudflare dashboard → **Caching** → **Configuration** → **Purge Everything**
+2. Hard refresh: **Cmd+Shift+R** (Mac) or **Ctrl+Shift+R** (Windows)
+3. Or open the site with a cache-bust query: `https://your-domain/?_v=4cd21d2`
+
+After PR #63, the portal auto-reloads once when it detects `app.js` does not match `version.json`.
+
+### 6. Caching (general)
 
 - No service worker in this app.
 - `_headers` sets `Cache-Control: no-cache` on `index.html`, `*.js`, `*.css`.
