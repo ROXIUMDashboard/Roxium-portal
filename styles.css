@@ -240,7 +240,58 @@ select option{background:var(--surface2);color:var(--cream)}
 .metricshead .sub{margin-bottom:14px}
 #metricsPicker{min-width:150px}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
-/* Admin global screen */
+/* Team workspace · primary navigation */
+.teamtopnav{background:var(--surface);border-bottom:1px solid var(--line);margin-bottom:0}
+.teamtopnav-inner{display:flex;gap:6px;padding:10px 0 12px}
+.teamtop{font-family:'Jost',sans-serif;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);text-decoration:none;padding:8px 14px;border:1px solid transparent;border-radius:3px;transition:color .15s ease,border-color .15s ease,background .15s ease}
+.teamtop:hover{color:var(--cream);border-color:var(--line)}
+.teamtop.active{color:var(--gold);border-color:rgba(201,168,76,.45);background:rgba(201,168,76,.08)}
+/* Operations Dashboard */
+#operationsPanel{padding-top:8px;animation:viewin .25s ease}
+.ops-head{margin-bottom:22px}
+.ops-head h2{margin-bottom:4px}
+.ops-search-wrap{margin-top:14px;max-width:520px}
+.ops-search{width:100%;padding:12px 14px}
+.ops-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:22px}
+.ops-card{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:14px 16px;text-align:center}
+.ops-card-val{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:600;color:var(--cream);font-variant-numeric:tabular-nums;line-height:1.1}
+.ops-card-lbl{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-top:6px;line-height:1.35}
+.ops-card-g .ops-card-val{color:var(--green)}
+.ops-card-a .ops-card-val{color:var(--amber)}
+.ops-card-r .ops-card-val{color:var(--red)}
+.ops-split{display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px}
+.ops-panel{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:16px 18px;margin-bottom:16px}
+.ops-panel h3{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--cream);margin-bottom:4px}
+.ops-panel-note{margin-bottom:12px}
+.ops-queue,.ops-feed{display:flex;flex-direction:column;gap:8px}
+.ops-alert{display:flex;gap:10px;padding:10px 12px;background:var(--ink);border:1px solid var(--line);border-radius:3px;cursor:pointer;transition:border-color .15s ease,transform .12s ease}
+.ops-alert:hover{border-color:rgba(201,168,76,.35);transform:translateX(2px)}
+.ops-alert-icon{font-size:14px;line-height:1.4;flex-shrink:0}
+.ops-alert-practice{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold)}
+.ops-alert-title{font-size:13px;color:var(--cream);margin-top:2px}
+.ops-alert-detail{font-size:11.5px;color:var(--muted);margin-top:2px}
+.ops-alert-red{border-left:3px solid var(--red)}
+.ops-alert-yellow{border-left:3px solid var(--amber)}
+.ops-alert-green{border-left:3px solid var(--green)}
+.ops-kpi-rollup{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-top:8px}
+.ops-kpi{background:var(--ink);border:1px solid var(--line);padding:12px;border-radius:3px}
+.ops-kpi-v{font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--cream);font-variant-numeric:tabular-nums}
+.ops-kpi-l{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.ops-table-wrap{overflow-x:auto;margin-top:8px}
+.ops-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.ops-table th{text-align:left;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ops-table td{padding:9px 10px;border-bottom:1px solid rgba(201,168,76,.08);color:var(--cream);vertical-align:top}
+.ops-table tr:hover td{background:rgba(201,168,76,.04)}
+.ops-row-click{cursor:pointer}
+.ops-row-warn td{color:#e8a090}
+.ops-row-caution td{color:var(--amber)}
+.ops-row-overdue td,.ops-row-warn.ops-row-overdue td{color:var(--red)}
+.ops-pill{display:inline-block;padding:2px 8px;border-radius:2px;font-size:11px;font-variant-numeric:tabular-nums}
+.ops-pill-green{background:rgba(58,167,109,.15);color:var(--green)}
+.ops-pill-yellow{background:rgba(201,168,76,.15);color:var(--amber)}
+.ops-pill-red{background:rgba(198,106,88,.15);color:var(--red)}
+@media(max-width:900px){.ops-split{grid-template-columns:1fr}}
+/* Team Controls global screen */
 .adminback{display:inline-block;margin-bottom:14px;font-size:12px;letter-spacing:.06em;color:var(--gold);text-decoration:none}
 .adminback:hover{text-decoration:underline}
 .clientlist{margin-top:6px;display:flex;flex-direction:column;gap:1px}
