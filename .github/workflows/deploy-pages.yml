@@ -1,8 +1,8 @@
 name: Deploy Portal to Cloudflare Pages
 
-# Static portal (index.html, app.js, …) is NOT deployed by merging a PR alone.
-# Either connect Cloudflare Pages → Git in the dashboard, OR use this workflow
-# (recommended — deploys on every push to main when frontend files change).
+# Deploys static portal files on push to main (or manual "Run workflow").
+# Requires GitHub secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+# Optional variable: CLOUDFLARE_PAGES_PROJECT (default: roxium-portal)
 on:
   push:
     branches: [main]
@@ -16,6 +16,9 @@ on:
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch: {}
 
+env:
+  PAGES_PROJECT: roxium-portal
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -27,14 +30,53 @@ jobs:
 
       - name: Prepare static site bundle
         run: |
-          mkdir -p deploy
-          cp index.html app.js styles.css config.js _headers deploy/
-          if [ -f _redirects ]; then cp _redirects deploy/; fi
-          ls -la deploy/
+          mkdir -p site
+          cp index.html app.js styles.css config.js _headers site/
+          if [ -f _redirects ]; then cp _redirects site/; fi
+          echo "Files to deploy:"
+          ls -la site/
+
+      - name: Setup Wrangler
+        run: npm install -g wrangler@4
+
+      - name: Verify Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Missing secret CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Missing secret CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+          echo "Checking API token…"
+          wrangler whoami
+          echo ""
+          echo "Pages projects in this account:"
+          wrangler pages project list || true
+
+      - name: Ensure Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          PROJECT="${{ env.PAGES_PROJECT }}"
+          if wrangler pages project list 2>/dev/null | grep -q "$PROJECT"; then
+            echo "Pages project '$PROJECT' already exists."
+          else
+            echo "Creating Pages project '$PROJECT' (production branch: main)…"
+            wrangler pages project create "$PROJECT" --production-branch main
+          fi
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy deploy --project-name=roxium-portal --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler pages deploy site \
+            --project-name="${{ env.PAGES_PROJECT }}" \
+            --branch=main \
+            --commit-dirty=true
