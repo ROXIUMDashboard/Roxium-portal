@@ -44,7 +44,7 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 | Build command | *(leave empty)* |
 | Build output directory | `/` |
 
-3. **Do not** set the build command to `npx wrangler deploy` — that creates a Worker and uploads the whole repo (including `.git/`). Pages only needs the static files.
+3. **Do not** set the build command to `npx wrangler deploy` alone — run `bash scripts/prepare-pages.sh` first (output `site/`). See **`docs/DEPLOYMENT.md`** for the full pipeline and troubleshooting stale deploys.
 4. Deploy. Your preview URL will be `https://<project-name>.pages.dev`.
 5. Add a custom domain under **Custom domains** if you have one.
 6. Supabase → **Authentication → URL configuration** → set **Site URL** and add **Redirect URLs**:
