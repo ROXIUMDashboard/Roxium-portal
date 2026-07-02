@@ -71,7 +71,8 @@ If `roxium-portal` is connected to GitHub in the Cloudflare dashboard, configure
 
 Confirm you are not still visiting:
 
-- An old **Netlify** URL (`netlify.app`)
+- **Netlify** while watching **Cloudflare Pages** deploy status (or the reverse) — only the host your domain points to matters
+- An old **Netlify** URL (`netlify.app`) or root publish (`.`) without `prepare-pages.sh`
 - A **preview** deployment (`*.pages.dev` with a commit preview URL)
 - A **Worker** deployment while your domain points elsewhere
 - A **second** Pages project created earlier with Git integration

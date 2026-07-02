@@ -56,9 +56,11 @@ SPA routing (magic-link auth) works automatically — there is no `404.html`, so
 #### Option B — Netlify
 
 1. netlify.com → **Add new site → Import an existing project** → pick your GitHub repo.
-2. No build command needed; publish directory is the repo root (already set in `netlify.toml`).
+2. `netlify.toml` already sets **Build command** `bash scripts/prepare-pages.sh` and **Publish directory** `site` (same bundle as Cloudflare Pages).
 3. Deploy. Then add your custom domain (e.g. `portal.roxium.co`) under **Domain settings**.
 4. Go back to Supabase → Authentication → URL Configuration → set the Site URL to this domain.
+
+> **Production host:** If you use Netlify for your custom domain, Cloudflare Pages deploys are optional — they do not update the site your users see on Netlify.
 
 ### 4 · Create users (5 min)
 1. Supabase → **Authentication → Users → Add user** → enter your email (and each teammate's).
