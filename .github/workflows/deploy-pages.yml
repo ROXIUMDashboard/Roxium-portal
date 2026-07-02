@@ -1,0 +1,40 @@
+name: Deploy Portal to Cloudflare Pages
+
+# Static portal (index.html, app.js, …) is NOT deployed by merging a PR alone.
+# Either connect Cloudflare Pages → Git in the dashboard, OR use this workflow
+# (recommended — deploys on every push to main when frontend files change).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'styles.css'
+      - 'config.js'
+      - '_headers'
+      - '_redirects'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare static site bundle
+        run: |
+          mkdir -p deploy
+          cp index.html app.js styles.css config.js _headers deploy/
+          if [ -f _redirects ]; then cp _redirects deploy/; fi
+          ls -la deploy/
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy deploy --project-name=roxium-portal --branch=main
