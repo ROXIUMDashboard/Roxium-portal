@@ -525,6 +525,7 @@ async function loadAll(){
   data = { practice:p.data, kpiRaw:(k.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
   render();
+  if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
 }
 
@@ -1075,7 +1076,7 @@ function enhanceNativeSelect(sel){
   themeSync(sel);
 }
 function enhanceSelectsIn(root){
-  (root||document).querySelectorAll('select.cellinput, select.picker, select#accessPractice, select#accessRole, select.statussel, select.stagesel, select.milesel').forEach(enhanceNativeSelect);
+  (root||document).querySelectorAll('select.cellinput, select.picker, select#accessPractice, select#accessRole, select.statussel, select.stagesel, select.milesel, select.ops-deliv-status, select.ops-vid-stage').forEach(enhanceNativeSelect);
 }
 // one global outside-click closer for all enhanced (native-wrapped) dropdowns
 document.addEventListener('click', e=>{
@@ -1140,7 +1141,7 @@ function renderDeliverables(isTeam){
         <span class="taskgrip">⋮⋮</span>
         <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
         <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
-        <input class="cellinput dueinput" type="date" data-f="due" value="${x.due ? String(x.due).slice(0,10) : ''}" title="Due date">
+        <input class="cellinput dueinput compact-due" type="date" data-f="due" value="${x.due ? String(x.due).slice(0,10) : ''}" title="Due date">
         ${ageChip}
         <button class="infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
         ${statusSelect('deliv', x.status)}
@@ -1349,6 +1350,9 @@ async function autoAdvanceMilestones(){
 }
 function statusSelect(kind, cur){
   return `<select class="statussel">`+STATUS_OPTS.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
+}
+function stageSelect(cur){
+  return `<select class="stagesel">`+STAGES.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('')+`</select>`;
 }
 async function addDeliverableTo(phase){
   const name = await uiPrompt('New deliverable', `Adding to the "${esc(phase)}" phase.`, '', 'Deliverable name'); if(name===null) return;
@@ -1914,11 +1918,11 @@ $('btnPost').onclick = async ()=>{
 
 /* ---------------- Operations Dashboard (team workspace) ---------------- */
 let opsData = null;
-let opsSearchQuery = '';
 let opsClientFilter = '';
 let opsExpandedClient = null;
 let opsClientSortAsc = true;
 let opsLoadPromise = null;
+let opsChartInstances = [];
 const PHASE_TIMING = {
   0: { warn: 7, red: 14 },
   1: { warn: 11, red: 21 },
@@ -2031,21 +2035,17 @@ function opsMatchesQuery(q, parts){
   return parts.some(p=> String(p||'').toLowerCase().includes(q));
 }
 function buildOpsAlerts(){
-  const names = practiceNameMap();
   const alerts = [];
-  const q = opsSearchQuery;
   (opsData?.practices||[]).forEach(p=>{
     const delivs = (opsData.deliverables||[]).filter(d=> d.practice_id===p.id);
     const videos = (opsData.videos||[]).filter(v=> v.practice_id===p.id);
     const phase = computePracticePhaseState(p, delivs);
     const pname = p.name;
-    if(phase.currentHealth!=='green' && phase.currentPhase){
-      const label = phase.currentHealth==='red' ? 'Phase overdue' : 'Phase approaching deadline';
-      const detail = `${phase.currentPhase} · ${phase.currentDays} day${phase.currentDays===1?'':'s'} in phase`;
-      if(opsMatchesQuery(q, [pname, phase.currentPhase, label])){
+      if(phase.currentHealth!=='green' && phase.currentPhase){
+        const label = phase.currentHealth==='red' ? 'Phase overdue' : 'Phase approaching deadline';
+        const detail = `${phase.currentPhase} · ${phase.currentDays} day${phase.currentDays===1?'':'s'} in phase`;
         alerts.push({ severity: phase.currentHealth, practice:pname, practiceId:p.id, title:label, detail, sort: OPS_HEALTH_RANK[phase.currentHealth], linkView:'deliverables', phase: phase.currentPhase });
       }
-    }
     delivs.filter(d=> d.status!=='delivered' && d.due).forEach(d=>{
       const due = new Date(d.due);
       const daysLeft = Math.ceil((due - Date.now())/86400000);
@@ -2055,9 +2055,7 @@ function buildOpsAlerts(){
       else if(daysLeft <= 7){ severity = 'yellow'; title = 'Deliverable approaching deadline'; }
       if(severity==='green') return;
       const detail = `${d.name}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
-      if(opsMatchesQuery(q, [pname, d.name, d.owner_seat, d.phase, title])){
-        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
-      }
+      alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
     });
     videos.forEach(v=>{
       const fin = v.stage==='posted' || v.stage==='delivered';
@@ -2066,23 +2064,19 @@ function buildOpsAlerts(){
         const days = daysIn(v.stage_since);
         const title = sla==='overdue' ? 'Video overdue' : 'Video stalled';
         const detail = `${v.item} · ${days} day${days===1?'':'s'} in ${stageLabelOf(v.stage)}`;
-        if(opsMatchesQuery(q, [pname, v.item, title])){
-          alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days, linkView:'video', videoId:v.id });
-        }
+        alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days, linkView:'video', videoId:v.id });
       }
       if(v.blocked){
         const days = daysIn(v.stage_since);
         if(days >= 7){
           const title = 'Waiting on client approval';
           const detail = `${v.item} · ${days} day${days===1?'':'s'} waiting`;
-          if(opsMatchesQuery(q, [pname, v.item, v.blocked_reason, title])){
-            alerts.push({ severity: days>=14?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[days>=14?'red':'yellow'], days, linkView:'video', videoId:v.id });
-          }
+          alerts.push({ severity: days>=14?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[days>=14?'red':'yellow'], days, linkView:'video', videoId:v.id });
         }
       }
     });
     const sync = kpiSyncMeta(p.id);
-    if(sync.hasError && opsMatchesQuery(q, [pname, 'KPI sync failed'])){
+    if(sync.hasError){
       alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics' });
     }
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
@@ -2092,9 +2086,7 @@ function buildOpsAlerts(){
       const severity = days < 0 ? 'red' : 'yellow';
       const title = days < 0 ? 'Milestone overdue' : 'Milestone approaching';
       const detail = `${m.name}${days < 0 ? ` · ${Math.abs(days)} day${Math.abs(days)===1?'':'s'} overdue` : days===0 ? ' · due today' : ` · ${days} day${days===1?'':'s'} left`}`;
-      if(opsMatchesQuery(q, [pname, m.name, m.phase, title])){
-        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days, linkView:'roadmap', milestoneId:m.id });
-      }
+      alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days, linkView:'roadmap', milestoneId:m.id });
     });
   });
   alerts.sort((a,b)=> a.sort - b.sort || (a.days??999) - (b.days??999) || a.practice.localeCompare(b.practice));
@@ -2118,6 +2110,99 @@ function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, vide
   });
 }
 function openOpsClient(pid){ openOpsDeepLink({ practiceId: pid, view: 'roadmap' }); }
+function destroyOpsCharts(){
+  opsChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
+  opsChartInstances = [];
+}
+function aggregateCompanyKpiByMonth(kpiRaw){
+  const norm = normalizeKpiRows(kpiRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
+  const byPeriod = new Map();
+  norm.forEach(r=>{
+    const key = String(r.period);
+    const agg = byPeriod.get(key) || { period:key, spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0 };
+    agg.spend += N(r,'spend')||0;
+    agg.reach += N(r,'reach')||0;
+    agg.impr += N(r,'impr')||0;
+    agg.clicks += N(r,'clicks')||0;
+    agg.cons += N(r,'cons')||0;
+    agg.proc += N(r,'proc')||0;
+    byPeriod.set(key, agg);
+  });
+  return [...byPeriod.values()].sort((a,b)=> a.period.localeCompare(b.period));
+}
+function renderOpsCompanyKpi(monthly, latestPeriod){
+  const wrap = $('opsKpiCharts');
+  if(!wrap) return;
+  destroyOpsCharts();
+  if(!monthly.length || typeof Chart==='undefined'){
+    wrap.classList.add('hidden');
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.classList.remove('hidden');
+  const labels = monthly.map(r=> periodLabel(r.period));
+  const hiIdx = latestPeriod ? Math.max(0, monthly.findIndex(r=> String(r.period)===String(latestPeriod))) : monthly.length-1;
+  wrap.innerHTML = `
+    <div class="ops-kpi-charts-head">
+      <span class="chanlabel">Company trend</span>
+      <span class="note">${monthly.length} month${monthly.length===1?'':'s'} rolled up across all clients · Meta/marketing source</span>
+    </div>
+    <div class="chartpanel chartpanel-invest">
+      <div class="charttitle">Spend &amp; reach over time</div>
+      <div class="chartsub">Combined monthly totals — spend ($, left) and reach (#, right).</div>
+      <div class="chartbox chartbox-lg"><canvas id="opsChartCompany"></canvas></div>
+    </div>
+    <div class="chartpanel">
+      <div class="charttitle">Impressions &amp; link clicks</div>
+      <div class="chartsub">Combined monthly engagement across the roster.</div>
+      <div class="chartbox"><canvas id="opsChartEngage"></canvas></div>
+    </div>`;
+  const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
+  const baseOpts = {
+    responsive:true, maintainAspectRatio:false, animation:{ duration:420 },
+    interaction:{ mode:'index', intersect:false },
+    plugins:{ legend:{ display:false } },
+    scales:{
+      x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:12 }, grid:{ color:line } },
+    },
+    elements:{ point:{ radius:ctx=> ctx.dataIndex===hiIdx ? 5 : 2, hoverRadius:6, borderWidth:2 }, line:{ tension:0.32, borderWidth:2 } },
+  };
+  const spendReach = new Chart($('opsChartCompany'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'Spend', data:monthly.map(r=> N(r,'spend')), borderColor:'#C9A84C', backgroundColor:'rgba(201,168,76,.08)', yAxisID:'y', fill:true },
+        { label:'Reach', data:monthly.map(r=> N(r,'reach')), borderColor:'#7BA4D4', backgroundColor:'transparent', yAxisID:'y1' },
+      ],
+    },
+    options:{ ...baseOpts,
+      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
+      scales:{ ...baseOpts.scales,
+        y:{ position:'left', beginAtZero:true, ticks:{ color:'#C9A84C', callback:v=> '$'+Number(v).toLocaleString() }, grid:{ color:line } },
+        y1:{ position:'right', beginAtZero:true, ticks:{ color:muted, callback:v=> Number(v).toLocaleString() }, grid:{ drawOnChartArea:false } },
+      },
+    },
+  });
+  const engage = new Chart($('opsChartEngage'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'Impressions', data:monthly.map(r=> N(r,'impr')), borderColor:'#6B8F71', backgroundColor:'rgba(107,143,113,.08)', yAxisID:'y', fill:true },
+        { label:'Link clicks', data:monthly.map(r=> N(r,'clicks')), borderColor:'#9A7FB8', backgroundColor:'transparent', yAxisID:'y1' },
+      ],
+    },
+    options:{ ...baseOpts,
+      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
+      scales:{ ...baseOpts.scales,
+        y:{ position:'left', beginAtZero:true, ticks:{ color:'#6B8F71', callback:v=> Number(v).toLocaleString() }, grid:{ color:line } },
+        y1:{ position:'right', beginAtZero:true, ticks:{ color:'#9A7FB8', callback:v=> Number(v).toLocaleString() }, grid:{ drawOnChartArea:false } },
+      },
+    },
+  });
+  opsChartInstances.push(spendReach, engage);
+}
 async function updateOpsRow(table, id, patch){
   const { error } = await sb.from(table).update(patch).eq('id', id);
   if(error){ flash(error.message); return false; }
@@ -2129,6 +2214,20 @@ async function updateOpsRow(table, id, patch){
   renderOperationsDashboard();
   flash('Saved.');
   return true;
+}
+async function updateOpsDeliverable(id, patch){
+  const row = opsData?.deliverables?.find(d=> d.id===id);
+  if(patch.status){
+    if(patch.status==='delivered'){
+      patch.delivered_at = row?.delivered_at || new Date().toISOString();
+    } else {
+      patch.delivered_at = null;
+    }
+  }
+  return updateOpsRow('deliverables', id, patch);
+}
+async function updateOpsVideo(id, patch){
+  return updateOpsRow('video_pipeline', id, patch);
 }
 function renderOpsAlertItem(a, clickable){
   const icon = a.severity==='red' ? '🔴' : a.severity==='yellow' ? '🟡' : '🟢';
@@ -2156,12 +2255,59 @@ function wireOpsDeepLinks(root){
     el.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); go(); } };
   });
 }
-function opsClientMatchesFilter(name, q){
+function opsClientMatchesFilter(row, q){
   if(!q) return true;
-  return String(name||'').toLowerCase().includes(q);
+  const delivs = (opsData.deliverables||[]).filter(d=> d.practice_id===row.p.id);
+  const videos = (opsData.videos||[]).filter(v=> v.practice_id===row.p.id);
+  const parts = [
+    row.p.name, row.phase.currentPhase, row.marketing,
+    ...delivs.flatMap(d=> [d.name, d.owner_seat, d.phase]),
+    ...videos.flatMap(v=> [v.item, v.blocked_reason, stageLabelOf(v.stage)]),
+    ...(row.milestones||[]).map(m=> m.name),
+  ];
+  return opsMatchesQuery(q, parts);
+}
+function opsPhaseShortLabel(phase){
+  if(!phase) return '—';
+  const num = parsePhaseNum(phase);
+  if(num==null) return phase.length > 28 ? phase.slice(0, 26)+'…' : phase;
+  return `Phase ${num}`;
+}
+function wireOpsClientEdits(root){
+  const scope = root || document;
+  scope.querySelectorAll('.ops-due-input').forEach(inp=>{
+    inp.onclick = e=> e.stopPropagation();
+    inp.onchange = async ()=>{
+      const ok = await updateOpsDeliverable(inp.dataset.delivId, { due: inp.value || null });
+      if(!ok) inp.value = inp.defaultValue;
+    };
+  });
+  scope.querySelectorAll('.ops-deliv-at').forEach(inp=>{
+    inp.onclick = e=> e.stopPropagation();
+    inp.onchange = async ()=>{
+      const val = inp.value ? new Date(inp.value+'T12:00:00').toISOString() : null;
+      const ok = await updateOpsDeliverable(inp.dataset.delivId, { delivered_at: val });
+      if(!ok) inp.value = inp.defaultValue;
+    };
+  });
+  scope.querySelectorAll('.ops-deliv-status').forEach(sel=>{
+    sel.onclick = e=> e.stopPropagation();
+    sel.onchange = async ()=> updateOpsDeliverable(sel.dataset.delivId, { status: sel.value });
+  });
+  scope.querySelectorAll('.ops-vid-stage').forEach(sel=>{
+    sel.onclick = e=> e.stopPropagation();
+    sel.onchange = async ()=> updateOpsVideo(sel.dataset.vidId, { stage: sel.value });
+  });
+  scope.querySelectorAll('.ops-shoot-date').forEach(inp=>{
+    inp.onclick = e=> e.stopPropagation();
+    inp.onchange = async ()=>{
+      const ok = await updateOpsVideo(inp.dataset.vidId, { planned_shoot_date: inp.value || null });
+      if(!ok) inp.value = inp.defaultValue;
+    };
+  });
+  enhanceSelectsIn(scope);
 }
 function renderOpsClientDetail(r){
-  const names = practiceNameMap();
   const delivs = (opsData.deliverables||[]).filter(d=> d.practice_id===r.p.id && d.status!=='delivered');
   const videos = (opsData.videos||[]).filter(v=> v.practice_id===r.p.id && v.stage!=='posted' && v.stage!=='delivered');
   const groups = groupDelivsByPhase(delivs);
@@ -2172,49 +2318,58 @@ function renderOpsClientDetail(r){
     return days >= 0 && days <= 14;
   }).length;
   const mini = [
-    { l:'Health score', v: String(r.h.score), cls: r.h.band },
-    { l:'Current phase', v: r.phase.currentPhase || '—' },
-    { l:'Open deliverables', v: String(r.openDeliv) },
-    { l:'Overdue', v: String(overdueDeliv), warn: overdueDeliv>0 },
-    { l:'Due ≤14d', v: String(upcomingDeliv) },
-    { l:'Videos active', v: String(r.openVid) },
-    { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0 },
-    { l:'Marketing', v: r.marketing },
+    { l:'Health score', v: String(r.h.score), cls: r.h.band, compact:false },
+    { l:'Current phase', v: opsPhaseShortLabel(r.phase.currentPhase), title: r.phase.currentPhase||'', compact:true },
+    { l:'Open deliverables', v: String(r.openDeliv), compact:false },
+    { l:'Overdue', v: String(overdueDeliv), warn: overdueDeliv>0, compact:false },
+    { l:'Due ≤14d', v: String(upcomingDeliv), compact:false },
+    { l:'Videos active', v: String(r.openVid), compact:false },
+    { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0, compact:false },
+    { l:'Marketing', v: r.marketing, compact:true },
   ];
   const delivRows = groups.flatMap(g=> g.items.map(d=>{
     const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
-    const st = d.status==='in_progress'? 'In progress' : d.status==='promised'? 'Promised' : d.status;
     const days = daysLeft==null? '—' : daysLeft < 0 ? `${Math.abs(daysLeft)} overdue` : String(daysLeft);
     const rowCls = daysLeft!=null && daysLeft<0? 'ops-row-warn' : daysLeft!=null && daysLeft<=3? 'ops-row-caution' : '';
-    return `<tr class="${rowCls}" data-ops-link="1" data-ops-pid="${r.p.id}" data-ops-view="deliverables" data-ops-deliv="${d.id}" data-ops-phase="${esc(g.phase)}">
-      <td>${esc(d.name)}</td><td>${esc(g.phase)}</td><td>${esc(d.owner_seat||'—')}</td>
+    return `<tr class="${rowCls}">
+      <td>${esc(d.name)}</td>
+      <td class="ops-phase-cell" title="${esc(g.phase)}">${esc(opsPhaseShortLabel(g.phase))}</td>
+      <td>${esc(d.owner_seat||'—')}</td>
       <td class="ops-due-cell"><input type="date" class="cellinput ops-due-input" data-deliv-id="${d.id}" value="${d.due? String(d.due).slice(0,10):''}"></td>
-      <td>${days}</td><td>${esc(st)}</td></tr>`;
+      <td>${days}</td>
+      <td class="ops-status-cell"><select class="statussel ops-deliv-status" data-deliv-id="${d.id}">${STATUS_OPTS.map(([v,l])=>`<option value="${v}" ${v===d.status?'selected':''}>${l}</option>`).join('')}</select></td>
+      <td class="ops-due-cell">${d.status==='delivered' || d.delivered_at ? `<input type="date" class="cellinput ops-deliv-at" data-deliv-id="${d.id}" value="${d.delivered_at? String(d.delivered_at).slice(0,10):''}">` : '—'}</td>
+    </tr>`;
   }));
   const vidRows = videos.map(v=>{
     const fin = v.stage==='posted' || v.stage==='delivered';
     const sla = slaState(v.stage_since, fin);
     const wait = v.blocked ? (v.blocked_reason||'Practice') : '—';
     const st = sla==='overdue'? 'Overdue' : sla==='warn'? 'Watch' : v.blocked? 'Blocked' : 'On track';
-    return `<tr class="ops-row-click${sla? ' ops-row-'+sla:''}" data-ops-link="1" data-ops-pid="${r.p.id}" data-ops-view="video" data-ops-video="${v.id}">
-      <td>${esc(v.item)}</td><td>${esc(stageLabelOf(v.stage))}</td><td>${daysIn(v.stage_since)}</td>
-      <td>${v.planned_shoot_date? fmtDate(v.planned_shoot_date):'—'}</td><td>${esc(wait)}</td><td>${esc(st)}</td></tr>`;
+    return `<tr class="${sla? 'ops-row-'+sla:''}">
+      <td>${esc(v.item)}</td>
+      <td class="ops-status-cell"><select class="stagesel ops-vid-stage" data-vid-id="${v.id}">${STAGES.map(([k,l])=>`<option value="${k}" ${k===v.stage?'selected':''}>${l}</option>`).join('')}</select></td>
+      <td>${daysIn(v.stage_since)}</td>
+      <td class="ops-due-cell"><input type="date" class="cellinput ops-shoot-date" data-vid-id="${v.id}" value="${v.planned_shoot_date? String(v.planned_shoot_date).slice(0,10):''}"></td>
+      <td>${esc(wait)}</td>
+      <td>${esc(st)}</td>
+    </tr>`;
   });
   return `<div class="ops-client-detail">
     <div class="ops-client-metrics">${mini.map(m=>`
-      <div class="ops-client-metric${m.warn?' warn':''}${m.cls? ' band-'+m.cls:''}">
-        <div class="ops-client-metric-v">${esc(m.v)}</div>
+      <div class="ops-client-metric${m.warn?' warn':''}${m.cls? ' band-'+m.cls:''}${m.compact?' compact':''}">
+        <div class="ops-client-metric-v"${m.title? ` title="${esc(m.title)}"`:''}>${esc(m.v)}</div>
         <div class="ops-client-metric-l">${esc(m.l)}</div>
       </div>`).join('')}</div>
     <div class="ops-client-section">
       <h4>Open deliverables</h4>
-      ${delivRows.length ? `<table class="ops-table ops-table-compact"><thead><tr>
-        <th>Deliverable</th><th>Phase</th><th>Owner</th><th>Due</th><th>Days</th><th>Status</th>
+      ${delivRows.length ? `<table class="ops-table ops-table-compact ops-edit-table"><thead><tr>
+        <th>Deliverable</th><th>Phase</th><th>Owner</th><th>Due</th><th>Days</th><th>Status</th><th>Delivered</th>
       </tr></thead><tbody>${delivRows.join('')}</tbody></table>` : '<p class="note">No open deliverables.</p>'}
     </div>
     <div class="ops-client-section">
       <h4>Video production</h4>
-      ${vidRows.length ? `<table class="ops-table ops-table-compact"><thead><tr>
+      ${vidRows.length ? `<table class="ops-table ops-table-compact ops-edit-table"><thead><tr>
         <th>Video</th><th>Stage</th><th>Days</th><th>Scheduled</th><th>Waiting</th><th>Status</th>
       </tr></thead><tbody>${vidRows.join('')}</tbody></table>` : '<p class="note">No active videos.</p>'}
     </div>
@@ -2223,8 +2378,6 @@ function renderOpsClientDetail(r){
 }
 function renderOperationsDashboard(){
   if(!opsData) return;
-  const q = opsSearchQuery;
-  const names = practiceNameMap();
   const practices = opsData.practices || [];
   const alerts = buildOpsAlerts();
   const healthRows = practices.map(p=>{
@@ -2241,9 +2394,9 @@ function renderOperationsDashboard(){
     let marketing = kpi ? 'Synced' : (sync.mapped ? 'Awaiting data' : 'Not configured');
     if(sync.hasError) marketing = 'Sync error';
     return { p, h, phase, openDeliv, openVid, waitingVid, sync, nextDue, marketing, kpi, milestones: opsData.milestones.filter(m=> m.practice_id===p.id) };
-  }).filter(r=> opsMatchesQuery(q, [r.p.name, r.phase.currentPhase, r.marketing, ...r.milestones.map(m=>m.name)]));
-  const onTrack = healthRows.filter(r=> r.h.band==='green').length;
-  const needsAttn = healthRows.length - onTrack;
+  });
+  const flaggedClients = new Set(alerts.map(a=> a.practiceId));
+  const onTrack = healthRows.filter(r=> r.h.band==='green' && !flaggedClients.has(r.p.id)).length;
   const videosProd = (opsData.videos||[]).filter(v=> v.stage!=='posted' && v.stage!=='delivered').length;
   const videosWait = (opsData.videos||[]).filter(v=> v.blocked).length;
   const videosOver = (opsData.videos||[]).filter(v=>{
@@ -2260,9 +2413,11 @@ function renderOperationsDashboard(){
     if(d.status==='delivered' || !d.due) return false;
     return new Date(d.due) < new Date();
   }).length;
+  const needAttentionCount = alerts.length;
+  const needAttentionClients = flaggedClients.size;
   const cards = [
     { v: practices.length, l:'Active clients', note:'on the roster', tier:'primary' },
-    { v: needsAttn, l:'Need attention', note:'health or SLA flags', cls: needsAttn? 'a':'', tier:'primary' },
+    { v: needAttentionCount, l:'Need attention', note: needAttentionCount ? `${needAttentionClients} client${needAttentionClients===1?'':'s'} · ${needAttentionCount} flag${needAttentionCount===1?'':'s'}` : 'nothing flagged', cls: needAttentionCount? 'a':'', tier:'primary' },
     { v: overdueDelivCount, l:'Overdue deliverables', note:'past due date', cls: overdueDelivCount? 'r':'', tier:'primary' },
     { v: upcomingDeliv, l:'Due within 14 days', note:'coming up soon', cls: upcomingDeliv? 'a':'', tier:'primary' },
     { v: onTrack, l:'On track', note:'green health band', cls:'g', tier:'secondary' },
@@ -2278,55 +2433,50 @@ function renderOperationsDashboard(){
       <div class="tgt">${esc(c.note)}</div>
     </div>`).join('');
   const morning = $('opsMorningQueue');
-  morning.innerHTML = alerts.length
-    ? alerts.slice(0, 20).map(a=> renderOpsAlertItem(a, true)).join('')
-    : '<p class="note">No priorities flagged — everything looks on track.</p>';
+  const actionAlerts = alerts;
+  morning.innerHTML = actionAlerts.length
+    ? actionAlerts.slice(0, 20).map(a=> renderOpsAlertItem(a, true)).join('')
+    : '<p class="note ops-empty-note">No priorities flagged — everything looks on track.</p>';
   wireOpsDeepLinks(morning);
   const feed = $('opsAttentionFeed');
-  feed.innerHTML = alerts.length
-    ? alerts.slice(0, 12).map(a=> renderOpsAlertItem(a, true)).join('')
-    : '<p class="note">No actionable items right now.</p>';
+  feed.innerHTML = actionAlerts.length
+    ? actionAlerts.slice(0, 12).map(a=> renderOpsAlertItem(a, true)).join('')
+    : '<p class="note ops-empty-note">No actionable items right now.</p>';
   wireOpsDeepLinks(feed);
-  // KPI rollup — latest month across all practices
-  const latestByP = latestKpiByPractice(opsData.kpiRaw);
-  const rows = [...latestByP.values()];
-  let period = rows.map(r=> r.period).sort().pop();
-  const agg = { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0, ctr:[], cpc:[], cpm:[] };
-  rows.forEach(r=>{
-    if(period && String(r.period) !== String(period)) return;
-    agg.spend += N(r,'spend')||0;
-    agg.reach += N(r,'reach')||0;
-    agg.impr += N(r,'impr')||0;
-    agg.clicks += N(r,'clicks')||0;
-    agg.cons += N(r,'cons')||0;
-    agg.proc += N(r,'proc')||0;
-    const ctr = metricValue(CORE_METRICS.find(x=>x.k==='ctr'), r);
-    const cpc = metricValue(CORE_METRICS.find(x=>x.k==='cpc'), r);
-    const cpm = metricValue(CORE_METRICS.find(x=>x.k==='cpm'), r);
-    if(ctr!=null) agg.ctr.push(ctr);
-    if(cpc!=null) agg.cpc.push(cpc);
-    if(cpm!=null) agg.cpm.push(cpm);
-  });
-  const avg = arr=> arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
-  $('opsKpiPeriod').textContent = period ? `Latest reporting month across active clients: ${periodLabel(period)}` : 'No KPI data yet across clients.';
+  // KPI rollup — monthly company totals + trend charts
+  const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
+  const period = monthly.length ? monthly[monthly.length-1].period : null;
+  const latestMonth = period ? monthly.find(r=> String(r.period)===String(period)) : null;
+  const agg = latestMonth || { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0 };
+  const prevMonth = monthly.length > 1 ? monthly[monthly.length-2] : null;
+  const monthDelta = (cur, prev, key)=>{
+    const c = N(cur,key), p = prev ? N(prev,key) : null;
+    if(c==null || p==null || !isFinite(p) || p===0) return '';
+    const pct = Math.round((c-p)/Math.abs(p)*100);
+    if(!pct) return 'flat vs prior month';
+    return `${pct>0?'+':''}${pct}% vs prior month`;
+  };
+  $('opsKpiPeriod').textContent = monthly.length
+    ? `${monthly.length} reporting month${monthly.length===1?'':'s'} across clients · latest: ${periodLabel(period)}`
+    : 'No KPI data yet across clients.';
   const kpiCards = [
-    { l:'Total Reach', v: fmtNum(agg.reach) },
-    { l:'Total Impressions', v: fmtNum(agg.impr) },
-    { l:'Total Spend', v: fmt$(agg.spend) },
-    { l:'Avg CTR', v: fmtP(avg(agg.ctr)) },
-    { l:'Avg CPC', v: avg(agg.cpc)!=null? fmt$(avg(agg.cpc)):'—' },
-    { l:'Avg CPM', v: avg(agg.cpm)!=null? fmt$(avg(agg.cpm)):'—' },
-    { l:'Total Consults', v: fmtNum(agg.cons) },
-    { l:'Total Procedures', v: fmtNum(agg.proc) },
+    { l:'Total reach', v: fmtNum(agg.reach), note: monthDelta(agg, prevMonth, 'reach') },
+    { l:'Total impressions', v: fmtNum(agg.impr), note: monthDelta(agg, prevMonth, 'impr') },
+    { l:'Total spend', v: fmt$(agg.spend), note: monthDelta(agg, prevMonth, 'spend') },
+    { l:'Link clicks', v: fmtNum(agg.clicks), note: monthDelta(agg, prevMonth, 'clicks') },
+    { l:'Total consults', v: fmtNum(agg.cons), note: monthDelta(agg, prevMonth, 'cons') },
+    { l:'Total procedures', v: fmtNum(agg.proc), note: monthDelta(agg, prevMonth, 'proc') },
   ];
   $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
     <div class="card ops-metric ops-metric-secondary">
       <div class="k">${esc(c.l)}</div>
       <div class="big">${esc(c.v)}</div>
+      ${c.note? `<div class="tgt">${esc(c.note)}</div>`:''}
     </div>`).join('');
-  // Scalable client overview — collapsed list with expandable detail per practice
-  const clientQ = (opsClientFilter || opsSearchQuery).trim().toLowerCase();
-  let overviewRows = healthRows.filter(r=> opsClientMatchesFilter(r.p.name, clientQ));
+  renderOpsCompanyKpi(monthly, period);
+  // Client overview — unified search + expandable inline edits
+  const clientQ = opsClientFilter.trim().toLowerCase();
+  let overviewRows = healthRows.filter(r=> opsClientMatchesFilter(r, clientQ));
   overviewRows.sort((a,b)=> opsClientSortAsc
     ? a.p.name.localeCompare(b.p.name)
     : b.p.name.localeCompare(a.p.name));
@@ -2354,7 +2504,7 @@ function renderOperationsDashboard(){
             <span class="ops-client-caret" aria-hidden="true">${expanded?'▾':'▸'}</span>
             <span class="ops-client-name">${esc(r.p.name)}</span>
             <span class="ops-pill ops-pill-${r.h.band}">${r.h.score}</span>
-            <span class="ops-client-meta">${esc(r.phase.currentPhase||'—')} · ${r.openDeliv} deliv · ${r.openVid} video${r.waitingVid? ` · ${r.waitingVid} waiting`:''}</span>
+            <span class="ops-client-meta" title="${esc(r.phase.currentPhase||'')}">${esc(opsPhaseShortLabel(r.phase.currentPhase))} · ${r.openDeliv} deliv · ${r.openVid} video${r.waitingVid? ` · ${r.waitingVid} waiting`:''}</span>
             <span class="ops-client-next">${r.nextDue? 'Next due '+fmtDate(r.nextDue):'No due dates set'}</span>
           </button>
           ${expanded ? renderOpsClientDetail(r) : ''}
@@ -2368,13 +2518,7 @@ function renderOperationsDashboard(){
         renderOperationsDashboard();
       };
     });
-    overviewEl.querySelectorAll('.ops-due-input').forEach(inp=>{
-      inp.onclick = e=> e.stopPropagation();
-      inp.onchange = async ()=>{
-        const ok = await updateOpsRow('deliverables', inp.dataset.delivId, { due: inp.value || null });
-        if(!ok) inp.value = inp.defaultValue;
-      };
-    });
+    wireOpsClientEdits(overviewEl);
     wireOpsDeepLinks(overviewEl);
     overviewEl.querySelectorAll('.ops-open-client').forEach(btn=>{
       btn.onclick = ()=> openOpsDeepLink({ practiceId: btn.dataset.opsPid, view: 'roadmap' });
@@ -2383,9 +2527,9 @@ function renderOperationsDashboard(){
   const countEl = $('opsClientCount');
   if(countEl) countEl.textContent = `${overviewRows.length} client${overviewRows.length===1?'':'s'}${clientQ? ' matching search':''}`;
 }
-async function loadOperationsData(){
+async function loadOperationsData(force){
   if(!isTeamView()) return;
-  if(opsLoadPromise) return opsLoadPromise;
+  if(opsLoadPromise && !force) return opsLoadPromise;
   opsLoadPromise = (async()=>{
     try{
       const [practices, deliverables, milestones, videos, kpiRaw, sources] = await Promise.all([
@@ -2415,19 +2559,22 @@ async function loadOperationsData(){
   return opsLoadPromise;
 }
 function wireOpsSearch(){
-  const el = $('opsSearch');
-  if(el && !el._wired){
-    el._wired = true;
-    el.addEventListener('input', ()=>{
-      opsSearchQuery = (el.value||'').trim().toLowerCase();
-      renderOperationsDashboard();
-    });
-  }
   const clientEl = $('opsClientSearch');
   if(clientEl && !clientEl._wired){
     clientEl._wired = true;
     clientEl.addEventListener('input', ()=>{
       opsClientFilter = (clientEl.value||'').trim().toLowerCase();
+      if(opsClientFilter && !opsExpandedClient){
+        const practices = opsData?.practices || [];
+        const rows = practices.map(p=>{
+          const delivs = (opsData?.deliverables||[]).filter(d=> d.practice_id===p.id);
+          const videos = (opsData?.videos||[]).filter(v=> v.practice_id===p.id);
+          const h = computeClientHealth(p, delivs, videos);
+          return { p, h, phase: h.phase, marketing:'', milestones: (opsData?.milestones||[]).filter(m=> m.practice_id===p.id) };
+        });
+        const match = rows.find(r=> opsClientMatchesFilter(r, opsClientFilter));
+        if(match) opsExpandedClient = match.p.id;
+      }
       renderOperationsDashboard();
     });
   }

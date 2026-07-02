@@ -137,35 +137,34 @@
       <div class="ops-head">
         <h2>Roxium <em>Operations Dashboard</em></h2>
         <div class="sub">What needs our attention today?</div>
-        <div class="ops-search-wrap">
-          <input id="opsSearch" type="search" class="picker ops-search" placeholder="Search clients, videos, deliverables, team members, milestones…" autocomplete="off" spellcheck="false" aria-label="Search operations">
-        </div>
       </div>
       <div id="opsExecCards" class="ops-cards cards"></div>
-      <div class="ops-split">
-        <div class="ops-panel ops-panel-priority">
+      <div class="ops-split ops-split-balanced">
+        <div class="ops-panel ops-panel-queue">
           <h3>Morning meeting queue</h3>
-          <p class="note ops-panel-note">Auto-sorted: red first, then yellow, then green.</p>
-          <div id="opsMorningQueue" class="ops-queue"></div>
+          <p class="note ops-panel-note">Auto-sorted: red first, then yellow.</p>
+          <div id="opsMorningQueue" class="ops-queue ops-queue-panel"></div>
         </div>
-        <div class="ops-panel">
+        <div class="ops-panel ops-panel-queue">
           <h3>Needs attention</h3>
-          <div id="opsAttentionFeed" class="ops-feed"></div>
+          <p class="note ops-panel-note">Same flags as the metric above — newest first.</p>
+          <div id="opsAttentionFeed" class="ops-feed ops-queue-panel"></div>
         </div>
       </div>
       <div class="ops-panel">
         <h3>Company KPI overview</h3>
         <p class="note ops-panel-note" id="opsKpiPeriod"></p>
         <div id="opsKpiRollup" class="ops-kpi-rollup cards"></div>
+        <div id="opsKpiCharts" class="ops-kpi-charts hidden"></div>
       </div>
       <div class="ops-panel ops-panel-overview">
         <div class="ops-overview-head">
           <div>
             <h3>Client overview</h3>
-            <p class="note ops-panel-note">Urgent items appear in the queue above. Search or expand a client for deliverables, videos, and health detail.</p>
+            <p class="note ops-panel-note">Search by client, deliverable, video, or milestone — then expand a row for inline edits.</p>
           </div>
           <div class="ops-overview-tools">
-            <input id="opsClientSearch" type="search" class="picker ops-client-search" placeholder="Search client / surgeon…" autocomplete="off" spellcheck="false" aria-label="Search clients">
+            <input id="opsClientSearch" type="search" class="picker ops-client-search" placeholder="Search clients, deliverables, videos, milestones…" autocomplete="off" spellcheck="false" aria-label="Search client overview">
             <button type="button" class="btn sm ghost" id="opsClientSort" aria-pressed="true">A → Z</button>
           </div>
         </div>
