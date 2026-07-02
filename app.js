@@ -155,9 +155,11 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['roadmap','deliverables','video','metrics','updates','access','team','admin'];
-const TEAM_ONLY_VIEWS = ['team','admin'];
-// remember the last client-side view and the last admin sub-tab for smooth two-way nav
+const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','access','team','controls'];
+const TEAM_ONLY_VIEWS = ['operations','team','controls'];
+const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','access','team'];
+const GLOBAL_TEAM_VIEWS = ['operations','controls'];
+// remember the last client-side view and the last Team Controls sub-tab for smooth nav
 let lastClientView = 'roadmap';
 let lastAdminTab = localStorage.getItem('lastAdminTab') || 'clients';
 function activateAdminTab(name){
@@ -170,43 +172,54 @@ function activateAdminTab(name){
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
 function currentView(){
-  const h = (location.hash||'').replace('#','');
-  return VIEWS.includes(h) ? h : 'roadmap';
+  let h = (location.hash||'').replace('#','');
+  if(h === 'admin') h = 'controls';   // legacy hash alias
+  if(VIEWS.includes(h)) return h;
+  return (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
+}
+function teamWorkspace(){
+  const v = currentView();
+  if(v === 'operations') return 'operations';
+  if(v === 'controls') return 'controls';
+  return 'clients';
 }
 function showView(name){
-  if(!VIEWS.includes(name)) name = 'roadmap';
+  if(name === 'admin') name = 'controls';
+  if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
   if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
-  if(name !== 'admin') lastClientView = name;          // remember where to return on "Back to client portal"
+  if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
-  if(name==='admin'){
-    activateAdminTab(lastAdminTab);                     // land on the last admin sub-tab I used
+  if(name==='operations') loadOperationsData();
+  if(name==='controls'){
+    activateAdminTab(lastAdminTab);
     renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
-    enhanceSelectsIn($('adminPanel'));                  // theme practice/role selects
+    enhanceSelectsIn($('adminPanel'));
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
     if(pid) refreshOnboardChecklist(pid);
   }
   if(name==='access') loadClientAccessRoster();
 }
-// Single source of truth for chrome visibility. Admin is a SEPARATE global screen,
-// so when it's open we hide the whole practice context (hero, tabs, switcher,
-// preview) — it must not look like a tab inside Balikian/Demo's portal.
+// Chrome visibility: Operations + Team Controls are global team screens; Clients = per-practice portal.
 function syncChrome(){
   const realTeam = !!(me && me.role==='team');
   const teamView = isTeamView();
-  const adminMode = currentView()==='admin';
-  // team-only entry; hidden while in admin so the only back affordance is the top
-  // "← Back to client portal" link (no duplicate back control).
-  $('btnAdmin').classList.toggle('hidden', !teamView || adminMode);
-  $('btnAdmin').textContent = '⚙ Admin';
-  $('btnPreview').classList.toggle('hidden', !realTeam || adminMode);
-  $('btnAddMilestone')?.classList.toggle('hidden', !teamView || adminMode);
-  $('practiceSwitcher').classList.toggle('hidden', !realTeam || adminMode);
-  document.querySelector('.hero')?.classList.toggle('hidden', adminMode);
-  $('tabnav').classList.toggle('hidden', adminMode);
+  const ws = teamWorkspace();
+  const globalTeam = GLOBAL_TEAM_VIEWS.includes(currentView());
+  $('teamTopNav')?.classList.toggle('hidden', !teamView);
+  document.querySelectorAll('.teamtop').forEach(t=>{
+    const nav = t.dataset.teamnav;
+    const active = (nav==='operations' && ws==='operations') || (nav==='controls' && ws==='controls') || (nav==='clients' && ws==='clients');
+    t.classList.toggle('active', active);
+  });
+  $('btnPreview').classList.toggle('hidden', !realTeam || globalTeam);
+  $('btnAddMilestone')?.classList.toggle('hidden', !teamView || globalTeam);
+  $('practiceSwitcher').classList.toggle('hidden', !realTeam || ws!=='clients');
+  document.querySelector('.hero')?.classList.toggle('hidden', globalTeam);
+  $('tabnav').classList.toggle('hidden', globalTeam);
   document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   TEAM_ONLY_VIEWS.forEach(v=>{
@@ -219,11 +232,7 @@ function syncChrome(){
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
 window.addEventListener('hashchange', ()=> showView(currentView()));
-// Toggle: in admin → back to the client portal (last client view); else → admin.
-$('btnAdmin').onclick = ()=>{
-  location.hash = (currentView()==='admin') ? '#'+(lastClientView||'roadmap') : '#admin';
-};
-$('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#'+(lastClientView||'roadmap'); });
+$('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -399,6 +408,8 @@ async function afterLogin(){
   if(me.role === 'team'){
     const prax = await loadTeamPractices();
     practiceId = prax && prax.length ? prax[0].id : null;
+    const h = (location.hash||'').replace('#','');
+    if(!h || h === 'admin') location.hash = '#operations';
     $('btnPreview').onclick = ()=>{
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
@@ -1805,7 +1816,414 @@ $('btnPost').onclick = async ()=>{
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
 };
 
-/* ---- ONBOARDING & ACCESS (admin + client owners) ---- */
+/* ---------------- Operations Dashboard (team workspace) ---------------- */
+let opsData = null;
+let opsSearchQuery = '';
+let opsLoadPromise = null;
+const PHASE_TIMING = {
+  0: { warn: 7, red: 14 },
+  1: { warn: 11, red: 21 },
+  2: { warn: 152, red: 182 },
+  3: { warn: 30, red: 60 },
+  4: { warn: 30, red: 60 },
+  5: { warn: 30, red: 60 },
+};
+const OPS_HEALTH_RANK = { red: 0, yellow: 1, green: 2 };
+function parsePhaseNum(label){
+  const m = String(label||'').match(/Phase\s*(\d+)/i);
+  return m ? +m[1] : null;
+}
+function groupDelivsByPhase(delivs){
+  const groups = {};
+  delivs.forEach(d=>{ (groups[d.phase] = groups[d.phase] || []).push(d); });
+  const order = {};
+  delivs.forEach(d=>{ if(!(d.phase in order)) order[d.phase] = d.phase_order ?? 999; });
+  return Object.keys(groups)
+    .sort((a,b)=> (order[a]-order[b]) || a.localeCompare(b))
+    .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
+}
+function computePracticePhaseState(practice, delivs){
+  const groups = groupDelivsByPhase(delivs);
+  let prevCompleteAt = practice.go_live ? new Date(practice.go_live+'T12:00:00') : null;
+  let currentPhase = null;
+  let currentHealth = 'green';
+  let currentDays = 0;
+  const states = [];
+  for(const g of groups){
+    const num = parsePhaseNum(g.phase);
+    const delivered = g.items.filter(d=> d.status==='delivered');
+    const allDelivered = delivered.length === g.items.length;
+    let phaseStart = prevCompleteAt || (practice.go_live ? new Date(practice.go_live+'T12:00:00') : new Date(practice.created_at||Date.now()));
+    if(!allDelivered){
+      const active = g.items.filter(d=> d.status!=='promised');
+      if(active.length){
+        const starts = active.map(d=> new Date(d.status_since||phaseStart)).filter(d=> !isNaN(d));
+        if(starts.length) phaseStart = new Date(Math.min(...starts));
+      }
+      if(!currentPhase) currentPhase = g.phase;
+    }
+    const days = Math.max(0, Math.floor((Date.now()-phaseStart.getTime())/86400000));
+    const rule = PHASE_TIMING[num];
+    let health = 'green';
+    if(!allDelivered && rule){
+      if(days >= rule.red) health = 'red';
+      else if(days >= rule.warn) health = 'yellow';
+    }
+    if(!allDelivered && !currentPhase) currentPhase = g.phase;
+    if(g.phase === currentPhase){
+      currentHealth = health;
+      currentDays = days;
+    }
+    let completeAt = null;
+    if(allDelivered){
+      const dates = delivered.map(d=> d.delivered_at).filter(Boolean).map(d=> new Date(d));
+      if(dates.length) completeAt = new Date(Math.max(...dates));
+    }
+    if(completeAt) prevCompleteAt = completeAt;
+    const done = delivered.length;
+    states.push({ phase:g.phase, num, health, days, isCurrent: g.phase===currentPhase, progress: g.items.length? Math.round(100*done/g.items.length):0 });
+  }
+  if(!currentPhase && groups.length) currentPhase = groups[groups.length-1].phase;
+  return { currentPhase, currentHealth, currentDays, states };
+}
+function practiceNameMap(){
+  const m = new Map();
+  (opsData?.practices||[]).forEach(p=> m.set(p.id, p.name));
+  return m;
+}
+function latestKpiByPractice(rows){
+  const byP = new Map();
+  const norm = normalizeKpiRows(rows||[]).filter(r=> sourceKey(r.source)==='marketing');
+  norm.sort((a,b)=> String(a.period).localeCompare(String(b.period)));
+  norm.forEach(r=>{
+    const cur = byP.get(r.practice_id);
+    if(!cur || String(r.period) > String(cur.period)) byP.set(r.practice_id, r);
+  });
+  return byP;
+}
+function kpiSyncMeta(practiceId){
+  const sources = (opsData?.sources||[]).filter(s=> s.practice_id===practiceId);
+  const hasError = sources.some(s=> s.last_status==='error');
+  const lastSync = sources.map(s=> s.last_synced_at).filter(Boolean).sort().pop() || null;
+  return { hasError, lastSync, mapped: sources.filter(s=> (s.tab_name||'').trim()).length, total: sources.length };
+}
+function computeClientHealth(practice, delivs, videos){
+  const phase = computePracticePhaseState(practice, delivs);
+  let score = 100;
+  if(phase.currentHealth==='red') score -= 30;
+  else if(phase.currentHealth==='yellow') score -= 12;
+  delivs.filter(d=> d.status!=='delivered' && d.due && new Date(d.due) < new Date()).forEach(()=>{ score -= 5; });
+  videos.forEach(v=>{
+    const fin = v.stage==='posted' || v.stage==='delivered';
+    const sla = slaState(v.stage_since, fin);
+    if(sla==='overdue') score -= 8;
+    else if(sla==='warn') score -= 3;
+    if(v.blocked && daysIn(v.stage_since) >= 7) score -= 10;
+  });
+  const sync = kpiSyncMeta(practice.id);
+  if(sync.hasError) score -= 15;
+  score = Math.max(0, Math.min(100, score));
+  let band = 'green';
+  if(score < 60 || phase.currentHealth==='red') band = 'red';
+  else if(score < 85 || phase.currentHealth==='yellow') band = 'yellow';
+  return { score, band, phase, sync };
+}
+function opsMatchesQuery(q, parts){
+  if(!q) return true;
+  return parts.some(p=> String(p||'').toLowerCase().includes(q));
+}
+function buildOpsAlerts(){
+  const names = practiceNameMap();
+  const alerts = [];
+  const q = opsSearchQuery;
+  (opsData?.practices||[]).forEach(p=>{
+    const delivs = (opsData.deliverables||[]).filter(d=> d.practice_id===p.id);
+    const videos = (opsData.videos||[]).filter(v=> v.practice_id===p.id);
+    const phase = computePracticePhaseState(p, delivs);
+    const pname = p.name;
+    if(phase.currentHealth!=='green' && phase.currentPhase){
+      const label = phase.currentHealth==='red' ? 'Phase overdue' : 'Phase approaching deadline';
+      const detail = `${phase.currentPhase} · ${phase.currentDays} day${phase.currentDays===1?'':'s'} in phase`;
+      if(opsMatchesQuery(q, [pname, phase.currentPhase, label])){
+        alerts.push({ severity: phase.currentHealth, practice:pname, practiceId:p.id, title:label, detail, sort: OPS_HEALTH_RANK[phase.currentHealth] });
+      }
+    }
+    delivs.filter(d=> d.status!=='delivered' && d.due).forEach(d=>{
+      const due = new Date(d.due);
+      const daysLeft = Math.ceil((due - Date.now())/86400000);
+      let severity = 'green', title = 'Deliverable on track';
+      if(daysLeft < 0){ severity = 'red'; title = 'Deliverable overdue'; }
+      else if(daysLeft <= 1){ severity = 'yellow'; title = 'Deliverable due tomorrow'; }
+      else if(daysLeft <= 7){ severity = 'yellow'; title = 'Deliverable approaching deadline'; }
+      if(severity==='green') return;
+      const detail = `${d.name}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
+      if(opsMatchesQuery(q, [pname, d.name, d.owner_seat, d.phase, title])){
+        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft });
+      }
+    });
+    videos.forEach(v=>{
+      const fin = v.stage==='posted' || v.stage==='delivered';
+      const sla = slaState(v.stage_since, fin);
+      if(sla){
+        const days = daysIn(v.stage_since);
+        const title = sla==='overdue' ? 'Video overdue' : 'Video stalled';
+        const detail = `${v.item} · ${days} day${days===1?'':'s'} in ${stageLabelOf(v.stage)}`;
+        if(opsMatchesQuery(q, [pname, v.item, title])){
+          alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days });
+        }
+      }
+      if(v.blocked){
+        const days = daysIn(v.stage_since);
+        if(days >= 7){
+          const title = 'Waiting on client approval';
+          const detail = `${v.item} · ${days} day${days===1?'':'s'} waiting`;
+          if(opsMatchesQuery(q, [pname, v.item, v.blocked_reason, title])){
+            alerts.push({ severity: days>=14?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[days>=14?'red':'yellow'], days });
+          }
+        }
+      }
+    });
+    const sync = kpiSyncMeta(p.id);
+    if(sync.hasError && opsMatchesQuery(q, [pname, 'KPI sync failed'])){
+      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0 });
+    }
+    (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
+      if(!m.target_date || m.status==='done') return;
+      const days = Math.ceil((new Date(m.target_date+'T12:00:00')-Date.now())/86400000);
+      if(days > 7) return;
+      const severity = days < 0 ? 'red' : 'yellow';
+      const title = days < 0 ? 'Milestone overdue' : 'Milestone approaching';
+      const detail = `${m.name}${days < 0 ? ` · ${Math.abs(days)} day${Math.abs(days)===1?'':'s'} overdue` : days===0 ? ' · due today' : ` · ${days} day${days===1?'':'s'} left`}`;
+      if(opsMatchesQuery(q, [pname, m.name, m.phase, title])){
+        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days });
+      }
+    });
+  });
+  alerts.sort((a,b)=> a.sort - b.sort || (a.days??999) - (b.days??999) || a.practice.localeCompare(b.practice));
+  return alerts;
+}
+function openOpsClient(pid){
+  if(!pid) return;
+  practiceId = pid;
+  updateSwitcherLabel();
+  loadAll().then(()=>{ location.hash = '#roadmap'; });
+}
+function renderOpsAlertItem(a, clickable){
+  const icon = a.severity==='red' ? '🔴' : a.severity==='yellow' ? '🟡' : '🟢';
+  const click = clickable ? ` data-ops-client="${a.practiceId}" role="button" tabindex="0"` : '';
+  return `<div class="ops-alert ops-alert-${a.severity}"${click}>
+    <div class="ops-alert-icon">${icon}</div>
+    <div class="ops-alert-body">
+      <div class="ops-alert-practice">${esc(a.practice)}</div>
+      <div class="ops-alert-title">${esc(a.title)}</div>
+      <div class="ops-alert-detail">${esc(a.detail)}</div>
+    </div>
+  </div>`;
+}
+function renderOperationsDashboard(){
+  if(!opsData) return;
+  const q = opsSearchQuery;
+  const names = practiceNameMap();
+  const practices = opsData.practices || [];
+  const alerts = buildOpsAlerts();
+  const healthRows = practices.map(p=>{
+    const delivs = opsData.deliverables.filter(d=> d.practice_id===p.id);
+    const videos = opsData.videos.filter(v=> v.practice_id===p.id);
+    const h = computeClientHealth(p, delivs, videos);
+    const phase = h.phase;
+    const openDeliv = delivs.filter(d=> d.status!=='delivered').length;
+    const openVid = videos.filter(v=> v.stage!=='posted' && v.stage!=='delivered').length;
+    const waitingVid = videos.filter(v=> v.blocked).length;
+    const sync = h.sync;
+    const nextDue = delivs.filter(d=> d.status!=='delivered' && d.due).map(d=> d.due).sort()[0] || null;
+    const kpi = latestKpiByPractice(opsData.kpiRaw).get(p.id);
+    let marketing = kpi ? 'Synced' : (sync.mapped ? 'Awaiting data' : 'Not configured');
+    if(sync.hasError) marketing = 'Sync error';
+    return { p, h, phase, openDeliv, openVid, waitingVid, sync, nextDue, marketing, kpi, milestones: opsData.milestones.filter(m=> m.practice_id===p.id) };
+  }).filter(r=> opsMatchesQuery(q, [r.p.name, r.phase.currentPhase, r.marketing, ...r.milestones.map(m=>m.name)]));
+  const onTrack = healthRows.filter(r=> r.h.band==='green').length;
+  const needsAttn = healthRows.length - onTrack;
+  const videosProd = (opsData.videos||[]).filter(v=> v.stage!=='posted' && v.stage!=='delivered').length;
+  const videosWait = (opsData.videos||[]).filter(v=> v.blocked).length;
+  const videosOver = (opsData.videos||[]).filter(v=>{
+    const fin = v.stage==='posted' || v.stage==='delivered';
+    return slaState(v.stage_since, fin)==='overdue';
+  }).length;
+  const upcomingDeliv = (opsData.deliverables||[]).filter(d=>{
+    if(d.status==='delivered' || !d.due) return false;
+    const days = Math.ceil((new Date(d.due)-Date.now())/86400000);
+    return days >= 0 && days <= 14;
+  }).length;
+  const avgHealth = healthRows.length ? Math.round(healthRows.reduce((s,r)=> s+r.h.score, 0)/healthRows.length) : 0;
+  const cards = [
+    { v: practices.length, l:'Total Active Clients' },
+    { v: onTrack, l:'Clients On Track', cls:'g' },
+    { v: needsAttn, l:'Clients Requiring Attention', cls: needsAttn? 'a':'' },
+    { v: videosProd, l:'Videos In Production' },
+    { v: videosWait, l:'Videos Waiting' },
+    { v: videosOver, l:'Videos Overdue', cls: videosOver? 'r':'' },
+    { v: upcomingDeliv, l:'Upcoming Deliverables' },
+    { v: avgHealth, l:'Avg Client Health Score' },
+  ];
+  $('opsExecCards').innerHTML = cards.map(c=>`
+    <div class="ops-card${c.cls? ' ops-card-'+c.cls:''}">
+      <div class="ops-card-val">${esc(String(c.v))}</div>
+      <div class="ops-card-lbl">${esc(c.l)}</div>
+    </div>`).join('');
+  const morning = $('opsMorningQueue');
+  morning.innerHTML = alerts.length
+    ? alerts.slice(0, 20).map(a=> renderOpsAlertItem(a, true)).join('')
+    : '<p class="note">No priorities flagged — everything looks on track.</p>';
+  morning.querySelectorAll('[data-ops-client]').forEach(el=>{
+    el.onclick = ()=> openOpsClient(el.dataset.opsClient);
+    el.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openOpsClient(el.dataset.opsClient); } };
+  });
+  const feed = $('opsAttentionFeed');
+  feed.innerHTML = alerts.length
+    ? alerts.slice(0, 12).map(a=> renderOpsAlertItem(a, true)).join('')
+    : '<p class="note">No actionable items right now.</p>';
+  feed.querySelectorAll('[data-ops-client]').forEach(el=>{
+    el.onclick = ()=> openOpsClient(el.dataset.opsClient);
+  });
+  // KPI rollup — latest month across all practices
+  const latestByP = latestKpiByPractice(opsData.kpiRaw);
+  const rows = [...latestByP.values()];
+  let period = rows.map(r=> r.period).sort().pop();
+  const agg = { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0, ctr:[], cpc:[], cpm:[] };
+  rows.forEach(r=>{
+    if(period && String(r.period) !== String(period)) return;
+    agg.spend += N(r,'spend')||0;
+    agg.reach += N(r,'reach')||0;
+    agg.impr += N(r,'impr')||0;
+    agg.clicks += N(r,'clicks')||0;
+    agg.cons += N(r,'cons')||0;
+    agg.proc += N(r,'proc')||0;
+    const ctr = metricValue(CORE_METRICS.find(x=>x.k==='ctr'), r);
+    const cpc = metricValue(CORE_METRICS.find(x=>x.k==='cpc'), r);
+    const cpm = metricValue(CORE_METRICS.find(x=>x.k==='cpm'), r);
+    if(ctr!=null) agg.ctr.push(ctr);
+    if(cpc!=null) agg.cpc.push(cpc);
+    if(cpm!=null) agg.cpm.push(cpm);
+  });
+  const avg = arr=> arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  $('opsKpiPeriod').textContent = period ? `Latest reporting month across active clients: ${periodLabel(period)}` : 'No KPI data yet across clients.';
+  const kpiCards = [
+    { l:'Total Reach', v: fmtNum(agg.reach) },
+    { l:'Total Impressions', v: fmtNum(agg.impr) },
+    { l:'Total Spend', v: fmt$(agg.spend) },
+    { l:'Avg CTR', v: fmtP(avg(agg.ctr)) },
+    { l:'Avg CPC', v: avg(agg.cpc)!=null? fmt$(avg(agg.cpc)):'—' },
+    { l:'Avg CPM', v: avg(agg.cpm)!=null? fmt$(avg(agg.cpm)):'—' },
+    { l:'Total Consults', v: fmtNum(agg.cons) },
+    { l:'Total Procedures', v: fmtNum(agg.proc) },
+  ];
+  $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
+    <div class="ops-kpi"><div class="ops-kpi-v">${esc(c.v)}</div><div class="ops-kpi-l">${esc(c.l)}</div></div>`).join('');
+  // Client health table
+  healthRows.sort((a,b)=> OPS_HEALTH_RANK[a.h.band]-OPS_HEALTH_RANK[b.h.band] || a.p.name.localeCompare(b.p.name));
+  $('opsClientHealth').innerHTML = `<table class="ops-table"><thead><tr>
+    <th>Practice</th><th>Current Phase</th><th>Health</th><th>Deliverables</th><th>Videos</th><th>Marketing</th><th>Last KPI Sync</th><th>Next Deadline</th>
+  </tr></thead><tbody>${healthRows.map(r=>`<tr data-ops-client="${r.p.id}" class="ops-row-click">
+    <td>${esc(r.p.name)}</td>
+    <td>${esc(r.phase.currentPhase||'—')}</td>
+    <td><span class="ops-pill ops-pill-${r.h.band}">${r.h.score}</span></td>
+    <td>${r.openDeliv} open</td>
+    <td>${r.openVid} active${r.waitingVid? ` · ${r.waitingVid} waiting`:''}</td>
+    <td>${esc(r.marketing)}</td>
+    <td>${r.sync.lastSync ? fmtDate(r.sync.lastSync.slice(0,10)) : '—'}</td>
+    <td>${r.nextDue ? fmtDate(r.nextDue) : '—'}</td>
+  </tr>`).join('')}</tbody></table>`;
+  // Deliverables
+  const delivRows = [];
+  (opsData.deliverables||[]).forEach(d=>{
+    if(d.status==='delivered') return;
+    const pname = names.get(d.practice_id)||'';
+    const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
+    let sortKey = 2;
+    if(daysLeft!=null && daysLeft < 0) sortKey = 0;
+    else if(daysLeft!=null && daysLeft <= 7) sortKey = 1;
+    if(!opsMatchesQuery(q, [pname, d.name, d.owner_seat, d.phase])) return;
+    delivRows.push({ d, pname, daysLeft, sortKey });
+  });
+  delivRows.sort((a,b)=> a.sortKey-b.sortKey || (a.daysLeft??999)-(b.daysLeft??999) || a.pname.localeCompare(b.pname));
+  $('opsDeliverables').innerHTML = `<table class="ops-table"><thead><tr>
+    <th>Client</th><th>Deliverable</th><th>Phase</th><th>Owner</th><th>Due</th><th>Days</th><th>Status</th>
+  </tr></thead><tbody>${delivRows.map(({d,pname,daysLeft})=>{
+    const st = d.status==='in_progress'? 'In progress' : d.status==='promised'? 'Promised' : d.status;
+    const days = daysLeft==null? '—' : daysLeft < 0 ? `${Math.abs(daysLeft)} overdue` : String(daysLeft);
+    const rowCls = daysLeft!=null && daysLeft<0? 'ops-row-warn' : daysLeft!=null && daysLeft<=3? 'ops-row-caution' : '';
+    return `<tr class="ops-row-click ${rowCls}" data-ops-client="${d.practice_id}">
+      <td>${esc(pname)}</td><td>${esc(d.name)}</td><td>${esc(d.phase)}</td><td>${esc(d.owner_seat||'—')}</td>
+      <td>${d.due? fmtDate(d.due):'—'}</td><td>${days}</td><td>${esc(st)}</td></tr>`;
+  }).join('')}</tbody></table>`;
+  // Videos
+  const vidRows = [];
+  (opsData.videos||[]).forEach(v=>{
+    const pname = names.get(v.practice_id)||'';
+    if(!opsMatchesQuery(q, [pname, v.item, v.blocked_reason, stageLabelOf(v.stage)])) return;
+    const fin = v.stage==='posted' || v.stage==='delivered';
+    const sla = slaState(v.stage_since, fin);
+    vidRows.push({ v, pname, sla });
+  });
+  vidRows.sort((a,b)=> (OPS_HEALTH_RANK[b.sla==='overdue'?'red':b.sla==='warn'?'yellow':'green'] - OPS_HEALTH_RANK[a.sla==='overdue'?'red':a.sla==='warn'?'yellow':'green']) || a.pname.localeCompare(b.pname));
+  $('opsVideos').innerHTML = `<table class="ops-table"><thead><tr>
+    <th>Client</th><th>Video</th><th>Stage</th><th>Days in stage</th><th>Scheduled</th><th>Waiting on</th><th>Status</th>
+  </tr></thead><tbody>${vidRows.map(({v,pname,sla})=>{
+    const wait = v.blocked ? (v.blocked_reason||'Practice') : '—';
+    const st = sla==='overdue'? 'Overdue' : sla==='warn'? 'Watch' : v.blocked? 'Blocked' : 'On track';
+    return `<tr class="ops-row-click${sla? ' ops-row-'+sla:''}" data-ops-client="${v.practice_id}">
+      <td>${esc(pname)}</td><td>${esc(v.item)}</td><td>${esc(stageLabelOf(v.stage))}</td>
+      <td>${daysIn(v.stage_since)}</td><td>${v.planned_shoot_date? fmtDate(v.planned_shoot_date):'—'}</td>
+      <td>${esc(wait)}</td><td>${esc(st)}</td></tr>`;
+  }).join('')}</tbody></table>`;
+  document.querySelectorAll('#operationsPanel [data-ops-client]').forEach(el=>{
+    el.style.cursor = 'pointer';
+    el.onclick = e=>{ if(e.target.closest('a')) return; openOpsClient(el.dataset.opsClient); };
+  });
+}
+async function loadOperationsData(){
+  if(!isTeamView()) return;
+  if(opsLoadPromise) return opsLoadPromise;
+  opsLoadPromise = (async()=>{
+    try{
+      const [practices, deliverables, milestones, videos, kpiRaw, sources] = await Promise.all([
+        sb.from('practices').select('id,name,go_live,workbook_sheet_id,created_at').order('name'),
+        sb.from('deliverables').select('id,practice_id,phase,phase_order,name,owner_seat,status,due,delivered_at,status_since,sort'),
+        sb.from('milestones').select('id,practice_id,name,status,target_date,completed_on,sort,phase'),
+        sb.from('video_pipeline').select('id,practice_id,item,stage,blocked,blocked_reason,stage_since,planned_shoot_date,sort'),
+        sb.from('kpi_monthly').select('practice_id,period,source,spend,reach,impr,clicks,cons,proc,updated_at'),
+        sb.from('sheet_sources').select('practice_id,source,last_status,last_synced_at,tab_name'),
+      ]);
+      opsData = {
+        practices: practices.data||[],
+        deliverables: deliverables.data||[],
+        milestones: milestones.data||[],
+        videos: videos.data||[],
+        kpiRaw: kpiRaw.data||[],
+        sources: sources.data||[],
+      };
+      renderOperationsDashboard();
+    }catch(e){
+      console.error('[ops] load failed', e);
+      $('opsMorningQueue').innerHTML = '<p class="note">Could not load operations data. Try refreshing.</p>';
+    }finally{
+      opsLoadPromise = null;
+    }
+  })();
+  return opsLoadPromise;
+}
+function wireOpsSearch(){
+  const el = $('opsSearch');
+  if(!el || el._wired) return;
+  el._wired = true;
+  el.addEventListener('input', ()=>{
+    opsSearchQuery = (el.value||'').trim().toLowerCase();
+    renderOperationsDashboard();
+  });
+}
+wireOpsSearch();
+
+/* ---- ONBOARDING & ACCESS (Team Controls + client owners) ---- */
 const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
 const accessFlash = t=>{ const el=$('clientAccessMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
 
@@ -1936,7 +2354,7 @@ function renderPlatformAdmins(data){
     }).join('')
     + (cnt <= 1 ? `<p class="note" style="padding:8px 12px">Only administrator — self-removal is blocked.</p>` : '');
   wrap.querySelectorAll('[data-demote]').forEach(b=> b.onclick = async ()=>{
-    if(!await uiConfirm('Remove platform admin', 'This person will lose access to the Admin panel. Continue?', {danger:true})) return;
+    if(!await uiConfirm('Remove platform admin', 'This person will lose access to Team Controls. Continue?', {danger:true})) return;
     const { error } = await sb.rpc('demote_platform_admin', { p_user: b.dataset.demote });
     if(error) uiAlert('Cannot remove admin', esc(error.message));
     else { onbFlash('Administrator access removed.'); loadPlatformAdmins(); }
@@ -2556,8 +2974,7 @@ async function saveMasterFolder(){
 }
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
 
-// Admin sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
-// Remembers the choice so the Admin button returns here next time.
+// Team Controls sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
 $('adminTabs')?.addEventListener('click', e=>{
   const b = e.target.closest('.atab'); if(!b) return;
   activateAdminTab(b.dataset.atab);
@@ -2582,7 +2999,7 @@ async function findWorkbook(pid, name){
   if(!isTeamView()) return;
   const out = document.getElementById('detect-'+pid); if(!out) return;
   const folder = (appSettings.master_reporting_drive_folder||'').trim();
-  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> under Admin → System first.</div>'; return; }
+  if(!folder){ out.innerHTML = '<div class="note">Set the global <b>Master Reporting Drive Folder</b> under <b>Team Controls → System</b> first.</div>'; return; }
   out.innerHTML = '<div class="note">Refreshing folder contents…</div>';
   try{
     const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name, refresh: true });
