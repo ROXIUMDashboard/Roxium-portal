@@ -318,6 +318,7 @@ async function boot(){
 }
 
 async function init(){
+  showBuildVersion();
   const { data:{ session } } = await sb.auth.getSession();
   if(!session){ $('login').classList.remove('hidden'); return; }
   await boot();
@@ -325,6 +326,18 @@ async function init(){
 // Never await Supabase calls directly inside the auth callback — that can stall
 // the client. Defer to a fresh task and let boot() dedupe.
 sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0); });
+
+async function showBuildVersion(){
+  const el = $('portalBuild');
+  if(!el) return;
+  try{
+    const r = await fetch(`version.json?t=${Date.now()}`);
+    if(r.ok){
+      const v = await r.json();
+      if(v.sha) el.textContent = `build ${v.sha}`;
+    }
+  }catch(_){}
+}
 
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
