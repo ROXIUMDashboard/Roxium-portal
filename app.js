@@ -331,11 +331,20 @@ async function showBuildVersion(){
   const el = $('portalBuild');
   if(!el) return;
   try{
-    const r = await fetch(`version.json?t=${Date.now()}`);
-    if(r.ok){
-      const v = await r.json();
-      if(v.sha) el.textContent = `build ${v.sha}`;
-    }
+    const r = await fetch(`version.json?t=${Date.now()}`, {cache:'no-store'});
+    if(!r.ok) return;
+    const v = await r.json();
+    if(!v.sha) return;
+    el.textContent = `build ${v.sha}`;
+    const app = document.querySelector('script[src*="app.js"]');
+    const src = app?.getAttribute('src')||'';
+    if(src.includes(v.sha)) return;
+    const k = 'roxium_cache_bust'+v.sha;
+    if(sessionStorage.getItem(k)) return;
+    sessionStorage.setItem(k,'1');
+    const u = new URL(location.href);
+    u.searchParams.set('_v', v.sha);
+    location.replace(u.toString());
   }catch(_){}
 }
 

@@ -336,6 +336,27 @@
 
 <div id="modal" class="modal"></div>
 
+<script>
+(function(){
+  var KEY='roxium_cache_bust';
+  fetch('version.json',{cache:'no-store'})
+    .then(function(r){return r.json()})
+    .then(function(v){
+      if(!v||!v.sha) return;
+      var el=document.getElementById('portalBuild');
+      if(el) el.textContent='build '+v.sha;
+      var app=document.querySelector('script[src*="app.js"]');
+      var src=(app&&app.getAttribute('src'))||'';
+      if(src.indexOf(v.sha)>=0) return;
+      var k=KEY+v.sha;
+      if(sessionStorage.getItem(k)) return;
+      sessionStorage.setItem(k,'1');
+      var u=new URL(location.href);
+      u.searchParams.set('_v',v.sha);
+      location.replace(u.toString());
+    }).catch(function(){});
+})();
+</script>
 <script src="config.js?v=BUILD_SHA"></script>
 <script src="app.js?v=BUILD_SHA"></script>
 </body>
