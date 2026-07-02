@@ -171,11 +171,61 @@ function activateAdminTab(name){
 }
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
+// Hash may carry deep-link params: #deliverables&pid=…&deliv=…&video=…&phase=…
+function hashParts(){
+  const raw = (location.hash||'').replace(/^#/,'');
+  const amp = raw.indexOf('&');
+  const view = ((amp >= 0 ? raw.slice(0, amp) : raw) || '').split('?')[0];
+  const params = {};
+  const paramStr = amp >= 0 ? raw.slice(amp + 1) : (raw.includes('?') ? raw.split('?').slice(1).join('?') : '');
+  if(paramStr){
+    paramStr.split('&').forEach(pair=>{
+      const eq = pair.indexOf('=');
+      if(eq > 0) params[pair.slice(0, eq)] = decodeURIComponent(pair.slice(eq + 1));
+    });
+  }
+  return { view, params };
+}
 function currentView(){
-  let h = (location.hash||'').replace('#','');
+  let h = hashParts().view;
   if(h === 'admin') h = 'controls';   // legacy hash alias
   if(VIEWS.includes(h)) return h;
   return (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
+}
+let pendingDeepLink = null;   // { view, delivId, videoId, phase, milestoneId }
+function captureDeepLinkFromHash(){
+  const { params } = hashParts();
+  if(params.deliv || params.video || params.phase || params.ms){
+    pendingDeepLink = {
+      delivId: params.deliv || null,
+      videoId: params.video || null,
+      phase: params.phase || null,
+      milestoneId: params.ms || null,
+      view: currentView(),
+    };
+  }
+}
+function applyDeepLinkFocus(){
+  if(!pendingDeepLink) return;
+  const { delivId, videoId, phase, milestoneId, view } = pendingDeepLink;
+  pendingDeepLink = null;
+  if(phase) delivCollapsed.delete(phase);
+  let el = null;
+  if(delivId){
+    if(phase) document.querySelector(`.phasecard[data-phase="${CSS.escape(phase)}"]`)?.classList.remove('collapsed');
+    el = document.querySelector(`.taskrow[data-id="${delivId}"], .drow[data-deliv="${delivId}"]`);
+  } else if(videoId){
+    el = document.querySelector(`.vitem[data-vid="${videoId}"]`);
+  } else if(milestoneId){
+    el = document.querySelector(`[data-milestone="${milestoneId}"]`);
+  }
+  if(el){
+    el.classList.add('deeplink-flash');
+    el.scrollIntoView({ behavior:'smooth', block:'center' });
+    setTimeout(()=> el.classList.remove('deeplink-flash'), 2400);
+  } else if(view && VIEWS.includes(view)){
+    showView(view);
+  }
 }
 function teamWorkspace(){
   const v = currentView();
@@ -231,7 +281,11 @@ function syncChrome(){
   if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
-window.addEventListener('hashchange', ()=> showView(currentView()));
+window.addEventListener('hashchange', ()=>{
+  captureDeepLinkFromHash();
+  showView(currentView());
+  if(pendingDeepLink && practiceId) requestAnimationFrame(()=> applyDeepLinkFocus());
+});
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
 
 /* ---------------- searchable client switcher (team) ---------------- */
@@ -429,9 +483,11 @@ async function afterLogin(){
 
   if(me.role === 'team'){
     const prax = await loadTeamPractices();
-    practiceId = prax && prax.length ? prax[0].id : null;
-    const h = (location.hash||'').replace('#','');
-    if(!h || h === 'admin') location.hash = '#operations';
+    const { view, params } = hashParts();
+    practiceId = (params.pid && prax.some(p=> p.id===params.pid)) ? params.pid
+      : (prax && prax.length ? prax[0].id : null);
+    captureDeepLinkFromHash();
+    if(!view || view === 'admin') location.hash = '#operations';
     $('btnPreview').onclick = ()=>{
       previewMode = !previewMode;
       $('btnPreview').textContent = previewMode ? 'Exit client preview' : 'Preview as client';
@@ -443,6 +499,7 @@ async function afterLogin(){
     };
   } else {
     practiceId = me.practice_id;
+    captureDeepLinkFromHash();
     await loadMyMembership();
   }
   syncChrome();
@@ -468,6 +525,7 @@ async function loadAll(){
   data = { practice:p.data, kpiRaw:(k.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
   render();
+  requestAnimationFrame(()=> applyDeepLinkFocus());
 }
 
 // Additive ad metrics — SUMmed when combining channels (Meta + Google) for one month.
@@ -1040,14 +1098,23 @@ function openMetricInfo(key){
 }
 
 /* ---- DELIVERABLES: grouped into draggable phase cards (team) / clean phase blocks (client) ---- */
+function phaseOrderMap(delivs){
+  const order = {};
+  (delivs || data.deliv || []).forEach(d=>{ if(!(d.phase in order)) order[d.phase] = d.phase_order ?? 999; });
+  return order;
+}
+function comparePhaseNames(a, b, order){
+  const na = parsePhaseNum(a), nb = parsePhaseNum(b);
+  const oa = order[a] ?? 999, ob = order[b] ?? 999;
+  return ((na ?? 9999) - (nb ?? 9999)) || (oa - ob) || a.localeCompare(b);
+}
 function phaseGroups(){
-  // group deliverables by phase, ordered by phase_order then sort
+  // group deliverables by phase — numeric phase first, then phase_order, then label
   const groups = {};
   data.deliv.forEach(d=>{ (groups[d.phase] = groups[d.phase] || []).push(d); });
-  const order = {};
-  data.deliv.forEach(d=>{ if(!(d.phase in order)) order[d.phase] = d.phase_order ?? 999; });
+  const order = phaseOrderMap();
   return Object.keys(groups)
-    .sort((a,b)=> (order[a]-order[b]) || a.localeCompare(b))
+    .sort((a,b)=> comparePhaseNames(a, b, order))
     .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
 }
 
@@ -1073,6 +1140,7 @@ function renderDeliverables(isTeam){
         <span class="taskgrip">⋮⋮</span>
         <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
         <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
+        <input class="cellinput dueinput" type="date" data-f="due" value="${x.due ? String(x.due).slice(0,10) : ''}" title="Due date">
         ${ageChip}
         <button class="infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
         ${statusSelect('deliv', x.status)}
@@ -1097,7 +1165,7 @@ function renderDeliverables(isTeam){
     t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
       const {done,total,pct} = phaseProgress(g);
       const collapsed = delivCollapsed.has(g.phase);
-      const rows = g.items.map(x=>`<div class="drow client">
+      const rows = g.items.map(x=>`<div class="drow client" data-deliv="${x.id}">
         <span class="dnameC">${esc(x.name)}${x.description?`<button class="infobtn has" type="button" data-info="${x.id}" title="What is this?">ⓘ</button>`:''}
           ${x.description?`<span class="dinfo hidden" id="dinfo-${x.id}">${esc(x.description)}</span>`:''}</span>
         <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
@@ -1139,7 +1207,13 @@ function wireDeliverables(){
   // inline edits on each deliverable row
   wrap.querySelectorAll('.taskrow[data-id]').forEach(row=>{
     const id = row.dataset.id;
-    row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=> updateRow('deliverables', id, { [inp.dataset.f]: inp.value.trim()||null }));
+    row.querySelectorAll('.cellinput').forEach(inp=>{
+      inp.onchange = ()=>{
+        let val = inp.value.trim();
+        if(inp.type === 'date') val = val || null;
+        updateRow('deliverables', id, { [inp.dataset.f]: val || null });
+      };
+    });
     const ssel = row.querySelector('select');
     ssel.onchange = ()=> updateDeliverableStatus(id, ssel.value);
     row.querySelector('.rowdel').onclick = ()=> deleteRow('deliverables', id, 'Delete this deliverable?');
@@ -1577,7 +1651,7 @@ function renderMilestoneClientTimeline(wrap){
     }
     const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
     const link = m.link_url ? `<a class="mslink" href="${esc(m.link_url)}" target="_blank" rel="noopener">View link</a>` : '';
-    return `<div class="tl ${m.status}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
+    return `<div class="tl ${m.status}" data-milestone="${m.id}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>${prog}${link}
        <span class="tag">${tagLabel}</span>${dateEl}</div>`;
   }).join('');
@@ -1617,7 +1691,7 @@ function milestoneTeamRow(m){
   ].filter(Boolean).join(' · ');
   const owner = m.owner_seat ? `<span class="msowner">${esc(m.owner_seat)}</span>` : '';
   const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
-  return `<div class="msrow ${m.status}" draggable="true" data-id="${m.id}">
+  return `<div class="msrow ${m.status}" draggable="true" data-id="${m.id}" data-milestone="${m.id}">
     <span class="grip" title="Drag to reorder">⋮⋮</span>
     <div class="msrow-main">
       <div class="msrow-title">${esc(m.name)} ${owner} ${prog}</div>
@@ -1841,6 +1915,9 @@ $('btnPost').onclick = async ()=>{
 /* ---------------- Operations Dashboard (team workspace) ---------------- */
 let opsData = null;
 let opsSearchQuery = '';
+let opsClientFilter = '';
+let opsExpandedClient = null;
+let opsClientSortAsc = true;
 let opsLoadPromise = null;
 const PHASE_TIMING = {
   0: { warn: 7, red: 14 },
@@ -1858,10 +1935,9 @@ function parsePhaseNum(label){
 function groupDelivsByPhase(delivs){
   const groups = {};
   delivs.forEach(d=>{ (groups[d.phase] = groups[d.phase] || []).push(d); });
-  const order = {};
-  delivs.forEach(d=>{ if(!(d.phase in order)) order[d.phase] = d.phase_order ?? 999; });
+  const order = phaseOrderMap(delivs);
   return Object.keys(groups)
-    .sort((a,b)=> (order[a]-order[b]) || a.localeCompare(b))
+    .sort((a,b)=> comparePhaseNames(a, b, order))
     .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
 }
 function computePracticePhaseState(practice, delivs){
@@ -1967,7 +2043,7 @@ function buildOpsAlerts(){
       const label = phase.currentHealth==='red' ? 'Phase overdue' : 'Phase approaching deadline';
       const detail = `${phase.currentPhase} · ${phase.currentDays} day${phase.currentDays===1?'':'s'} in phase`;
       if(opsMatchesQuery(q, [pname, phase.currentPhase, label])){
-        alerts.push({ severity: phase.currentHealth, practice:pname, practiceId:p.id, title:label, detail, sort: OPS_HEALTH_RANK[phase.currentHealth] });
+        alerts.push({ severity: phase.currentHealth, practice:pname, practiceId:p.id, title:label, detail, sort: OPS_HEALTH_RANK[phase.currentHealth], linkView:'deliverables', phase: phase.currentPhase });
       }
     }
     delivs.filter(d=> d.status!=='delivered' && d.due).forEach(d=>{
@@ -1980,7 +2056,7 @@ function buildOpsAlerts(){
       if(severity==='green') return;
       const detail = `${d.name}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
       if(opsMatchesQuery(q, [pname, d.name, d.owner_seat, d.phase, title])){
-        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft });
+        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
       }
     });
     videos.forEach(v=>{
@@ -1991,7 +2067,7 @@ function buildOpsAlerts(){
         const title = sla==='overdue' ? 'Video overdue' : 'Video stalled';
         const detail = `${v.item} · ${days} day${days===1?'':'s'} in ${stageLabelOf(v.stage)}`;
         if(opsMatchesQuery(q, [pname, v.item, title])){
-          alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days });
+          alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days, linkView:'video', videoId:v.id });
         }
       }
       if(v.blocked){
@@ -2000,14 +2076,14 @@ function buildOpsAlerts(){
           const title = 'Waiting on client approval';
           const detail = `${v.item} · ${days} day${days===1?'':'s'} waiting`;
           if(opsMatchesQuery(q, [pname, v.item, v.blocked_reason, title])){
-            alerts.push({ severity: days>=14?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[days>=14?'red':'yellow'], days });
+            alerts.push({ severity: days>=14?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[days>=14?'red':'yellow'], days, linkView:'video', videoId:v.id });
           }
         }
       }
     });
     const sync = kpiSyncMeta(p.id);
     if(sync.hasError && opsMatchesQuery(q, [pname, 'KPI sync failed'])){
-      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0 });
+      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics' });
     }
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
       if(!m.target_date || m.status==='done') return;
@@ -2017,22 +2093,46 @@ function buildOpsAlerts(){
       const title = days < 0 ? 'Milestone overdue' : 'Milestone approaching';
       const detail = `${m.name}${days < 0 ? ` · ${Math.abs(days)} day${Math.abs(days)===1?'':'s'} overdue` : days===0 ? ' · due today' : ` · ${days} day${days===1?'':'s'} left`}`;
       if(opsMatchesQuery(q, [pname, m.name, m.phase, title])){
-        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days });
+        alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days, linkView:'roadmap', milestoneId:m.id });
       }
     });
   });
   alerts.sort((a,b)=> a.sort - b.sort || (a.days??999) - (b.days??999) || a.practice.localeCompare(b.practice));
   return alerts;
 }
-function openOpsClient(pid){
+function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, videoId, phase, milestoneId }){
   if(!pid) return;
   practiceId = pid;
   updateSwitcherLabel();
-  loadAll().then(()=>{ location.hash = '#roadmap'; });
+  pendingDeepLink = { delivId, videoId, phase, milestoneId, view };
+  const parts = [view, `pid=${encodeURIComponent(pid)}`];
+  if(delivId) parts.push(`deliv=${encodeURIComponent(delivId)}`);
+  if(videoId) parts.push(`video=${encodeURIComponent(videoId)}`);
+  if(phase) parts.push(`phase=${encodeURIComponent(phase)}`);
+  if(milestoneId) parts.push(`ms=${encodeURIComponent(milestoneId)}`);
+  const targetView = view;
+  loadAll().then(()=>{
+    location.hash = '#' + parts.join('&');
+    showView(targetView);
+    requestAnimationFrame(()=> applyDeepLinkFocus());
+  });
+}
+function openOpsClient(pid){ openOpsDeepLink({ practiceId: pid, view: 'roadmap' }); }
+async function updateOpsRow(table, id, patch){
+  const { error } = await sb.from(table).update(patch).eq('id', id);
+  if(error){ flash(error.message); return false; }
+  const listKey = table === 'deliverables' ? 'deliverables' : table === 'video_pipeline' ? 'videos' : null;
+  if(listKey && opsData?.[listKey]){
+    const row = opsData[listKey].find(r=> r.id === id);
+    if(row) Object.assign(row, patch);
+  }
+  renderOperationsDashboard();
+  flash('Saved.');
+  return true;
 }
 function renderOpsAlertItem(a, clickable){
   const icon = a.severity==='red' ? '🔴' : a.severity==='yellow' ? '🟡' : '🟢';
-  const click = clickable ? ` data-ops-client="${a.practiceId}" role="button" tabindex="0"` : '';
+  const click = clickable ? ` data-ops-link="1" data-ops-pid="${a.practiceId}" data-ops-view="${a.linkView||'roadmap'}"${a.delivId? ` data-ops-deliv="${a.delivId}"`:''}${a.videoId? ` data-ops-video="${a.videoId}"`:''}${a.phase? ` data-ops-phase="${esc(a.phase)}"`:''}${a.milestoneId? ` data-ops-ms="${a.milestoneId}"`:''} role="button" tabindex="0"` : '';
   return `<div class="ops-alert ops-alert-${a.severity}"${click}>
     <div class="ops-alert-icon">${icon}</div>
     <div class="ops-alert-body">
@@ -2040,6 +2140,85 @@ function renderOpsAlertItem(a, clickable){
       <div class="ops-alert-title">${esc(a.title)}</div>
       <div class="ops-alert-detail">${esc(a.detail)}</div>
     </div>
+  </div>`;
+}
+function wireOpsDeepLinks(root){
+  (root || document).querySelectorAll('[data-ops-link]').forEach(el=>{
+    const go = ()=> openOpsDeepLink({
+      practiceId: el.dataset.opsPid,
+      view: el.dataset.opsView || 'deliverables',
+      delivId: el.dataset.opsDeliv || null,
+      videoId: el.dataset.opsVideo || null,
+      phase: el.dataset.opsPhase || null,
+      milestoneId: el.dataset.opsMs || null,
+    });
+    el.onclick = e=>{ e.preventDefault(); go(); };
+    el.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); go(); } };
+  });
+}
+function opsClientMatchesFilter(name, q){
+  if(!q) return true;
+  return String(name||'').toLowerCase().includes(q);
+}
+function renderOpsClientDetail(r){
+  const names = practiceNameMap();
+  const delivs = (opsData.deliverables||[]).filter(d=> d.practice_id===r.p.id && d.status!=='delivered');
+  const videos = (opsData.videos||[]).filter(v=> v.practice_id===r.p.id && v.stage!=='posted' && v.stage!=='delivered');
+  const groups = groupDelivsByPhase(delivs);
+  const overdueDeliv = delivs.filter(d=> d.due && new Date(d.due) < new Date()).length;
+  const upcomingDeliv = delivs.filter(d=>{
+    if(!d.due) return false;
+    const days = Math.ceil((new Date(d.due)-Date.now())/86400000);
+    return days >= 0 && days <= 14;
+  }).length;
+  const mini = [
+    { l:'Health score', v: String(r.h.score), cls: r.h.band },
+    { l:'Current phase', v: r.phase.currentPhase || '—' },
+    { l:'Open deliverables', v: String(r.openDeliv) },
+    { l:'Overdue', v: String(overdueDeliv), warn: overdueDeliv>0 },
+    { l:'Due ≤14d', v: String(upcomingDeliv) },
+    { l:'Videos active', v: String(r.openVid) },
+    { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0 },
+    { l:'Marketing', v: r.marketing },
+  ];
+  const delivRows = groups.flatMap(g=> g.items.map(d=>{
+    const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
+    const st = d.status==='in_progress'? 'In progress' : d.status==='promised'? 'Promised' : d.status;
+    const days = daysLeft==null? '—' : daysLeft < 0 ? `${Math.abs(daysLeft)} overdue` : String(daysLeft);
+    const rowCls = daysLeft!=null && daysLeft<0? 'ops-row-warn' : daysLeft!=null && daysLeft<=3? 'ops-row-caution' : '';
+    return `<tr class="${rowCls}" data-ops-link="1" data-ops-pid="${r.p.id}" data-ops-view="deliverables" data-ops-deliv="${d.id}" data-ops-phase="${esc(g.phase)}">
+      <td>${esc(d.name)}</td><td>${esc(g.phase)}</td><td>${esc(d.owner_seat||'—')}</td>
+      <td class="ops-due-cell"><input type="date" class="cellinput ops-due-input" data-deliv-id="${d.id}" value="${d.due? String(d.due).slice(0,10):''}"></td>
+      <td>${days}</td><td>${esc(st)}</td></tr>`;
+  }));
+  const vidRows = videos.map(v=>{
+    const fin = v.stage==='posted' || v.stage==='delivered';
+    const sla = slaState(v.stage_since, fin);
+    const wait = v.blocked ? (v.blocked_reason||'Practice') : '—';
+    const st = sla==='overdue'? 'Overdue' : sla==='warn'? 'Watch' : v.blocked? 'Blocked' : 'On track';
+    return `<tr class="ops-row-click${sla? ' ops-row-'+sla:''}" data-ops-link="1" data-ops-pid="${r.p.id}" data-ops-view="video" data-ops-video="${v.id}">
+      <td>${esc(v.item)}</td><td>${esc(stageLabelOf(v.stage))}</td><td>${daysIn(v.stage_since)}</td>
+      <td>${v.planned_shoot_date? fmtDate(v.planned_shoot_date):'—'}</td><td>${esc(wait)}</td><td>${esc(st)}</td></tr>`;
+  });
+  return `<div class="ops-client-detail">
+    <div class="ops-client-metrics">${mini.map(m=>`
+      <div class="ops-client-metric${m.warn?' warn':''}${m.cls? ' band-'+m.cls:''}">
+        <div class="ops-client-metric-v">${esc(m.v)}</div>
+        <div class="ops-client-metric-l">${esc(m.l)}</div>
+      </div>`).join('')}</div>
+    <div class="ops-client-section">
+      <h4>Open deliverables</h4>
+      ${delivRows.length ? `<table class="ops-table ops-table-compact"><thead><tr>
+        <th>Deliverable</th><th>Phase</th><th>Owner</th><th>Due</th><th>Days</th><th>Status</th>
+      </tr></thead><tbody>${delivRows.join('')}</tbody></table>` : '<p class="note">No open deliverables.</p>'}
+    </div>
+    <div class="ops-client-section">
+      <h4>Video production</h4>
+      ${vidRows.length ? `<table class="ops-table ops-table-compact"><thead><tr>
+        <th>Video</th><th>Stage</th><th>Days</th><th>Scheduled</th><th>Waiting</th><th>Status</th>
+      </tr></thead><tbody>${vidRows.join('')}</tbody></table>` : '<p class="note">No active videos.</p>'}
+    </div>
+    <button type="button" class="btn sm ghost ops-open-client" data-ops-pid="${r.p.id}">Open full client workspace →</button>
   </div>`;
 }
 function renderOperationsDashboard(){
@@ -2077,36 +2256,37 @@ function renderOperationsDashboard(){
     return days >= 0 && days <= 14;
   }).length;
   const avgHealth = healthRows.length ? Math.round(healthRows.reduce((s,r)=> s+r.h.score, 0)/healthRows.length) : 0;
+  const overdueDelivCount = (opsData.deliverables||[]).filter(d=>{
+    if(d.status==='delivered' || !d.due) return false;
+    return new Date(d.due) < new Date();
+  }).length;
   const cards = [
-    { v: practices.length, l:'Total Active Clients' },
-    { v: onTrack, l:'Clients On Track', cls:'g' },
-    { v: needsAttn, l:'Clients Requiring Attention', cls: needsAttn? 'a':'' },
-    { v: videosProd, l:'Videos In Production' },
-    { v: videosWait, l:'Videos Waiting' },
-    { v: videosOver, l:'Videos Overdue', cls: videosOver? 'r':'' },
-    { v: upcomingDeliv, l:'Upcoming Deliverables' },
-    { v: avgHealth, l:'Avg Client Health Score' },
+    { v: practices.length, l:'Active clients', note:'on the roster', tier:'primary' },
+    { v: needsAttn, l:'Need attention', note:'health or SLA flags', cls: needsAttn? 'a':'', tier:'primary' },
+    { v: overdueDelivCount, l:'Overdue deliverables', note:'past due date', cls: overdueDelivCount? 'r':'', tier:'primary' },
+    { v: upcomingDeliv, l:'Due within 14 days', note:'coming up soon', cls: upcomingDeliv? 'a':'', tier:'primary' },
+    { v: onTrack, l:'On track', note:'green health band', cls:'g', tier:'secondary' },
+    { v: videosProd, l:'Videos in production', note:'not yet delivered', tier:'secondary' },
+    { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
+    { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
+    { v: avgHealth, l:'Avg health score', note:'across filtered clients', tier:'secondary' },
   ];
   $('opsExecCards').innerHTML = cards.map(c=>`
-    <div class="ops-card${c.cls? ' ops-card-'+c.cls:''}">
-      <div class="ops-card-val">${esc(String(c.v))}</div>
-      <div class="ops-card-lbl">${esc(c.l)}</div>
+    <div class="card ops-metric ops-metric-${c.tier}${c.cls? ' ops-metric-'+c.cls:''}">
+      <div class="k">${esc(c.l)}</div>
+      <div class="big">${esc(String(c.v))}</div>
+      <div class="tgt">${esc(c.note)}</div>
     </div>`).join('');
   const morning = $('opsMorningQueue');
   morning.innerHTML = alerts.length
     ? alerts.slice(0, 20).map(a=> renderOpsAlertItem(a, true)).join('')
     : '<p class="note">No priorities flagged — everything looks on track.</p>';
-  morning.querySelectorAll('[data-ops-client]').forEach(el=>{
-    el.onclick = ()=> openOpsClient(el.dataset.opsClient);
-    el.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openOpsClient(el.dataset.opsClient); } };
-  });
+  wireOpsDeepLinks(morning);
   const feed = $('opsAttentionFeed');
   feed.innerHTML = alerts.length
     ? alerts.slice(0, 12).map(a=> renderOpsAlertItem(a, true)).join('')
     : '<p class="note">No actionable items right now.</p>';
-  feed.querySelectorAll('[data-ops-client]').forEach(el=>{
-    el.onclick = ()=> openOpsClient(el.dataset.opsClient);
-  });
+  wireOpsDeepLinks(feed);
   // KPI rollup — latest month across all practices
   const latestByP = latestKpiByPractice(opsData.kpiRaw);
   const rows = [...latestByP.values()];
@@ -2140,68 +2320,68 @@ function renderOperationsDashboard(){
     { l:'Total Procedures', v: fmtNum(agg.proc) },
   ];
   $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
-    <div class="ops-kpi"><div class="ops-kpi-v">${esc(c.v)}</div><div class="ops-kpi-l">${esc(c.l)}</div></div>`).join('');
-  // Client health table
-  healthRows.sort((a,b)=> OPS_HEALTH_RANK[a.h.band]-OPS_HEALTH_RANK[b.h.band] || a.p.name.localeCompare(b.p.name));
-  $('opsClientHealth').innerHTML = `<table class="ops-table"><thead><tr>
-    <th>Practice</th><th>Current Phase</th><th>Health</th><th>Deliverables</th><th>Videos</th><th>Marketing</th><th>Last KPI Sync</th><th>Next Deadline</th>
-  </tr></thead><tbody>${healthRows.map(r=>`<tr data-ops-client="${r.p.id}" class="ops-row-click">
-    <td>${esc(r.p.name)}</td>
-    <td>${esc(r.phase.currentPhase||'—')}</td>
-    <td><span class="ops-pill ops-pill-${r.h.band}">${r.h.score}</span></td>
-    <td>${r.openDeliv} open</td>
-    <td>${r.openVid} active${r.waitingVid? ` · ${r.waitingVid} waiting`:''}</td>
-    <td>${esc(r.marketing)}</td>
-    <td>${r.sync.lastSync ? fmtDate(r.sync.lastSync.slice(0,10)) : '—'}</td>
-    <td>${r.nextDue ? fmtDate(r.nextDue) : '—'}</td>
-  </tr>`).join('')}</tbody></table>`;
-  // Deliverables
-  const delivRows = [];
-  (opsData.deliverables||[]).forEach(d=>{
-    if(d.status==='delivered') return;
-    const pname = names.get(d.practice_id)||'';
-    const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
-    let sortKey = 2;
-    if(daysLeft!=null && daysLeft < 0) sortKey = 0;
-    else if(daysLeft!=null && daysLeft <= 7) sortKey = 1;
-    if(!opsMatchesQuery(q, [pname, d.name, d.owner_seat, d.phase])) return;
-    delivRows.push({ d, pname, daysLeft, sortKey });
-  });
-  delivRows.sort((a,b)=> a.sortKey-b.sortKey || (a.daysLeft??999)-(b.daysLeft??999) || a.pname.localeCompare(b.pname));
-  $('opsDeliverables').innerHTML = `<table class="ops-table"><thead><tr>
-    <th>Client</th><th>Deliverable</th><th>Phase</th><th>Owner</th><th>Due</th><th>Days</th><th>Status</th>
-  </tr></thead><tbody>${delivRows.map(({d,pname,daysLeft})=>{
-    const st = d.status==='in_progress'? 'In progress' : d.status==='promised'? 'Promised' : d.status;
-    const days = daysLeft==null? '—' : daysLeft < 0 ? `${Math.abs(daysLeft)} overdue` : String(daysLeft);
-    const rowCls = daysLeft!=null && daysLeft<0? 'ops-row-warn' : daysLeft!=null && daysLeft<=3? 'ops-row-caution' : '';
-    return `<tr class="ops-row-click ${rowCls}" data-ops-client="${d.practice_id}">
-      <td>${esc(pname)}</td><td>${esc(d.name)}</td><td>${esc(d.phase)}</td><td>${esc(d.owner_seat||'—')}</td>
-      <td>${d.due? fmtDate(d.due):'—'}</td><td>${days}</td><td>${esc(st)}</td></tr>`;
-  }).join('')}</tbody></table>`;
-  // Videos
-  const vidRows = [];
-  (opsData.videos||[]).forEach(v=>{
-    const pname = names.get(v.practice_id)||'';
-    if(!opsMatchesQuery(q, [pname, v.item, v.blocked_reason, stageLabelOf(v.stage)])) return;
-    const fin = v.stage==='posted' || v.stage==='delivered';
-    const sla = slaState(v.stage_since, fin);
-    vidRows.push({ v, pname, sla });
-  });
-  vidRows.sort((a,b)=> (OPS_HEALTH_RANK[b.sla==='overdue'?'red':b.sla==='warn'?'yellow':'green'] - OPS_HEALTH_RANK[a.sla==='overdue'?'red':a.sla==='warn'?'yellow':'green']) || a.pname.localeCompare(b.pname));
-  $('opsVideos').innerHTML = `<table class="ops-table"><thead><tr>
-    <th>Client</th><th>Video</th><th>Stage</th><th>Days in stage</th><th>Scheduled</th><th>Waiting on</th><th>Status</th>
-  </tr></thead><tbody>${vidRows.map(({v,pname,sla})=>{
-    const wait = v.blocked ? (v.blocked_reason||'Practice') : '—';
-    const st = sla==='overdue'? 'Overdue' : sla==='warn'? 'Watch' : v.blocked? 'Blocked' : 'On track';
-    return `<tr class="ops-row-click${sla? ' ops-row-'+sla:''}" data-ops-client="${v.practice_id}">
-      <td>${esc(pname)}</td><td>${esc(v.item)}</td><td>${esc(stageLabelOf(v.stage))}</td>
-      <td>${daysIn(v.stage_since)}</td><td>${v.planned_shoot_date? fmtDate(v.planned_shoot_date):'—'}</td>
-      <td>${esc(wait)}</td><td>${esc(st)}</td></tr>`;
-  }).join('')}</tbody></table>`;
-  document.querySelectorAll('#operationsPanel [data-ops-client]').forEach(el=>{
-    el.style.cursor = 'pointer';
-    el.onclick = e=>{ if(e.target.closest('a')) return; openOpsClient(el.dataset.opsClient); };
-  });
+    <div class="card ops-metric ops-metric-secondary">
+      <div class="k">${esc(c.l)}</div>
+      <div class="big">${esc(c.v)}</div>
+    </div>`).join('');
+  // Scalable client overview — collapsed list with expandable detail per practice
+  const clientQ = (opsClientFilter || opsSearchQuery).trim().toLowerCase();
+  let overviewRows = healthRows.filter(r=> opsClientMatchesFilter(r.p.name, clientQ));
+  overviewRows.sort((a,b)=> opsClientSortAsc
+    ? a.p.name.localeCompare(b.p.name)
+    : b.p.name.localeCompare(a.p.name));
+  if(opsExpandedClient && !overviewRows.some(r=> r.p.id===opsExpandedClient)){
+    opsExpandedClient = null;
+  }
+  const urgentStrip = alerts.filter(a=> a.severity!=='green').slice(0, 8);
+  const stripEl = $('opsUrgentStrip');
+  if(stripEl){
+    stripEl.innerHTML = urgentStrip.length
+      ? urgentStrip.map(a=>`<button type="button" class="ops-urgent-chip ops-urgent-${a.severity}" data-ops-link="1" data-ops-pid="${a.practiceId}" data-ops-view="${a.linkView||'roadmap'}"${a.delivId? ` data-ops-deliv="${a.delivId}"`:''}${a.videoId? ` data-ops-video="${a.videoId}"`:''}${a.phase? ` data-ops-phase="${esc(a.phase)}"`:''}${a.milestoneId? ` data-ops-ms="${a.milestoneId}"`:''}>
+        <span class="ops-urgent-practice">${esc(a.practice)}</span>
+        <span class="ops-urgent-title">${esc(a.title)}</span>
+      </button>`).join('')
+      : '<p class="note">No urgent items in the current filter.</p>';
+    wireOpsDeepLinks(stripEl);
+  }
+  const overviewEl = $('opsClientOverview');
+  if(overviewEl){
+    overviewEl.innerHTML = overviewRows.length
+      ? overviewRows.map(r=>{
+        const expanded = opsExpandedClient === r.p.id;
+        return `<div class="ops-client-block${expanded?' expanded':''}">
+          <button type="button" class="ops-client-head" data-expand-client="${r.p.id}" aria-expanded="${expanded?'true':'false'}">
+            <span class="ops-client-caret" aria-hidden="true">${expanded?'▾':'▸'}</span>
+            <span class="ops-client-name">${esc(r.p.name)}</span>
+            <span class="ops-pill ops-pill-${r.h.band}">${r.h.score}</span>
+            <span class="ops-client-meta">${esc(r.phase.currentPhase||'—')} · ${r.openDeliv} deliv · ${r.openVid} video${r.waitingVid? ` · ${r.waitingVid} waiting`:''}</span>
+            <span class="ops-client-next">${r.nextDue? 'Next due '+fmtDate(r.nextDue):'No due dates set'}</span>
+          </button>
+          ${expanded ? renderOpsClientDetail(r) : ''}
+        </div>`;
+      }).join('')
+      : '<p class="note">No clients match your search.</p>';
+    overviewEl.querySelectorAll('[data-expand-client]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const id = btn.dataset.expandClient;
+        opsExpandedClient = opsExpandedClient === id ? null : id;
+        renderOperationsDashboard();
+      };
+    });
+    overviewEl.querySelectorAll('.ops-due-input').forEach(inp=>{
+      inp.onclick = e=> e.stopPropagation();
+      inp.onchange = async ()=>{
+        const ok = await updateOpsRow('deliverables', inp.dataset.delivId, { due: inp.value || null });
+        if(!ok) inp.value = inp.defaultValue;
+      };
+    });
+    wireOpsDeepLinks(overviewEl);
+    overviewEl.querySelectorAll('.ops-open-client').forEach(btn=>{
+      btn.onclick = ()=> openOpsDeepLink({ practiceId: btn.dataset.opsPid, view: 'roadmap' });
+    });
+  }
+  const countEl = $('opsClientCount');
+  if(countEl) countEl.textContent = `${overviewRows.length} client${overviewRows.length===1?'':'s'}${clientQ? ' matching search':''}`;
 }
 async function loadOperationsData(){
   if(!isTeamView()) return;
@@ -2236,12 +2416,31 @@ async function loadOperationsData(){
 }
 function wireOpsSearch(){
   const el = $('opsSearch');
-  if(!el || el._wired) return;
-  el._wired = true;
-  el.addEventListener('input', ()=>{
-    opsSearchQuery = (el.value||'').trim().toLowerCase();
-    renderOperationsDashboard();
-  });
+  if(el && !el._wired){
+    el._wired = true;
+    el.addEventListener('input', ()=>{
+      opsSearchQuery = (el.value||'').trim().toLowerCase();
+      renderOperationsDashboard();
+    });
+  }
+  const clientEl = $('opsClientSearch');
+  if(clientEl && !clientEl._wired){
+    clientEl._wired = true;
+    clientEl.addEventListener('input', ()=>{
+      opsClientFilter = (clientEl.value||'').trim().toLowerCase();
+      renderOperationsDashboard();
+    });
+  }
+  const sortBtn = $('opsClientSort');
+  if(sortBtn && !sortBtn._wired){
+    sortBtn._wired = true;
+    sortBtn.addEventListener('click', ()=>{
+      opsClientSortAsc = !opsClientSortAsc;
+      sortBtn.textContent = opsClientSortAsc ? 'A → Z' : 'Z → A';
+      sortBtn.setAttribute('aria-pressed', opsClientSortAsc ? 'true' : 'false');
+      renderOperationsDashboard();
+    });
+  }
 }
 wireOpsSearch();
 
