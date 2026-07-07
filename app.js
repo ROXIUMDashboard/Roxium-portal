@@ -129,6 +129,9 @@ const CHANNELS = [
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
   : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
+// Human, correctly-capitalized role labels for access/account messaging.
+const roleLabel = r => ({ owner:'Owner', member:'Member', team:'ROXIUM Team', client:'Client', admin:'Admin' }[String(r||'').toLowerCase()]
+  || (r ? String(r).replace(/\b\w/g, c=>c.toUpperCase()) : '—'));
 let data = { kpi: [], deliv: [], miles: [], video: [], feed: [], vhist: [], notif: [], practice: null };
 
 /* ---- KPI period helpers (period = first-of-month 'YYYY-MM-01' snapshot key) ---- */
@@ -3118,7 +3121,7 @@ function renderRoster(wrap, roster, opts){
       : `<span class="note" title="${esc(m.is_self ? 'Cannot remove yourself' : 'Protected')}">—</span>`;
     return `<div class="rosterrow">
       <span class="rosteremail">${esc(m.email||'—')}${plat}${self}</span>
-      <span class="rosterrole">${esc(m.role)}</span>
+      <span class="rosterrole">${esc(roleLabel(m.role))}</span>
       <span class="rosterstatus ok">active</span>
       ${opts.canRemove ? rmBtn : ''}
     </div>`;
@@ -3129,7 +3132,7 @@ function renderRoster(wrap, roster, opts){
       : `<span class="note" title="Cannot revoke the last owner invite">—</span>`;
     return `<div class="rosterrow pending">
       <span class="rosteremail">${esc(i.email)}</span>
-      <span class="rosterrole">${esc(i.role)}</span>
+      <span class="rosterrole">${esc(roleLabel(i.role))}</span>
       <span class="rosterstatus">${esc(i.status)}</span>
       ${revokeBtn}
     </div>`;

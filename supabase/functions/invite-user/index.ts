@@ -80,8 +80,11 @@ Deno.serve(async (req) => {
 
   let userId: string | null = null;
   let didInvite = false;
+  // Capitalized role label so the Supabase "Invite user" template can render
+  // "invited as Owner" via {{ .Data.role_label }} (Go templates can't title-case).
+  const role_label = role === "owner" ? "Owner" : "Member";
   const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-    data: { full_name },
+    data: { full_name, role, role_label },
     redirectTo: SITE_URL || undefined,
   });
   if (invited?.user) {
