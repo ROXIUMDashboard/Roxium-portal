@@ -2,6 +2,14 @@
 
 This document explains how production deploys work, why Cloudflare can report “success” while the live site looks stale, and how to verify you are on the correct environment.
 
+> **Production model (as of 2026-07-07):** production is **Cloudflare Pages**, deployed by the
+> single GitHub Action `.github/workflows/deploy-pages.yml` (direct upload via `wrangler pages
+> deploy`). The old Cloudflare **Worker** path (`wrangler.jsonc` / `.assetsignore`) has been
+> **removed** so only one target owns the name `roxium-portal`. Do **not** also connect this repo
+> as a Cloudflare dashboard "Git integration" — a second auto-build would re-create the
+> split-brain this fixed. See `docs/INFRASTRUCTURE_AUDIT.md` for the full analysis. Netlify config
+> is retained but is **not** the source of truth.
+
 ---
 
 ## How the site is built
@@ -21,9 +29,10 @@ The portal is a **static site** (no compile step). Production assets are:
 
 ---
 
-## Netlify (production)
+## Netlify (retained, non-production)
 
-Roxium production is hosted on **Netlify**. `netlify.toml` configures:
+Netlify config is kept but Netlify is **no longer the source of truth** (production is Cloudflare
+Pages — see below). `netlify.toml` configures:
 
 | Setting | Value |
 |---------|--------|
@@ -38,7 +47,7 @@ After merging to `main`, Netlify rebuilds automatically if the site is connected
 
 ---
 
-## Cloudflare Pages (optional alternate host)
+## Cloudflare Pages (production)
 
 ### Build script
 
@@ -52,33 +61,30 @@ This creates `site/` with only the static files and replaces `BUILD_SHA` in `ind
 
 ## Deploy paths (important)
 
-You may have **two** Cloudflare integrations. They must both use `site/` after this fix.
+There is now exactly **one** production deploy path. Do not add a second.
 
-### A) GitHub Actions (`.github/workflows/deploy-pages.yml`)
+### A) GitHub Actions (`.github/workflows/deploy-pages.yml`) — the only path
 
 - Triggers on **every push to `main`**
 - Runs `prepare-pages.sh` → `wrangler pages deploy site`
 - Targets **Cloudflare Pages** project: `roxium-portal`
+- Requires GitHub secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
 
-### B) Cloudflare Git (Workers or Pages connected to GitHub)
+### B) Cloudflare dashboard "Git integration" — **do not use**
 
-If `roxium-portal` is connected to GitHub in the Cloudflare dashboard, configure:
+The old Worker path (`wrangler.jsonc` + `.assetsignore` + `npx wrangler deploy`) was **removed**
+so it can't compete with the Action for the name `roxium-portal`. **Do not connect this repo as a
+Cloudflare Pages/Worker Git integration** in the dashboard either — a dashboard auto-build plus the
+Action = two deploys racing for the same project, which is exactly the split-brain that made
+Cloudflare look stale. If such an integration already exists, **disconnect it**; deploys come only
+from the Action.
 
-| Setting | Value |
-|---------|--------|
-| Production branch | `main` |
-| Build command | `bash scripts/prepare-pages.sh` |
-| Build output directory | `site` |
-| Deploy command (Workers only) | `npx wrangler deploy` |
+**Symptoms of a rogue second deploy path (watch for these):**
 
-`wrangler.jsonc` points `assets.directory` at `./site` (not `.`).
-
-**Wrong settings that cause stale or broken deploys:**
-
-- Build output `/` or `.` (uploads the whole monorepo)
-- Deploy command `npx wrangler deploy` **without** running `prepare-pages.sh` first
-- Production branch not `main`
-- Custom domain attached to a **different** project than the one receiving deploys
+- Footer shows the literal text `build BUILD_SHA` and `/version.json` 404s → something deployed the
+  **raw repo** without running `prepare-pages.sh`.
+- Deployment history shows commits you didn't push via the Action.
+- Custom domain attached to a **different** project than the one the Action deploys to.
 
 ---
 
@@ -171,7 +177,7 @@ All four should match.
 3. **Settings → Builds** (if Git connected):
    - Build: `bash scripts/prepare-pages.sh`
    - Output: `site`
-4. **Disable** duplicate Cloudflare Git deploy for this repo if Netlify is your only production host.
+4. **Disconnect** any Cloudflare dashboard Git integration for this repo — the Action is the only deploy path.
 5. Merge to `main` → confirm GitHub Action **Deploy Portal to Cloudflare Pages** succeeds.
 6. Visit `https://roxium-portal.pages.dev` → confirm footer SHA.
 
