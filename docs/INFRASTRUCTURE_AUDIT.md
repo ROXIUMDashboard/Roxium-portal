@@ -3,6 +3,10 @@
 **Date:** 2026-07-07 · **Branch:** `claude/infrastructure-audit-cloudflare-netlify-aeqvi6`
 **Scope of this report:** everything verifiable from the Git repository and the GitHub API.
 
+> **See also: [Update 2 — live deployment findings](#update-2--live-deployment-findings)** at the
+> bottom (trigger "duplicates", Cloudflare preview-only deploys, and the magic-link 404), added
+> after the first round of dashboard testing.
+
 > ### Access boundary (read this first)
 > This audit was run from the **repository and GitHub only**. I do **not** have login
 > access to the Cloudflare dashboard, the Netlify dashboard, or the live Supabase
@@ -329,3 +333,118 @@ because of the merge-commit style, but their content shipped long ago):
 7. **Archive** one-off migrations; document `schema.sql` as source of truth.
 8. **Update Supabase Auth redirect URLs + Resend + OAuth** for the new domain, then attach it.
 9. Run the Supabase introspection queries (§6) and drop confirmed-dead objects.
+
+---
+
+# Update 2 — live deployment findings
+
+*Added after dashboard testing (Cloudflare preview-only deploys, magic-link 404, Worker deleted).
+These four items were investigated against the live symptoms; root causes below, with the repo-side
+fixes already applied on this branch.*
+
+## A. SQL trigger "duplicates" — NOT real duplicates (nothing to remove)
+
+The audit query used `information_schema.triggers`, which returns **one row per
+`event_manipulation`**. A trigger declared on two events shows up as two rows. Verified in-repo:
+
+| Trigger | Table | Declared events | Rows expected |
+|---------|-------|-----------------|---------------|
+| `trg_sync_kpi_month` | `kpi_monthly` | `before insert or update` | 2 (INSERT+UPDATE) |
+| `trg_stamp_milestone_completion` | `milestones` | `before insert or update` | 2 |
+| `trg_protect_last_team_admin` | `profiles` | `before update or delete` | 2 |
+| `enforce_bucket_name_length_trigger` | `storage.buckets` | Supabase-managed (INSERT+UPDATE) | 2 |
+| `tr_check_filters` | `realtime.subscription` | Supabase-managed | 2 |
+
+**Postgres forbids two triggers of the same name on the same table**, so genuine duplicates are
+impossible here. Every migration that (re)creates these triggers first runs
+`drop trigger if exists … ;` (verified in `schema.sql` and the `migrations/` files), so re-applying
+`schema.sql` *and* a later migration is idempotent — it does not stack duplicates.
+
+**Verdict: false alarm. Do not drop anything.** The `buckets`/`objects`/`subscription` triggers are
+Supabase's own storage/realtime internals, not ours. To confirm there is exactly one trigger object
+per name, use `pg_trigger` (one row per trigger) instead of `information_schema.triggers`:
+```sql
+select tgrelid::regclass as table, tgname, count(*)
+from pg_trigger where not tgisinternal
+group by 1,2 having count(*) > 1;   -- returns 0 rows = no real duplicates
+```
+
+## B. Cloudflare "only Preview deployments" — working as designed + a stray Git integration
+
+**Root cause (two parts):**
+1. In Cloudflare Pages, a deployment is **Production only when it comes from the project's
+   Production branch (`main`)**. Every other branch is a **Preview** — by design. The current PR
+   (#71) has **not been merged**, so no new Production deployment has been produced. The "deployed
+   13 min ago (Preview)" entry corresponds to the **PR branch push**, not a `main` deploy.
+2. That preview could only have been produced by a **Cloudflare dashboard Git integration** — the
+   GitHub Action (`deploy-pages.yml`) triggers **only on push to `main`**, never on a PR branch. So
+   a dashboard Git integration is (still) connected and auto-building feature branches. With the
+   Action *also* deploying on `main`, the next merge triggers **two** production deploys racing for
+   the same project — the original split-brain, now live.
+
+**Why the Worker failed / is it still needed:** No. The Worker path (`wrangler deploy` driven by
+`wrangler.jsonc`) was the wrong product for a static SPA and has been **removed from the repo**
+(`wrangler.jsonc` + `.assetsignore` deleted); you also deleted the Worker in the dashboard. Pages
+alone should serve the frontend. No repo file references a Worker anymore.
+
+**Fix to reach a single Production path:**
+- **Merge PR #71 → `main`** → the Action produces a Production deployment (with the SPA fix in D).
+- **Disconnect the Cloudflare dashboard Git integration** for this repo (Workers & Pages → project →
+  Settings → Builds & deployments → disconnect). This stops the preview-only race *and* the
+  confusing feature-branch previews. Deploys then come only from the Action, only on `main`.
+- Confirm the Pages project's **Production branch = `main`** and that the **custom domain** is on
+  this same project.
+
+## C. Magic-link → Cloudflare "404 · nothing here yet" — Supabase Auth URLs + missing SPA fallback
+
+The app calls `signInWithOtp({ options:{ emailRedirectTo: location.origin } })` (`app.js`). Two
+independent causes, both now addressed:
+
+1. **Supabase Auth URL configuration (primary).** Supabase only honours `emailRedirectTo` when that
+   exact origin is in **Authentication → URL Configuration → Redirect URLs**. If it isn't, Supabase
+   redirects to the project's **Site URL** after verifying the link. The in-repo `supabase/config.toml`
+   still carries local defaults (`site_url = http://127.0.0.1:3000`), and the README historically told
+   you to point Site URL at **Netlify** — so the hosted Site URL is almost certainly **not** the
+   Cloudflare origin. Result: after a successful magic link you're bounced to a host that has no
+   content there → Cloudflare's "nothing here yet" page.
+   **Fix (dashboard):** set **Site URL** = `https://roxium-portal.pages.dev` (later your custom
+   domain) and add **Redirect URLs**: `https://roxium-portal.pages.dev/**` and
+   `https://<custom-domain>/**`. If you test from preview URLs too, add `https://*.roxium-portal.pages.dev/**`.
+2. **Missing Pages SPA fallback (repo bug, fixed).** The README claimed Pages "serves index.html for
+   unknown routes automatically" — **false**. Cloudflare Pages returns its default 404 for any path
+   with no matching file unless a `_redirects` rule says otherwise. The repo's `_redirects` had the
+   rule intentionally *omitted* (to avoid a Workers-only error). Now that the Worker path is gone,
+   `_redirects` has been set to `/* /index.html 200` — the correct, recommended Pages SPA rule — so
+   any path-based landing (and future client routes) resolve to the app instead of 404ing.
+
+## D. Deployment cleanup — leftover references (repo-side done)
+
+Applied on this branch:
+- `_redirects` → real SPA fallback for Pages (was a no-op comment).
+- `app.js` header comment "Front end: Netlify" → "Cloudflare Pages".
+- `README.md` hosting section rewritten: Cloudflare Pages = production via the Action; corrected the
+  false "SPA works automatically" claim; corrected the Site URL guidance (Cloudflare, not Netlify).
+- `.github/workflows/deploy-pages.yml` header comment: removed stale Worker/Git-integration guidance,
+  added the "do not connect a second Git integration" warning.
+- (Earlier on this branch) removed `wrangler.jsonc`, `.assetsignore`, `roxium-portal.zip`.
+
+**Deliberately left as-is (need your call / dashboard action):**
+- `netlify.toml`, `_headers`'s Netlify-equivalents, and `ARCHITECTURE.md`/`docs/phase-*` mentions of
+  Netlify — **not removed**, because Netlify is your *currently working* host and deleting
+  `netlify.toml` would make Netlify redeploy the raw repo root (broken). Correct order: get Cloudflare
+  green as production → disconnect Netlify in its dashboard → *then* remove `netlify.toml`.
+- `supabase/config.toml` localhost values are **local-dev** defaults (used by `supabase start`), not
+  the hosted project config — safe to leave; the hosted Site URL is set in the dashboard (see C).
+- `deploy-functions.yml` still deploys only `sync-coefficient` (the other 5 Edge Functions have no CI)
+  — unchanged to avoid redeploying them with wrong flags; flagged for a deliberate fix.
+
+## Cutover checklist (do in this order before attaching the domain)
+1. Merge **PR #71** → `main` (ships the SPA `_redirects` fix).
+2. Confirm the Action's Production deploy is green; visit `https://roxium-portal.pages.dev`, footer
+   SHA == `main`.
+3. **Disconnect** the Cloudflare dashboard Git integration (leave only the Action).
+4. Supabase → set **Site URL** + **Redirect URLs** to the Cloudflare origin(s) (see C).
+5. Re-test the magic link end-to-end → you should land **in the app**, not a 404.
+6. Cloudflare → Caching → **Purge Everything** once.
+7. Attach the custom domain to the Pages project; add it to Supabase Redirect URLs; re-test.
+8. (Later) disconnect Netlify, then remove `netlify.toml`.

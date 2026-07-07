@@ -2,13 +2,13 @@
 
 One website, two audiences. Clients see their roadmap, deliverables, video pipeline,
 and live KPIs. The ROXIUM team sees the same — plus the controls to update all of it.
-No copying data between tools: Supabase is the single source of truth, Netlify serves
-the front end, and everything updates for everyone the moment it's saved.
+No copying data between tools: Supabase is the single source of truth, Cloudflare Pages
+serves the front end, and everything updates for everyone the moment it's saved.
 
 ```
-Front end (this repo)  →  Netlify   (static hosting, custom domain, HTTPS)
+Front end (this repo)  →  Cloudflare Pages  (static hosting, custom domain, HTTPS)
 Backend                →  Supabase  (Postgres database, magic-link auth, file storage, row-level security)
-Code                   →  GitHub    (push to deploy — Netlify rebuilds on every commit)
+Code                   →  GitHub    (merge to main → GitHub Action deploys to Cloudflare Pages)
 Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supabase)
 ```
 
@@ -33,42 +33,41 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
    - **Daily KPI charts (reporting month zoom)?** Run `migrations/2026-07-07_kpi_daily.sql` once,
      redeploy `sync-coefficient`, then run **Sync now** so daily rows populate from Coefficient sheets.
 3. **Authentication → Providers → Email**: leave Email enabled (magic links work out of the box).
-4. **Authentication → URL Configuration**: set Site URL to your Netlify URL (step 3) once you have it.
+4. **Authentication → URL Configuration**: set **Site URL** to your Cloudflare Pages URL
+   (`https://<project>.pages.dev`, or your custom domain once attached) and add it to
+   **Redirect URLs** as `https://<your-domain>/**`. The app signs in with
+   `emailRedirectTo: location.origin`, so the origin you actually load **must** be allow-listed
+   here — otherwise Supabase falls back to Site URL after the magic link and you land on the
+   wrong host (a common cause of a post-login 404).
 5. **Settings → API**: copy the `Project URL` and `anon public` key into `config.js`. Commit + push.
 
-### 3 · Hosting (Netlify or Cloudflare Pages)
+### 3 · Hosting — Cloudflare Pages (production)
 
-#### Option A — Netlify (production for Roxium)
+Production is **Cloudflare Pages**, deployed by one GitHub Action
+(`.github/workflows/deploy-pages.yml`) on every merge to `main`. This is the single
+production deploy path — do **not** also connect a Cloudflare dashboard "Git integration"
+(a second auto-build races the Action and produces confusing preview-only deploys).
 
-1. netlify.com → **Add new site → Import an existing project** → pick your GitHub repo.
-2. `netlify.toml` in the repo sets:
-   - **Build command:** `bash scripts/prepare-pages.sh`
-   - **Publish directory:** `site`
-3. Deploy (or **Deploys → Trigger deploy → Clear cache and deploy site** after merges). Footer should show the current git SHA, not a stale build id.
-4. Add your custom domain (e.g. `portal.roxium.co`) under **Domain settings**.
-5. Supabase → **Authentication → URL configuration** → set **Site URL** and **Redirect URLs** to your Netlify domain.
-
-See **`docs/DEPLOYMENT.md`** for stale-deploy troubleshooting.
-
-#### Option B — Cloudflare Pages
-
-1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
-2. Pick this repo. Use these settings:
-
-| Setting | Value |
-|---------|--------|
-| Framework preset | **None** |
-| Build command | `bash scripts/prepare-pages.sh` |
-| Build output directory | `site` |
-
-3. **Do not** set the build command to `npx wrangler deploy` alone — run `bash scripts/prepare-pages.sh` first (output `site/`). See **`docs/DEPLOYMENT.md`** for the full pipeline and troubleshooting stale deploys.
-4. Deploy. Your preview URL will be `https://<project-name>.pages.dev`.
-5. Add a custom domain under **Custom domains** if you have one.
-6. Supabase → **Authentication → URL configuration** → set **Site URL** and add **Redirect URLs**:
+1. In GitHub, add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
+   (Settings → Secrets and variables → Actions). The Action creates the Pages project
+   `roxium-portal` (production branch `main`) if it doesn't exist and uploads `site/`.
+2. Merge to `main` → the Action runs `scripts/prepare-pages.sh` → `wrangler pages deploy site`.
+   Only a deploy from the **production branch (`main`)** is a Production deployment; any other
+   branch is a **Preview**. If Cloudflare only shows Previews, you have unmerged work and/or a
+   stray dashboard Git integration building feature branches.
+3. Verify at `https://roxium-portal.pages.dev` — footer `build <sha>` must match `main`.
+4. Add your custom domain under **Custom domains** (on this Pages project).
+5. Supabase → **Authentication → URL configuration** → set **Site URL** and **Redirect URLs**:
    - `https://<your-domain>/**`
-   - `https://<project-name>.pages.dev/**` (while testing)
+   - `https://roxium-portal.pages.dev/**` (while testing)
 
-SPA routing (magic-link auth) works automatically — there is no `404.html`, so Pages serves `index.html` for unknown routes. `_headers` in the repo sets security + cache headers.
+SPA routing (magic-link auth) is handled by `_redirects` (`/* /index.html 200`) — Cloudflare
+Pages does **not** serve `index.html` for unknown paths on its own, so that rule is required.
+`_headers` sets security + cache headers.
+
+> **Netlify** is retained as a non-production fallback only. Its `netlify.toml` uses the same
+> build. See **`docs/DEPLOYMENT.md`** and **`docs/INFRASTRUCTURE_AUDIT.md`** for the full
+> pipeline, the Cloudflare split-brain history, and stale-deploy troubleshooting.
 
 ---
 
