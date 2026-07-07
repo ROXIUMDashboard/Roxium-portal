@@ -10,9 +10,9 @@ points, and the phased build plan with testing criteria.
 **Accounts (all have free tiers to start)**
 - GitHub — code lives here; pushing to `main` auto-deploys
 - Supabase — one project = database + auth + file storage + API
-- Netlify — connects to the GitHub repo; serves the site; holds the custom domain
+- Cloudflare — Pages serves the site (GitHub Action deploys on merge to `main`); DNS + custom domain
 - Coefficient — only when you automate ad-data sync (Phase C below)
-- A subdomain — `portal.roxium.co` (added in Netlify, one DNS record)
+- The domain — `roxium.com` (DNS on Cloudflare; Pages custom domain)
 
 **Keys & values (only two, both in `config.js`)**
 - Supabase Project URL
@@ -35,7 +35,7 @@ KPI workbook (.xlsx) ── portal import ────────────�
                                                                     ├──→ Supabase (Postgres)
 Asana task completed ──→ webhook (Zapier/Make) ──────→ activity ────┤        │
 Team posts update ───────────────────────────────────→ activity ────┘        ▼
-                                                              Netlify front end
+                                                         Cloudflare Pages front end
                                                          (client view + team view,
                                                           role-gated by RLS)
 ```
