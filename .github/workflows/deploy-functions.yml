@@ -1,13 +1,18 @@
 name: Deploy Supabase Edge Functions
 
-# Edge Functions are NOT deployed by Netlify or by merging a PR — they live in
-# Supabase and must be pushed with the Supabase CLI. This deploys sync-coefficient
-# automatically whenever its code changes on main (and on-demand via "Run workflow").
+# Deploys EVERY Edge Function under supabase/functions/ to Supabase whenever any of
+# them changes on main (or on demand via "Run workflow"). Previously only
+# sync-coefficient was deployed, so notify-client / notify-video-ready / invite-user
+# / asana-* silently drifted and never went live. Each function enforces its own auth
+# (team-JWT check, shared sync key, or external webhook), so all deploy with
+# --no-verify-jwt and gate access internally.
+#
+# Requires GitHub secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF.
 on:
   push:
     branches: [main]
     paths:
-      - 'supabase/functions/sync-coefficient/**'
+      - 'supabase/functions/**'
       - '.github/workflows/deploy-functions.yml'
   workflow_dispatch: {}
 
@@ -19,7 +24,16 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Deploy sync-coefficient
+      - name: Deploy all edge functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy sync-coefficient --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} --no-verify-jwt
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          for dir in supabase/functions/*/; do
+            name="$(basename "$dir")"
+            [ "$name" = "_shared" ] && continue
+            echo "::group::deploy $name"
+            supabase functions deploy "$name" --project-ref "$PROJECT_REF" --no-verify-jwt
+            echo "::endgroup::"
+          done
