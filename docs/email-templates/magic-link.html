@@ -1,0 +1,37 @@
+<!--
+  ROXIUM · Supabase Auth "Magic Link" template (normal sign-in)
+  Paste into: Supabase → Authentication → Emails → Templates → "Magic Link".
+  Subject:    Your ROXIUM sign-in link
+  Variables:  {{ .ConfirmationURL }}
+  Notes:      Table-based + inline CSS, Outlook-safe (see invite.html).
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F2EDE3;margin:0;padding:32px 0;">
+  <tr><td align="center">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border:1px solid #E7DFCF;border-radius:8px;">
+      <tr><td align="center" style="padding:34px 40px 8px;">
+        <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;letter-spacing:6px;color:#0D0C10;">ROXIUM</div>
+        <div style="height:2px;width:44px;background:#C9A84C;margin:12px auto 0;"></div>
+      </td></tr>
+      <tr><td align="center" style="padding:20px 44px 0;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.35;color:#0D0C10;">
+        Your secure sign-in link
+      </td></tr>
+      <tr><td style="padding:16px 44px 4px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#4A463E;">
+        Use the button below to sign in to your ROXIUM portal. For your security this link can be used once and expires in about 60 minutes.
+      </td></tr>
+      <tr><td align="center" style="padding:28px 44px 8px;">
+        <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+          <td align="center" bgcolor="#C9A84C" style="border-radius:6px;">
+            <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 34px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;letter-spacing:.3px;color:#0D0C10;text-decoration:none;">Sign in to ROXIUM</a>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:6px 44px 4px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A857A;">
+        If the button doesn't work, copy and paste this link:<br>
+        <a href="{{ .ConfirmationURL }}" style="color:#9A7B2E;word-break:break-all;">{{ .ConfirmationURL }}</a>
+      </td></tr>
+      <tr><td style="padding:22px 44px 34px;border-top:1px solid #EFE8D8;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#A49E92;">
+        If you didn't request this link, you can safely ignore this email — no one can sign in without it.
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
