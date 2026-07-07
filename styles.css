@@ -286,9 +286,10 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-alert-body.ops-alert-link{cursor:pointer;flex:1;min-width:0}
 .ops-alert-body.ops-alert-link:hover .ops-alert-title{color:var(--gold)}
 .ops-alert-actions{display:flex;gap:4px;flex-shrink:0;align-items:center}
-.ops-alert-pin,.ops-alert-dismiss{background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:4px 6px;border-radius:2px}
-.ops-alert-pin:hover,.ops-alert-dismiss:hover{border-color:var(--line);color:var(--gold)}
+.ops-alert-pin,.ops-alert-snooze,.ops-alert-dismiss{background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:4px 6px;border-radius:2px}
+.ops-alert-pin:hover,.ops-alert-snooze:hover,.ops-alert-dismiss:hover{border-color:var(--line);color:var(--gold)}
 .ops-alert-pin.active{color:var(--gold);border-color:rgba(201,168,76,.35)}
+.ops-alert-snooze:hover{color:var(--amber)}
 .ops-alert-dismiss:hover{color:var(--red);border-color:rgba(198,106,88,.35)}
 .ops-alert-icon{font-size:14px;line-height:1.2;flex-shrink:0;margin-top:1px}
 .ops-alert-body{display:flex;flex-direction:column;justify-content:center;min-height:44px}

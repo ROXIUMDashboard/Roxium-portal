@@ -19,6 +19,27 @@ The portal is a **static site** (no compile step). Production assets are:
 
 **Never deploy the raw repo root.** The repo also contains `supabase/`, `migrations/`, `docs/`, etc.
 
+---
+
+## Netlify (production)
+
+Roxium production is hosted on **Netlify**. `netlify.toml` configures:
+
+| Setting | Value |
+|---------|--------|
+| Build command | `bash scripts/prepare-pages.sh` |
+| Publish directory | `site` |
+
+After merging to `main`, Netlify rebuilds automatically if the site is connected to GitHub. If the live site still shows an old footer SHA:
+
+1. Netlify dashboard → **Deploys** → **Trigger deploy** → **Clear cache and deploy site**
+2. Hard refresh the browser (**Cmd+Shift+R** / **Ctrl+Shift+R**)
+3. Confirm footer `build <sha>` matches `main` and `/version.json`
+
+---
+
+## Cloudflare Pages (optional alternate host)
+
 ### Build script
 
 ```bash
@@ -150,7 +171,7 @@ All four should match.
 3. **Settings → Builds** (if Git connected):
    - Build: `bash scripts/prepare-pages.sh`
    - Output: `site`
-4. **Disable** Netlify deploy for this repo if you have moved to Cloudflare.
+4. **Disable** duplicate Cloudflare Git deploy for this repo if Netlify is your only production host.
 5. Merge to `main` → confirm GitHub Action **Deploy Portal to Cloudflare Pages** succeeds.
 6. Visit `https://roxium-portal.pages.dev` → confirm footer SHA.
 

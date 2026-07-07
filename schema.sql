@@ -25,6 +25,7 @@ create table if not exists profiles (
   full_name text,
   role text not null default 'client' check (role in ('team','client')),
   practice_id uuid references practices(id),
+  ops_attention_state jsonb not null default '{}'::jsonb,
   created_at timestamptz default now()
 );
 
@@ -323,6 +324,20 @@ begin
   update profiles set full_name = nullif(btrim(p_name), '') where id = auth.uid();
 end $$;
 grant execute on function set_my_name(text) to authenticated;
+
+-- Operations Dashboard attention queue (dismiss / snooze / pin / order) per team user.
+create or replace function get_my_ops_attention_state()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(ops_attention_state, '{}'::jsonb) from profiles where id = auth.uid();
+$$;
+create or replace function set_my_ops_attention_state(p_state jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_team() then raise exception 'Only team users can save operations attention preferences'; end if;
+  update profiles set ops_attention_state = coalesce(p_state, '{}'::jsonb) where id = auth.uid();
+end $$;
+grant execute on function get_my_ops_attention_state() to authenticated;
+grant execute on function set_my_ops_attention_state(jsonb) to authenticated;
 
 -- memberships: user reads their own; team reads/manages all (invites write via service role).
 drop policy if exists "read memberships" on memberships;

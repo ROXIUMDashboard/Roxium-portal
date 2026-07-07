@@ -27,13 +27,28 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
    - **Already have a live DB from before Phase B?** Don't re-run `schema.sql`. Instead run the
      incremental migration in `migrations/2026-06-22_phase_b_kpi_period.sql` once — it's additive,
      idempotent, and backfills existing KPI rows to the new month-snapshot model without data loss.
+   - **Operations Dashboard attention sync (snooze / dismiss / pin / order across devices)?** Run
+     `migrations/2026-07-07_ops_attention_state.sql` once on live DBs. Without it, the dashboard
+     still works using browser localStorage only.
 3. **Authentication → Providers → Email**: leave Email enabled (magic links work out of the box).
 4. **Authentication → URL Configuration**: set Site URL to your Netlify URL (step 3) once you have it.
 5. **Settings → API**: copy the `Project URL` and `anon public` key into `config.js`. Commit + push.
 
 ### 3 · Hosting (Netlify or Cloudflare Pages)
 
-#### Option A — Cloudflare Pages (recommended)
+#### Option A — Netlify (production for Roxium)
+
+1. netlify.com → **Add new site → Import an existing project** → pick your GitHub repo.
+2. `netlify.toml` in the repo sets:
+   - **Build command:** `bash scripts/prepare-pages.sh`
+   - **Publish directory:** `site`
+3. Deploy (or **Deploys → Trigger deploy → Clear cache and deploy site** after merges). Footer should show the current git SHA, not a stale build id.
+4. Add your custom domain (e.g. `portal.roxium.co`) under **Domain settings**.
+5. Supabase → **Authentication → URL configuration** → set **Site URL** and **Redirect URLs** to your Netlify domain.
+
+See **`docs/DEPLOYMENT.md`** for stale-deploy troubleshooting.
+
+#### Option B — Cloudflare Pages
 
 1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
 2. Pick this repo. Use these settings:
@@ -41,8 +56,8 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 | Setting | Value |
 |---------|--------|
 | Framework preset | **None** |
-| Build command | *(leave empty)* |
-| Build output directory | `/` |
+| Build command | `bash scripts/prepare-pages.sh` |
+| Build output directory | `site` |
 
 3. **Do not** set the build command to `npx wrangler deploy` alone — run `bash scripts/prepare-pages.sh` first (output `site/`). See **`docs/DEPLOYMENT.md`** for the full pipeline and troubleshooting stale deploys.
 4. Deploy. Your preview URL will be `https://<project-name>.pages.dev`.
@@ -53,12 +68,12 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
 
 SPA routing (magic-link auth) works automatically — there is no `404.html`, so Pages serves `index.html` for unknown routes. `_headers` in the repo sets security + cache headers.
 
-#### Option B — Netlify
+---
 
-1. netlify.com → **Add new site → Import an existing project** → pick your GitHub repo.
-2. No build command needed; publish directory is the repo root (already set in `netlify.toml`).
-3. Deploy. Then add your custom domain (e.g. `portal.roxium.co`) under **Domain settings**.
-4. Go back to Supabase → Authentication → URL Configuration → set the Site URL to this domain.
+## Operations Dashboard (team)
+
+- **Needs attention** — dismiss (permanent), snooze until tomorrow (⏸), pin, drag-reorder; syncs to your profile when `migrations/2026-07-07_ops_attention_state.sql` is applied (localStorage fallback otherwise).
+- **Company KPI** — monthly spend, reach, impressions, and link-clicks charts; month selector for live vs archived reporting periods.
 
 ### 4 · Create users (5 min)
 1. Supabase → **Authentication → Users → Add user** → enter your email (and each teammate's).
