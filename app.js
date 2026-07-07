@@ -30,12 +30,15 @@ const CORE_METRICS = [
   {k:'ctr',    label:'CTR',          fmt:v=>fmtP(v),  derive:m=>{const i=N(m,'impr'),c=N(m,'clicks');return i?c/i:null;}},
   {k:'cpm',    label:'CPM',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),i=N(m,'impr');return i?s/(i/1000):null;}, lowerBetter:true},
   {k:'cpc',    label:'CPC',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),c=N(m,'clicks');return c?s/c:null;}, lowerBetter:true},
-  {k:'page_engagement', label:'Page Engagement', fmt:v=>fmtNum(v)},   // only renders when the source provides it
+  {k:'page_engagement', label:'Page Engagement', fmt:v=>fmtNum(v), hideIfZero:true},   // only renders when the source provides it
 ];
+// hideIfZero: these engagement/social metrics are shown ONLY when the source
+// actually reports them (>0). A zero/absent value means "not provided" — hide the
+// card rather than render an empty "0", and the grid reflows automatically.
 const OPTIONAL_METRICS = [
-  {k:'lpv',        label:'Landing Page Views', fmt:v=>fmtNum(v)},
-  {k:'page_likes', label:'Page Likes',         fmt:v=>fmtNum(v)},
-  {k:'foll',       label:'Followers',          fmt:v=>fmtNum(v)},
+  {k:'lpv',        label:'Landing Page Views', fmt:v=>fmtNum(v), hideIfZero:true},
+  {k:'page_likes', label:'Page Likes',         fmt:v=>fmtNum(v), hideIfZero:true},
+  {k:'foll',       label:'Followers',          fmt:v=>fmtNum(v), hideIfZero:true},
 ];
 // value of a metric for a row: derived metrics compute (null if inputs absent),
 // raw metrics read the column (null if missing). null => the card is not rendered.
@@ -1006,7 +1009,7 @@ function render(){
     const trendPrev = allMonthsView ? rangeSummary?.prev : prev;
     const cards = CORE_METRICS.map(def=>{
       const v = metricRow ? metricValue(def, metricRow) : null;
-      if(v==null) return null;
+      if(v==null || (def.hideIfZero && !v)) return null;
       const bv = trendRow && trendPrev ? metricValue(def, trendPrev) : null;
       const info = METRIC_INFO[def.k]
         ? `<button class="metricinfo" type="button" data-metric="${def.k}" title="What is ${def.label}?" aria-label="What is ${def.label}?">ⓘ</button>` : '';
@@ -1034,7 +1037,7 @@ function render(){
     // secondary: optional ad metrics, shown only when present
     const optionalSource = allMonthsView ? rangeSummary?.totals : latest;
     const rows = (optionalSource ? OPTIONAL_METRICS : []).map(def=>{
-      const v = metricValue(def, optionalSource); if(v==null) return null;
+      const v = metricValue(def, optionalSource); if(v==null || (def.hideIfZero && !v)) return null;
       return `<div class="srow"><span class="n">${def.label}</span><span class="s g">${def.fmt(v)}</span></div>`;
     }).filter(Boolean);
     $('statusBoard').innerHTML = rows.join('');
