@@ -1534,9 +1534,13 @@ async function reorderPhases(fromPhase, toPhase){
 async function updateDeliverableStatus(id, status){
   const prev = data.deliv.find(d=>d.id===id);
   await sb.from('deliverables').update({ status, delivered_at: status==='delivered'? new Date().toISOString():null }).eq('id', id);
-  // notify on newly-delivered
+  // In-app notification for every delivered item; email ONLY when the whole phase completes.
   if(status==='delivered' && prev && prev.status!=='delivered'){
-    await notifyClient('deliverable', `Deliverable completed: ${prev.name}.`);
+    await notifyClient('deliverable', `Deliverable completed: ${prev.name}.`, { email:false });
+    const inPhase = data.deliv.filter(d=> (d.phase||'')===(prev.phase||''));
+    if(inPhase.length && inPhase.every(d=> d.id===id || d.status==='delivered')){
+      await notifyClient('deliverable', `Phase "${prev.phase}" is complete — every deliverable in it has shipped.`, { email:true });
+    }
   }
   await autoAdvanceMilestones();
   loadAll();
@@ -2084,18 +2088,25 @@ async function deleteRow(table, id, confirmMsg){
 }
 
 /* ---- NOTIFICATIONS: write a banner row for the client + fire an email ---- */
-async function notifyClient(kind, message){
+// Notify a practice. Always writes an in-app notification + activity entry.
+// opts.email (default true) controls whether an email is ALSO sent — we notify
+// in-app for every completion but only email on the "big" events (phase complete,
+// video posted, milestone). opts.practiceId targets a practice other than the
+// currently-viewed one (needed from the ops dashboard, which spans all practices).
+async function notifyClient(kind, message, opts={}){
+  const pid = opts.practiceId || practiceId;
+  if(!pid) return;
   try{
-    await sb.from('notifications').insert({ practice_id: practiceId, kind, message });
-    // also drop it into the activity feed
-    await sb.from('activity').insert({ practice_id: practiceId, message, author:'ROXIUM', source:'portal' });
-    // fire the email (works once the Edge Function + Resend domain are live; silent if not)
-    const { data: sess } = await sb.auth.getSession();
-    fetch(`${CONFIG.SUPABASE_URL}/functions/v1/notify-client`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sess.session.access_token}` },
-      body: JSON.stringify({ practice_id: practiceId, message, kind }),
-    }).catch(()=>{});
+    await sb.from('notifications').insert({ practice_id: pid, kind, message });
+    await sb.from('activity').insert({ practice_id: pid, message, author:'ROXIUM', source:'portal' });
+    if(opts.email !== false){
+      const { data: sess } = await sb.auth.getSession();
+      fetch(`${CONFIG.SUPABASE_URL}/functions/v1/notify-client`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sess.session.access_token}` },
+        body: JSON.stringify({ practice_id: pid, message, kind }),
+      }).catch(()=>{});
+    }
   }catch(e){ /* non-blocking */ }
 }
 
@@ -2555,6 +2566,7 @@ async function updateOpsRow(table, id, patch){
 }
 async function updateOpsDeliverable(id, patch){
   const row = opsData?.deliverables?.find(d=> d.id===id);
+  const wasDelivered = row?.status==='delivered';
   if(patch.status){
     if(patch.status==='delivered'){
       patch.delivered_at = row?.delivered_at || new Date().toISOString();
@@ -2562,7 +2574,17 @@ async function updateOpsDeliverable(id, patch){
       patch.delivered_at = null;
     }
   }
-  return updateOpsRow('deliverables', id, patch);
+  const ok = await updateOpsRow('deliverables', id, patch);
+  // Completing from the team/ops dashboard must notify too (previously it didn't).
+  // In-app per deliverable; email only when the phase is fully shipped.
+  if(ok && row && patch.status==='delivered' && !wasDelivered){
+    await notifyClient('deliverable', `Deliverable completed: ${row.name}.`, { email:false, practiceId: row.practice_id });
+    const inPhase = (opsData?.deliverables||[]).filter(d=> d.practice_id===row.practice_id && (d.phase||'')===(row.phase||''));
+    if(inPhase.length && inPhase.every(d=> d.status==='delivered')){
+      await notifyClient('deliverable', `Phase "${row.phase}" is complete — every deliverable in it has shipped.`, { email:true, practiceId: row.practice_id });
+    }
+  }
+  return ok;
 }
 async function updateOpsVideo(id, patch){
   return updateOpsRow('video_pipeline', id, patch);
