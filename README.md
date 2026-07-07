@@ -30,6 +30,8 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
    - **Operations Dashboard attention sync (snooze / dismiss / pin / order across devices)?** Run
      `migrations/2026-07-07_ops_attention_state.sql` once on live DBs. Without it, the dashboard
      still works using browser localStorage only.
+   - **Daily KPI charts (reporting month zoom)?** Run `migrations/2026-07-07_kpi_daily.sql` once,
+     redeploy `sync-coefficient`, then run **Sync now** so daily rows populate from Coefficient sheets.
 3. **Authentication → Providers → Email**: leave Email enabled (magic links work out of the box).
 4. **Authentication → URL Configuration**: set Site URL to your Netlify URL (step 3) once you have it.
 5. **Settings → API**: copy the `Project URL` and `anon public` key into `config.js`. Commit + push.

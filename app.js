@@ -510,12 +510,13 @@ async function afterLogin(){
 
 /* ---------------- data ---------------- */
 async function loadAll(){
-  const [p,k,d,m,v,f,vh,nt] = await Promise.all([
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setMonth(monthStart.getMonth()-24);
+  const dayCutoff = monthStart.toISOString().slice(0,10);
+  const dailyQ = sb.from('kpi_daily').select('*').eq('practice_id', practiceId).gte('day', dayCutoff).order('day');
+  const [p,k,kd,d,m,v,f,vh,nt] = await Promise.all([
     sb.from('practices').select('*').eq('id', practiceId).single(),
-    // Read EVERY source (marketing / coefficient / asana …), not just one — the
-    // Coefficient sync may land rows under 'coefficient'. mergeKpiByPeriod() folds
-    // all sources for a month into one effective snapshot so the data always shows.
     sb.from('kpi_monthly').select('*').eq('practice_id', practiceId).order('period'),
+    dailyQ,
     sb.from('deliverables').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('milestones').select('*').eq('practice_id', practiceId).order('sort'),
     sb.from('video_pipeline').select('*').eq('practice_id', practiceId).order('sort'),
@@ -523,7 +524,7 @@ async function loadAll(){
     sb.from('video_history').select('*').eq('practice_id', practiceId).order('moved_at'),
     sb.from('notifications').select('*').eq('practice_id', practiceId).order('created_at',{ascending:false}).limit(10),
   ]);
-  data = { practice:p.data, kpiRaw:(k.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
+  data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
@@ -576,12 +577,10 @@ function mergeKpiByPeriod(rows){
   return [...byPeriod.values()];
 }
 
-/* ---------------- KPI trend charts (Chart.js) ---------------- */
+/* ---------------- KPI trend charts (Chart.js) — shared client + ops ---------------- */
 let kpiChartInstances = [];
-let investChartRef = null;
-// One combined chart. Spend on the LEFT axis ($), the big counts on the RIGHT axis
-// (#) — both REAL values (no normalization, no percentage axis). Two real axes keep
-// the very different magnitudes readable while every number shown is the true value.
+const investChartRefs = new Map();
+const DEFAULT_INVEST_METRICS = { spend:true, reach:true, impr:true, clicks:false };
 const INVEST_SERIES = [
   { key:'spend',  label:'Spend',       color:'#C9A84C', field:'spend',  axis:'y',  kind:'dollar' },
   { key:'reach',  label:'Reach',       color:'#7BA4D4', field:'reach',  axis:'y1', kind:'num' },
@@ -590,29 +589,102 @@ const INVEST_SERIES = [
 ];
 const INVEST_METRICS_KEY = 'roxium_invest_metrics';
 let investMetricEnabled = (()=>{
-  try{ const raw = sessionStorage.getItem(INVEST_METRICS_KEY);
-    if(raw){ const p = JSON.parse(raw); return Object.fromEntries(INVEST_SERIES.map(s=> [s.key, p[s.key]!==false])); }
+  try{
+    const raw = sessionStorage.getItem(INVEST_METRICS_KEY);
+    if(raw){ const p = JSON.parse(raw); return { ...DEFAULT_INVEST_METRICS, ...p }; }
   }catch(_){}
-  return Object.fromEntries(INVEST_SERIES.map(s=> [s.key, true]));
+  return { ...DEFAULT_INVEST_METRICS };
 })();
 function saveInvestMetricPrefs(){ try{ sessionStorage.setItem(INVEST_METRICS_KEY, JSON.stringify(investMetricEnabled)); }catch(_){} }
 const axisFmt = kind => kind==='dollar' ? (v=> '$'+Number(v).toLocaleString()) : (v=> Number(v).toLocaleString());
-function leftAxisEnabled(en){ return !!en.spend; }                                  // $ axis: spend
-function rightAxisEnabled(en){ return INVEST_SERIES.some(s=> s.axis==='y1' && en[s.key]); }  // # axis: counts
+function leftAxisEnabled(en){ return !!en.spend; }
+function rightAxisEnabled(en){ return INVEST_SERIES.some(s=> s.axis==='y1' && en[s.key]); }
 function destroyKpiCharts(){
   kpiChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
-  kpiChartInstances = []; investChartRef = null;
+  kpiChartInstances = []; investChartRefs.clear();
 }
-function kpiTimeSeries(endPeriod){
+function mergeKpiByDay(rows){
+  const byDay = new Map();
+  const ordered = [...rows].sort((a,b)=> new Date(a.updated_at||0) - new Date(b.updated_at||0));
+  for(const r of ordered){
+    const day = String(r.day).slice(0,10);
+    const cur = byDay.get(day) || { day, practice_id:r.practice_id };
+    for(const key of Object.keys(r)){
+      if(key==='id' || key==='source' || key==='day') continue;
+      const val = r[key];
+      if(val===null || val===undefined || val==='') continue;
+      if(KPI_ADDITIVE.has(key) && typeof val==='number'){
+        cur[key] = (typeof cur[key]==='number' ? cur[key] : 0) + val;
+      } else {
+        cur[key] = val;
+      }
+    }
+    byDay.set(day, cur);
+  }
+  return [...byDay.values()];
+}
+function monthDayCalendar(period){
+  const y = +String(period).slice(0,4), m = +String(period).slice(5,7);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const days = [];
+  for(let d = 1; d <= daysInMonth; d++){
+    const day = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    days.push({ day, label:String(d) });
+  }
+  return days;
+}
+function buildDailyChartSeries(dailyRows, viewPeriod, isLive){
+  if(!viewPeriod) return [];
+  const cal = monthDayCalendar(viewPeriod);
+  const merged = mergeKpiByDay(dailyRows);
+  const byDay = new Map(merged.map(r=> [String(r.day).slice(0,10), r]));
+  const today = new Date();
+  const y = +String(viewPeriod).slice(0,4), mo = +String(viewPeriod).slice(5,7);
+  const isCurrentMonth = y===today.getFullYear() && mo===today.getMonth()+1;
+  return cal.map(({ day, label })=>{
+    const row = byDay.get(day);
+    const dayNum = +day.slice(8,10);
+    const inLiveRange = !isLive || !isCurrentMonth || dayNum <= today.getDate();
+    const pick = k=> inLiveRange && row ? N(row,k) : null;
+    return { day, label, spend:pick('spend'), reach:pick('reach'), impr:pick('impr'), clicks:pick('clicks') };
+  });
+}
+function clientDailyRows(){
   const chan = getChan();
-  const rows = normalizeKpiRows(data.kpiRaw || []).filter(r=> r.practice_id===practiceId);
-  const scoped = chan==='all' ? rows : rows.filter(r=> r.source===chan);
-  const merged = mergeKpiByPeriod(scoped).sort((a,b)=> String(a.period).localeCompare(String(b.period)));
-  const end = endPeriod || merged[merged.length-1]?.period;
-  return end ? merged.filter(r=> String(r.period) <= String(end)) : merged;
+  const rows = (data.kpiDailyRaw||[]).filter(r=> r.practice_id===practiceId);
+  return chan==='all' ? rows : rows.filter(r=> r.source===chan);
+}
+function opsDailyRows(){
+  return (opsData?.kpiDailyRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
+}
+function aggregateOpsDailyByDay(rows, viewPeriod, isLive){
+  const cal = monthDayCalendar(viewPeriod);
+  const byDay = new Map();
+  cal.forEach(({ day, label })=> byDay.set(day, { day, label, spend:0, reach:0, impr:0, clicks:0, has:false }));
+  rows.forEach(r=>{
+    const day = String(r.day).slice(0,10);
+    const slot = byDay.get(day);
+    if(!slot) return;
+    slot.has = true;
+    slot.spend += N(r,'spend')||0;
+    slot.reach += N(r,'reach')||0;
+    slot.impr += N(r,'impr')||0;
+    slot.clicks += N(r,'clicks')||0;
+  });
+  const today = new Date();
+  const y = +String(viewPeriod).slice(0,4), mo = +String(viewPeriod).slice(5,7);
+  const isCurrentMonth = y===today.getFullYear() && mo===today.getMonth()+1;
+  return cal.map(({ day, label })=>{
+    const slot = byDay.get(day);
+    const dayNum = +day.slice(8,10);
+    const inLiveRange = !isLive || !isCurrentMonth || dayNum <= today.getDate();
+    if(!inLiveRange || !slot?.has) return { day, label, spend:null, reach:null, impr:null, clicks:null };
+    return { day, label, spend:slot.spend, reach:slot.reach, impr:slot.impr, clicks:slot.clicks };
+  });
 }
 function buildInvestChartOptions(highlightIdx, en){
   const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
+  const clicksOnly = en.clicks && !en.spend && !en.reach && !en.impr;
   return {
     responsive:true, maintainAspectRatio:false, animation:{ duration:420 },
     interaction:{ mode:'index', intersect:false },
@@ -624,89 +696,130 @@ function buildInvestChartOptions(highlightIdx, en){
         callbacks:{ label(ctx){
           const s = INVEST_SERIES[ctx.datasetIndex];
           const raw = ctx.dataset.rawValues?.[ctx.dataIndex];
-          return `${s.label}: ${raw==null ? '—' : axisFmt(s.kind)(raw)}`;     // always the REAL value
+          return `${s.label}: ${raw==null ? '—' : axisFmt(s.kind)(raw)}`;
         } },
       },
     },
     scales:{
-      x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:12 }, grid:{ color:line } },
-      y:{  type:'linear', position:'left',  beginAtZero:true, display:leftAxisEnabled(en),
+      x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:8, maxTicksLimit: 16 }, grid:{ color:line } },
+      y:{  type:'linear', position:'left',  beginAtZero:true, display: clicksOnly ? false : leftAxisEnabled(en),
            ticks:{ color:INVEST_SERIES[0].color, font:{ family:'Jost', size:10 }, maxTicksLimit:6, callback:axisFmt('dollar') },
            grid:{ color:line } },
-      y1:{ type:'linear', position:'right', beginAtZero:true, display:rightAxisEnabled(en),
-           ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxTicksLimit:6, callback:axisFmt('num') },   // REAL #, not %
-           grid:{ drawOnChartArea:false } },
+      y1:{ type:'linear', position: clicksOnly ? 'left' : 'right', beginAtZero:true, display: clicksOnly ? true : rightAxisEnabled(en),
+           ticks:{ color: clicksOnly ? INVEST_SERIES[3].color : muted, font:{ family:'Jost', size:10 }, maxTicksLimit:6, callback:axisFmt('num') },
+           grid:{ drawOnChartArea: clicksOnly } },
     },
     elements:{
-      point:{ radius:ctx=> ctx.dataIndex===highlightIdx ? 6 : 3, hoverRadius:7, borderWidth:2,
+      point:{ radius:ctx=> ctx.dataIndex===highlightIdx ? 5 : 2, hoverRadius:6, borderWidth:2,
         backgroundColor:ctx=> ctx.dataIndex===highlightIdx ? '#F2EDE3' : 'transparent' },
       line:{ tension:0.32, borderWidth:2 },
     },
   };
 }
-function syncInvestFilterButtons(){
-  document.querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
+function syncInvestFilterButtons(scope){
+  (scope||document).querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
     const on = !!investMetricEnabled[btn.dataset.metric];
     btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
-function updateInvestChartVisibility(){
-  if(!investChartRef) return;
-  INVEST_SERIES.forEach((s,i)=> investChartRef.setDatasetVisibility(i, !!investMetricEnabled[s.key]));
-  if(investChartRef.options.scales.y)  investChartRef.options.scales.y.display  = leftAxisEnabled(investMetricEnabled);
-  if(investChartRef.options.scales.y1) investChartRef.options.scales.y1.display = rightAxisEnabled(investMetricEnabled);
-  investChartRef.update(); syncInvestFilterButtons();
+function updateInvestChartVisibility(canvasId){
+  const chart = investChartRefs.get(canvasId);
+  if(!chart) return;
+  INVEST_SERIES.forEach((s,i)=> chart.setDatasetVisibility(i, !!investMetricEnabled[s.key]));
+  const clicksOnly = investMetricEnabled.clicks && !investMetricEnabled.spend && !investMetricEnabled.reach && !investMetricEnabled.impr;
+  if(chart.options.scales.y){
+    chart.options.scales.y.display = clicksOnly ? false : leftAxisEnabled(investMetricEnabled);
+  }
+  if(chart.options.scales.y1){
+    chart.options.scales.y1.display = clicksOnly ? true : rightAxisEnabled(investMetricEnabled);
+    chart.options.scales.y1.position = clicksOnly ? 'left' : 'right';
+    chart.options.scales.y1.grid.drawOnChartArea = clicksOnly;
+    chart.options.scales.y1.ticks.color = clicksOnly ? INVEST_SERIES[3].color : '#9A948A';
+  }
+  chart.update();
+  syncInvestFilterButtons(chart.canvas?.closest('.chartpanel'));
 }
-function bindInvestFilters(){
-  document.querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
-    btn.onclick = ()=>{
-      const key = btn.dataset.metric;
-      const enabledCount = INVEST_SERIES.filter(s=> investMetricEnabled[s.key]).length;
-      if(investMetricEnabled[key] && enabledCount <= 1) return;   // keep at least one on
+function toggleInvestMetric(key){
+  if(key==='clicks'){
+    if(!investMetricEnabled.clicks){
+      investMetricEnabled.spend = false;
+      investMetricEnabled.reach = false;
+      investMetricEnabled.impr = false;
+      investMetricEnabled.clicks = true;
+    } else {
+      Object.assign(investMetricEnabled, { ...DEFAULT_INVEST_METRICS });
+    }
+  } else {
+    if(investMetricEnabled.clicks){
+      investMetricEnabled.clicks = false;
+      Object.assign(investMetricEnabled, { ...DEFAULT_INVEST_METRICS, [key]: true });
+    } else {
+      const mainOn = INVEST_SERIES.filter(s=> s.key!=='clicks' && investMetricEnabled[s.key]).length;
+      if(investMetricEnabled[key] && mainOn <= 1) return;
       investMetricEnabled[key] = !investMetricEnabled[key];
-      saveInvestMetricPrefs(); updateInvestChartVisibility();
-    };
-  });
-  syncInvestFilterButtons();
+    }
+  }
+  saveInvestMetricPrefs();
+  investChartRefs.forEach((_c, id)=> updateInvestChartVisibility(id));
 }
-function renderKpiCharts(viewPeriod, isLive){
-  const wrap = $('kpiCharts');
+function bindInvestFilters(scope, canvasId){
+  const panel = scope || document;
+  panel.querySelectorAll('.chart-filter[data-metric]').forEach(btn=>{
+    btn.onclick = ()=> toggleInvestMetric(btn.dataset.metric);
+  });
+  syncInvestFilterButtons(panel);
+}
+function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, headTitle, headNote, chartTitle, chartSub }){
   if(!wrap || typeof Chart==='undefined'){ if(wrap) wrap.classList.add('hidden'); return; }
-  destroyKpiCharts();
-  const series = kpiTimeSeries(viewPeriod);
-  if(series.length < 2){ wrap.classList.add('hidden'); wrap.innerHTML=''; return; }
+  if(!viewPeriod || !series.length){
+    wrap.classList.add('hidden'); wrap.innerHTML=''; return;
+  }
+  const hasData = series.some(d=> INVEST_SERIES.some(s=> d[s.field]!=null));
   wrap.classList.remove('hidden');
-  const labels = series.map(r=> periodLabel(r.period));
-  const hi = viewPeriod ? series.findIndex(r=> String(r.period)===String(viewPeriod)) : series.length-1;
-  const hiIdx = hi<0 ? series.length-1 : hi;
-  const chanLbl = getChan()==='all' ? 'All channels' : channelLabel(getChan());
-  const viewLbl = viewPeriod ? periodLabel(viewPeriod) : 'latest month';
+  const labels = series.map(d=> d.label);
+  const hiIdx = isLive ? Math.max(0, series.findIndex(d=> d.spend!=null || d.reach!=null || d.impr!=null || d.clicks!=null)) : series.length-1;
+  const liveNote = isLive ? ' · live daily sync' : ' · archived month-end snapshot';
   wrap.innerHTML = `
     <div class="kpi-charts-head">
-      <span class="chanlabel">Are we improving?</span>
-      <span class="note">${esc(chanLbl)} · trend through ${esc(viewLbl)}${isLive?' · live':' · archived'} · ${series.length} months</span>
+      <span class="chanlabel">${esc(headTitle)}</span>
+      <span class="note">${esc(headNote)}${liveNote}</span>
     </div>
     <div class="chartpanel chartpanel-invest">
-      <div class="charttitle">Investment &amp; performance</div>
-      <div class="chartsub">Spend ($, left axis) and reach / impressions / link clicks (#, right axis) — real values. Toggle any metric.</div>
+      <div class="charttitle">${esc(chartTitle)}</div>
+      <div class="chartsub">${esc(chartSub)}${hasData ? '' : ' · No daily rows yet — run Sync after applying the kpi_daily migration.'}</div>
       <div class="chart-filters" role="group" aria-label="Chart metrics">${INVEST_SERIES.map(s=>`
         <button type="button" class="chart-filter${investMetricEnabled[s.key]?' on':''}" data-metric="${s.key}" aria-pressed="${investMetricEnabled[s.key]?'true':'false'}">
           <span class="cf-box" style="--cf:${s.color}"></span><span class="cf-label">${esc(s.label)}</span>
         </button>`).join('')}</div>
-      <div class="chartbox chartbox-lg"><canvas id="chartInvest"></canvas></div>
+      <div class="chartbox chartbox-lg"><canvas id="${canvasId}"></canvas></div>
     </div>`;
-  const invest = new Chart($('chartInvest'), {
+  const chart = new Chart($(canvasId), {
     type:'line',
     data:{ labels, datasets: INVEST_SERIES.map(s=>{
-      const rawValues = series.map(r=> N(r, s.field));
-      return { label:s.label, data:rawValues, rawValues, yAxisID:s.axis,        // plot REAL values
-        borderColor:s.color, backgroundColor: s.key==='spend' ? 'rgba(201,168,76,.08)' : 'transparent',
-        fill: s.key==='spend', spanGaps:true, hidden: !investMetricEnabled[s.key] };
+      const rawValues = series.map(d=> d[s.field]);
+      return { label:s.label, data:rawValues, rawValues, yAxisID:s.axis,
+        borderColor:s.color, backgroundColor: s.key==='spend' ? 'rgba(201,168,76,.08)' : (s.key==='clicks' ? 'rgba(154,127,184,.12)' : 'transparent'),
+        fill: s.key==='spend' || s.key==='clicks', spanGaps:true, hidden: !investMetricEnabled[s.key] };
     }) },
     options: buildInvestChartOptions(hiIdx, investMetricEnabled),
   });
-  investChartRef = invest; kpiChartInstances.push(invest);
-  bindInvestFilters();
+  investChartRefs.set(canvasId, chart);
+  kpiChartInstances.push(chart);
+  bindInvestFilters(wrap, canvasId);
+}
+function renderKpiCharts(viewPeriod, isLive){
+  destroyKpiCharts();
+  const wrap = $('kpiCharts');
+  if(!wrap) return;
+  const series = buildDailyChartSeries(clientDailyRows(), viewPeriod, isLive);
+  const chanLbl = getChan()==='all' ? 'All channels' : channelLabel(getChan());
+  renderInvestChartPanel({
+    wrap, canvasId:'chartInvest', series, viewPeriod, isLive,
+    headTitle:'Are we improving?',
+    headNote:`${chanLbl} · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
+    chartTitle:'Investment & performance',
+    chartSub:'Daily trend for the selected reporting month. Spend ($, left) and reach / impressions (#, right). Link clicks uses its own scale.',
+  });
 }
 
 /* ---------------- formatters ---------------- */
@@ -1925,7 +2038,6 @@ let opsClientSortAsc = true;
 let opsCompanyPeriod = null;
 let opsMonthSelApi = null;
 let opsLoadPromise = null;
-let opsChartInstances = [];
 const OPS_ATTN_STORE = 'roxium_ops_attention_v2';
 let opsAttnSaveTimer = null;
 let opsAttnServerReady = false;
@@ -1998,13 +2110,18 @@ async function initOpsAttentionState(){
     try{ localStorage.setItem(OPS_ATTN_STORE, JSON.stringify(serializeOpsAttentionState(server))); }catch(_){}
   }
 }
-function isOpsAlertHidden(id){
-  if(opsAttentionState.dismissed.has(id)) return true;
+function getOpsAlertUiState(id){
+  if(opsAttentionState.dismissed.has(id)) return 'dismissed';
   const until = opsAttentionState.snoozed[id];
-  if(!until) return false;
-  if(new Date(until).getTime() > Date.now()) return true;
+  if(!until) return 'active';
+  if(new Date(until).getTime() > Date.now()) return 'snoozed';
   delete opsAttentionState.snoozed[id];
-  return false;
+  return 'active';
+}
+function formatSnoozeUntil(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return 'soon';
+  return d.toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
 }
 let opsAttentionState = loadOpsAttentionStateLocal();
 const PHASE_TIMING = {
@@ -2189,10 +2306,11 @@ function prepareOpsAttentionList(alerts){
   opsAttentionState.pinned = opsAttentionState.pinned.filter(id=> activeIds.has(id));
   if(opsAttentionState.order) opsAttentionState.order = opsAttentionState.order.filter(id=> activeIds.has(id));
   saveOpsAttentionState(opsAttentionState);
-  const visible = alerts
-    .map(a=> ({ ...a, id: opsAlertId(a) }))
-    .filter(a=> !isOpsAlertHidden(a.id));
-  visible.sort((a,b)=>{
+  const items = alerts.map(a=> ({ ...a, id: opsAlertId(a), uiState: getOpsAlertUiState(opsAlertId(a)) }));
+  const stateRank = { active:0, snoozed:1, dismissed:2 };
+  items.sort((a,b)=>{
+    const ra = stateRank[a.uiState], rb = stateRank[b.uiState];
+    if(ra !== rb) return ra - rb;
     const pa = opsAttentionState.pinned.indexOf(a.id);
     const pb = opsAttentionState.pinned.indexOf(b.id);
     if(pa >= 0 || pb >= 0){
@@ -2209,7 +2327,7 @@ function prepareOpsAttentionList(alerts){
     }
     return defaultAlertSort(a, b);
   });
-  return visible;
+  return items;
 }
 function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, videoId, phase, milestoneId }){
   if(!pid) return;
@@ -2229,9 +2347,19 @@ function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, vide
   });
 }
 function openOpsClient(pid){ openOpsDeepLink({ practiceId: pid, view: 'roadmap' }); }
-function destroyOpsCharts(){
-  opsChartInstances.forEach(c=>{ try{ c.destroy(); }catch(_){} });
-  opsChartInstances = [];
+function destroyOpsCharts(){ destroyKpiCharts(); }
+function renderOpsCompanyKpi(viewPeriod, isLive){
+  destroyOpsCharts();
+  const wrap = $('opsKpiCharts');
+  if(!wrap) return;
+  const series = aggregateOpsDailyByDay(opsDailyRows(), viewPeriod, isLive);
+  renderInvestChartPanel({
+    wrap, canvasId:'opsChartInvest', series, viewPeriod, isLive,
+    headTitle:'Company trend',
+    headNote:`All clients · Meta/marketing · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
+    chartTitle:'Investment & performance',
+    chartSub:'Daily rollup across the roster for the selected reporting month.',
+  });
 }
 function aggregateCompanyKpiByMonth(kpiRaw){
   const norm = normalizeKpiRows(kpiRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
@@ -2283,99 +2411,6 @@ function buildOpsMonthPicker(monthly, viewPeriod, latestPeriod){
     opsMonthSelApi.setValue(val);
   }
 }
-function renderOpsCompanyKpi(monthly, viewPeriod){
-  const wrap = $('opsKpiCharts');
-  if(!wrap) return;
-  destroyOpsCharts();
-  if(!monthly.length || typeof Chart==='undefined'){
-    wrap.classList.add('hidden');
-    wrap.innerHTML = '';
-    return;
-  }
-  wrap.classList.remove('hidden');
-  const labels = monthly.map(r=> periodLabel(r.period));
-  const hiIdx = viewPeriod ? Math.max(0, monthly.findIndex(r=> String(r.period)===String(viewPeriod))) : monthly.length-1;
-  wrap.innerHTML = `
-    <div class="ops-kpi-charts-head">
-      <span class="chanlabel">Company trend</span>
-      <span class="note">${monthly.length} month${monthly.length===1?'':'s'} rolled up across all clients · Meta/marketing source</span>
-    </div>
-    <div class="chartpanel chartpanel-invest">
-      <div class="charttitle">Spend &amp; reach over time</div>
-      <div class="chartsub">Combined monthly totals — spend ($, left) and reach (#, right).</div>
-      <div class="chartbox chartbox-lg"><canvas id="opsChartCompany"></canvas></div>
-    </div>
-    <div class="chartpanel">
-      <div class="charttitle">Impressions over time</div>
-      <div class="chartsub">Combined monthly impressions across the roster.</div>
-      <div class="chartbox"><canvas id="opsChartImpr"></canvas></div>
-    </div>
-    <div class="chartpanel">
-      <div class="charttitle">Link clicks over time</div>
-      <div class="chartsub">Combined monthly link clicks — separate scale for readability.</div>
-      <div class="chartbox"><canvas id="opsChartClicks"></canvas></div>
-    </div>`;
-  const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
-  const baseOpts = {
-    responsive:true, maintainAspectRatio:false, animation:{ duration:420 },
-    interaction:{ mode:'index', intersect:false },
-    plugins:{ legend:{ display:false } },
-    scales:{
-      x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:12 }, grid:{ color:line } },
-    },
-    elements:{ point:{ radius:ctx=> ctx.dataIndex===hiIdx ? 5 : 2, hoverRadius:6, borderWidth:2 }, line:{ tension:0.32, borderWidth:2 } },
-  };
-  const spendReach = new Chart($('opsChartCompany'), {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        { label:'Spend', data:monthly.map(r=> N(r,'spend')), borderColor:'#C9A84C', backgroundColor:'rgba(201,168,76,.08)', yAxisID:'y', fill:true },
-        { label:'Reach', data:monthly.map(r=> N(r,'reach')), borderColor:'#7BA4D4', backgroundColor:'transparent', yAxisID:'y1' },
-      ],
-    },
-    options:{ ...baseOpts,
-      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
-      scales:{ ...baseOpts.scales,
-        y:{ position:'left', beginAtZero:true, ticks:{ color:'#C9A84C', callback:v=> '$'+Number(v).toLocaleString() }, grid:{ color:line } },
-        y1:{ position:'right', beginAtZero:true, ticks:{ color:muted, callback:v=> Number(v).toLocaleString() }, grid:{ drawOnChartArea:false } },
-      },
-    },
-  });
-  opsChartInstances.push(spendReach);
-  const imprChart = new Chart($('opsChartImpr'), {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        { label:'Impressions', data:monthly.map(r=> N(r,'impr')), borderColor:'#6B8F71', backgroundColor:'rgba(107,143,113,.12)', fill:true },
-      ],
-    },
-    options:{ ...baseOpts,
-      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
-      scales:{ ...baseOpts.scales,
-        y:{ position:'left', beginAtZero:true, ticks:{ color:'#6B8F71', callback:v=> Number(v).toLocaleString() }, grid:{ color:line } },
-      },
-    },
-  });
-  opsChartInstances.push(imprChart);
-  const clicksChart = new Chart($('opsChartClicks'), {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        { label:'Link clicks', data:monthly.map(r=> N(r,'clicks')), borderColor:'#9A7FB8', backgroundColor:'rgba(154,127,184,.12)', fill:true },
-      ],
-    },
-    options:{ ...baseOpts,
-      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
-      scales:{ ...baseOpts.scales,
-        y:{ position:'left', beginAtZero:true, ticks:{ color:'#9A7FB8', callback:v=> Number(v).toLocaleString() }, grid:{ color:line } },
-      },
-    },
-  });
-  opsChartInstances.push(clicksChart);
-}
 async function updateOpsRow(table, id, patch){
   const { error } = await sb.from(table).update(patch).eq('id', id);
   if(error){ flash(error.message); return false; }
@@ -2405,28 +2440,57 @@ async function updateOpsVideo(id, patch){
 function renderOpsAlertItem(a){
   const icon = a.severity==='red' ? '🔴' : a.severity==='yellow' ? '🟡' : '🟢';
   const pinned = opsAttentionState.pinned.includes(a.id);
-  return `<div class="ops-alert ops-alert-${a.severity} ops-alert-item${pinned?' pinned':''}" draggable="true" data-alert-id="${esc(a.id)}">
+  const muted = a.uiState==='snoozed' || a.uiState==='dismissed';
+  const until = a.uiState==='snoozed' ? opsAttentionState.snoozed[a.id] : null;
+  const badge = a.uiState==='snoozed'
+    ? `<span class="ops-alert-badge ops-alert-badge-paused">Paused</span>`
+    : a.uiState==='dismissed'
+      ? `<span class="ops-alert-badge ops-alert-badge-dismissed">Dismissed</span>`
+      : '';
+  const meta = a.uiState==='snoozed' && until
+    ? `<div class="ops-alert-meta">Returns ${esc(formatSnoozeUntil(until))}</div>`
+    : a.uiState==='dismissed'
+      ? `<div class="ops-alert-meta">Hidden from your active queue</div>`
+      : '';
+  const resumeBtn = a.uiState==='snoozed'
+    ? `<button type="button" class="ops-alert-resume" data-resume-alert="${esc(a.id)}" title="Resume now">Resume</button>`
+    : '';
+  const restoreBtn = a.uiState==='dismissed'
+    ? `<button type="button" class="ops-alert-restore" data-restore-alert="${esc(a.id)}" title="Restore to queue">Restore</button>`
+    : '';
+  return `<div class="ops-alert ops-alert-${a.severity} ops-alert-item${pinned?' pinned':''}${muted?' ops-alert-muted':''}${a.uiState==='snoozed'?' ops-alert-paused':''}${a.uiState==='dismissed'?' ops-alert-dismissed-state':''}" draggable="${a.uiState==='active'?'true':'false'}" data-alert-id="${esc(a.id)}">
     <span class="ops-alert-grip" title="Drag to reorder">⋮⋮</span>
     <div class="ops-alert-icon">${icon}</div>
     <div class="ops-alert-body ops-alert-link" data-ops-link="1" data-ops-pid="${a.practiceId}" data-ops-view="${a.linkView||'roadmap'}"${a.delivId? ` data-ops-deliv="${a.delivId}"`:''}${a.videoId? ` data-ops-video="${a.videoId}"`:''}${a.phase? ` data-ops-phase="${esc(a.phase)}"`:''}${a.milestoneId? ` data-ops-ms="${a.milestoneId}"`:''} role="button" tabindex="0">
-      <div class="ops-alert-practice">${esc(a.practice)}</div>
+      <div class="ops-alert-practice">${esc(a.practice)} ${badge}</div>
       <div class="ops-alert-title">${esc(a.title)}</div>
       <div class="ops-alert-detail">${esc(a.detail)}</div>
+      ${meta}
     </div>
     <div class="ops-alert-actions">
+      ${a.uiState==='active' ? `
       <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}">📌</button>
       <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow">⏸</button>
-      <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss permanently">✕</button>
+      <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss">✕</button>` : `${resumeBtn}${restoreBtn}`}
     </div>
   </div>`;
 }
 function wireOpsAttentionList(root){
   const scope = root || document;
   scope.querySelectorAll('[data-dismiss-alert]').forEach(btn=>{
-    btn.onclick = e=>{
+    btn.onclick = async e=>{
       e.stopPropagation();
-      opsAttentionState.dismissed.add(btn.dataset.dismissAlert);
-      delete opsAttentionState.snoozed[btn.dataset.dismissAlert];
+      const id = btn.dataset.dismissAlert;
+      const ok = await uiDialog({
+        title:'Dismiss this item?',
+        body:'Are you sure you want to dismiss this item? You can restore it from the bottom of the list.',
+        confirmLabel:'Dismiss',
+        cancelLabel:'Cancel',
+        danger:true,
+      });
+      if(!ok) return;
+      opsAttentionState.dismissed.add(id);
+      delete opsAttentionState.snoozed[id];
       saveOpsAttentionState(opsAttentionState);
       renderOperationsDashboard();
     };
@@ -2437,6 +2501,22 @@ function wireOpsAttentionList(root){
       const id = btn.dataset.snoozeAlert;
       opsAttentionState.snoozed[id] = snoozeUntilTomorrow();
       opsAttentionState.dismissed.delete(id);
+      saveOpsAttentionState(opsAttentionState);
+      renderOperationsDashboard();
+    };
+  });
+  scope.querySelectorAll('[data-resume-alert]').forEach(btn=>{
+    btn.onclick = e=>{
+      e.stopPropagation();
+      delete opsAttentionState.snoozed[btn.dataset.resumeAlert];
+      saveOpsAttentionState(opsAttentionState);
+      renderOperationsDashboard();
+    };
+  });
+  scope.querySelectorAll('[data-restore-alert]').forEach(btn=>{
+    btn.onclick = e=>{
+      e.stopPropagation();
+      opsAttentionState.dismissed.delete(btn.dataset.restoreAlert);
       saveOpsAttentionState(opsAttentionState);
       renderOperationsDashboard();
     };
@@ -2455,7 +2535,7 @@ function wireOpsAttentionList(root){
   wireOpsDeepLinks(scope);
   const list = scope.querySelector('.ops-attention-list') || scope;
   let dragId = null;
-  list.querySelectorAll('.ops-alert-item[draggable]').forEach(item=>{
+  list.querySelectorAll('.ops-alert-item[draggable="true"]').forEach(item=>{
     item.addEventListener('dragstart', e=>{
       dragId = item.dataset.alertId;
       item.classList.add('dragging');
@@ -2667,8 +2747,9 @@ function renderOperationsDashboard(){
     return new Date(d.due) < new Date();
   }).length;
   const attentionList = prepareOpsAttentionList(alerts);
-  const needAttentionCount = attentionList.length;
-  const needAttentionClients = new Set(attentionList.map(a=> a.practiceId)).size;
+  const activeAttention = attentionList.filter(a=> a.uiState==='active');
+  const needAttentionCount = activeAttention.length;
+  const needAttentionClients = new Set(activeAttention.map(a=> a.practiceId)).size;
   const cards = [
     { v: practices.length, l:'Active clients', note:'on the roster', tier:'primary' },
     { v: needAttentionCount, l:'Need attention', note: needAttentionCount ? `${needAttentionClients} client${needAttentionClients===1?'':'s'} · ${needAttentionCount} flag${needAttentionCount===1?'':'s'}` : 'nothing flagged', cls: needAttentionCount? 'a':'', tier:'primary' },
@@ -2720,7 +2801,7 @@ function renderOperationsDashboard(){
       <div class="big">${esc(c.v)}</div>
       ${c.trend ? `<div class="ops-trend ${c.trend.cls}">${esc(c.trend.text)}</div>` : ''}
     </div>`).join('');
-  renderOpsCompanyKpi(monthly, viewPeriod);
+  renderOpsCompanyKpi(viewPeriod, isLive);
   // Client overview — unified search + expandable inline edits
   const clientQ = opsClientFilter.trim().toLowerCase();
   let overviewRows = healthRows.filter(r=> opsClientMatchesFilter(r, clientQ));
@@ -2779,12 +2860,15 @@ async function loadOperationsData(force){
   if(opsLoadPromise && !force) return opsLoadPromise;
   opsLoadPromise = (async()=>{
     try{
-      const [practices, deliverables, milestones, videos, kpiRaw, sources] = await Promise.all([
+      const monthStart = new Date(); monthStart.setDate(1); monthStart.setMonth(monthStart.getMonth()-24);
+      const dayCutoff = monthStart.toISOString().slice(0,10);
+      const [practices, deliverables, milestones, videos, kpiRaw, kpiDaily, sources] = await Promise.all([
         sb.from('practices').select('id,name,go_live,workbook_sheet_id,created_at').order('name'),
         sb.from('deliverables').select('id,practice_id,phase,phase_order,name,owner_seat,status,due,delivered_at,status_since,sort'),
         sb.from('milestones').select('id,practice_id,name,status,target_date,completed_on,sort,phase'),
         sb.from('video_pipeline').select('id,practice_id,item,stage,blocked,blocked_reason,stage_since,planned_shoot_date,sort'),
         sb.from('kpi_monthly').select('practice_id,period,source,spend,reach,impr,clicks,cons,proc,updated_at'),
+        sb.from('kpi_daily').select('practice_id,day,source,spend,reach,impr,clicks,updated_at').gte('day', dayCutoff),
         sb.from('sheet_sources').select('practice_id,source,last_status,last_synced_at,tab_name'),
       ]);
       opsData = {
@@ -2793,6 +2877,7 @@ async function loadOperationsData(force){
         milestones: milestones.data||[],
         videos: videos.data||[],
         kpiRaw: kpiRaw.data||[],
+        kpiDailyRaw: kpiDaily.error ? [] : (kpiDaily.data||[]),
         sources: sources.data||[],
       };
       renderOperationsDashboard();
