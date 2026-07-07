@@ -1,8 +1,9 @@
 # ROXIUM Portal · Netlify configuration
-# Static site — no build step needed. Netlify serves the repo root.
+# Run the same bundle step as Cloudflare Pages so version.json + footer SHA stay in sync.
 
 [build]
-  publish = "."
+  command = "bash scripts/prepare-pages.sh"
+  publish = "site"
 
 # Security headers (all routes)
 [[headers]]

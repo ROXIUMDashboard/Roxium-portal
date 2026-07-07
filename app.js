@@ -480,6 +480,7 @@ async function afterLogin(){
   $('whoami').classList.add('editable');
   $('whoami').title = 'Click to edit your name';
   $('whoami').onclick = editMyName;
+  if(me.role === 'team') await initOpsAttentionState();
 
   if(me.role === 'team'){
     const prax = await loadTeamPractices();
@@ -1925,21 +1926,87 @@ let opsCompanyPeriod = null;
 let opsMonthSelApi = null;
 let opsLoadPromise = null;
 let opsChartInstances = [];
-const OPS_ATTN_STORE = 'roxium_ops_attention_v1';
-function loadOpsAttentionState(){
-  try{
-    const raw = JSON.parse(localStorage.getItem(OPS_ATTN_STORE)||'{}');
-    return { dismissed:new Set(raw.dismissed||[]), pinned:raw.pinned||[], order:raw.order||null };
-  }catch(_){ return { dismissed:new Set(), pinned:[], order:null }; }
+const OPS_ATTN_STORE = 'roxium_ops_attention_v2';
+let opsAttnSaveTimer = null;
+let opsAttnServerReady = false;
+function snoozeUntilTomorrow(){
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
 }
-function saveOpsAttentionState(st){
-  try{
-    localStorage.setItem(OPS_ATTN_STORE, JSON.stringify({
-      dismissed:[...st.dismissed], pinned:st.pinned, order:st.order,
-    }));
-  }catch(_){}
+function normalizeOpsAttentionState(raw){
+  const snoozed = { ...(raw?.snoozed || {}) };
+  const now = Date.now();
+  Object.keys(snoozed).forEach(id=>{
+    if(!snoozed[id] || new Date(snoozed[id]).getTime() <= now) delete snoozed[id];
+  });
+  return {
+    dismissed: new Set(raw?.dismissed || []),
+    snoozed,
+    pinned: [...(raw?.pinned || [])],
+    order: raw?.order || null,
+  };
 }
-let opsAttentionState = loadOpsAttentionState();
+function serializeOpsAttentionState(st){
+  return {
+    dismissed: [...st.dismissed],
+    snoozed: st.snoozed,
+    pinned: st.pinned,
+    order: st.order,
+  };
+}
+function loadOpsAttentionStateLocal(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(OPS_ATTN_STORE) || localStorage.getItem('roxium_ops_attention_v1') || '{}');
+    return normalizeOpsAttentionState(raw);
+  }catch(_){ return normalizeOpsAttentionState({}); }
+}
+function saveOpsAttentionState(st, { immediate=false }={}){
+  const payload = serializeOpsAttentionState(st);
+  try{ localStorage.setItem(OPS_ATTN_STORE, JSON.stringify(payload)); }catch(_){}
+  if(!me || me.role !== 'team') return;
+  const push = async ()=>{
+    const { error } = await sb.rpc('set_my_ops_attention_state', { p_state: payload });
+    if(error && !/does not exist|not find/i.test(error.message)) console.warn('[ops] attention save:', error.message);
+    else if(!error) opsAttnServerReady = true;
+  };
+  if(immediate) push();
+  else{
+    clearTimeout(opsAttnSaveTimer);
+    opsAttnSaveTimer = setTimeout(push, 450);
+  }
+}
+async function initOpsAttentionState(){
+  opsAttentionState = loadOpsAttentionStateLocal();
+  if(!me || me.role !== 'team') return;
+  const { data, error } = await sb.rpc('get_my_ops_attention_state');
+  if(error){
+    if(!/does not exist|not find/i.test(error.message)) console.warn('[ops] attention load:', error.message);
+    return;
+  }
+  opsAttnServerReady = true;
+  const server = normalizeOpsAttentionState(data || {});
+  const local = loadOpsAttentionStateLocal();
+  const serverEmpty = !server.dismissed.size && !Object.keys(server.snoozed).length && !server.pinned.length && !server.order;
+  const localHas = local.dismissed.size || Object.keys(local.snoozed).length || local.pinned.length || local.order;
+  if(serverEmpty && localHas){
+    opsAttentionState = local;
+    saveOpsAttentionState(opsAttentionState, { immediate:true });
+  } else {
+    opsAttentionState = server;
+    try{ localStorage.setItem(OPS_ATTN_STORE, JSON.stringify(serializeOpsAttentionState(server))); }catch(_){}
+  }
+}
+function isOpsAlertHidden(id){
+  if(opsAttentionState.dismissed.has(id)) return true;
+  const until = opsAttentionState.snoozed[id];
+  if(!until) return false;
+  if(new Date(until).getTime() > Date.now()) return true;
+  delete opsAttentionState.snoozed[id];
+  return false;
+}
+let opsAttentionState = loadOpsAttentionStateLocal();
 const PHASE_TIMING = {
   0: { warn: 7, red: 14 },
   1: { warn: 11, red: 21 },
@@ -2118,12 +2185,13 @@ function defaultAlertSort(a, b){
 function prepareOpsAttentionList(alerts){
   const activeIds = new Set(alerts.map(opsAlertId));
   [...opsAttentionState.dismissed].forEach(id=>{ if(!activeIds.has(id)) opsAttentionState.dismissed.delete(id); });
+  Object.keys(opsAttentionState.snoozed).forEach(id=>{ if(!activeIds.has(id)) delete opsAttentionState.snoozed[id]; });
   opsAttentionState.pinned = opsAttentionState.pinned.filter(id=> activeIds.has(id));
   if(opsAttentionState.order) opsAttentionState.order = opsAttentionState.order.filter(id=> activeIds.has(id));
   saveOpsAttentionState(opsAttentionState);
   const visible = alerts
     .map(a=> ({ ...a, id: opsAlertId(a) }))
-    .filter(a=> !opsAttentionState.dismissed.has(a.id));
+    .filter(a=> !isOpsAlertHidden(a.id));
   visible.sort((a,b)=>{
     const pa = opsAttentionState.pinned.indexOf(a.id);
     const pb = opsAttentionState.pinned.indexOf(b.id);
@@ -2239,8 +2307,13 @@ function renderOpsCompanyKpi(monthly, viewPeriod){
     </div>
     <div class="chartpanel">
       <div class="charttitle">Impressions over time</div>
-      <div class="chartsub">Combined monthly impressions across the roster (link clicks shown in the KPI card above).</div>
+      <div class="chartsub">Combined monthly impressions across the roster.</div>
       <div class="chartbox"><canvas id="opsChartImpr"></canvas></div>
+    </div>
+    <div class="chartpanel">
+      <div class="charttitle">Link clicks over time</div>
+      <div class="chartsub">Combined monthly link clicks — separate scale for readability.</div>
+      <div class="chartbox"><canvas id="opsChartClicks"></canvas></div>
     </div>`;
   const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
   const baseOpts = {
@@ -2286,6 +2359,22 @@ function renderOpsCompanyKpi(monthly, viewPeriod){
     },
   });
   opsChartInstances.push(imprChart);
+  const clicksChart = new Chart($('opsChartClicks'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'Link clicks', data:monthly.map(r=> N(r,'clicks')), borderColor:'#9A7FB8', backgroundColor:'rgba(154,127,184,.12)', fill:true },
+      ],
+    },
+    options:{ ...baseOpts,
+      plugins:{ ...baseOpts.plugins, tooltip:{ backgroundColor:'rgba(13,12,16,.94)', borderColor:'rgba(201,168,76,.35)', borderWidth:1, titleColor:'#C9A84C', bodyColor:cream } },
+      scales:{ ...baseOpts.scales,
+        y:{ position:'left', beginAtZero:true, ticks:{ color:'#9A7FB8', callback:v=> Number(v).toLocaleString() }, grid:{ color:line } },
+      },
+    },
+  });
+  opsChartInstances.push(clicksChart);
 }
 async function updateOpsRow(table, id, patch){
   const { error } = await sb.from(table).update(patch).eq('id', id);
@@ -2326,7 +2415,8 @@ function renderOpsAlertItem(a){
     </div>
     <div class="ops-alert-actions">
       <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}">📌</button>
-      <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss">✕</button>
+      <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow">⏸</button>
+      <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss permanently">✕</button>
     </div>
   </div>`;
 }
@@ -2336,6 +2426,17 @@ function wireOpsAttentionList(root){
     btn.onclick = e=>{
       e.stopPropagation();
       opsAttentionState.dismissed.add(btn.dataset.dismissAlert);
+      delete opsAttentionState.snoozed[btn.dataset.dismissAlert];
+      saveOpsAttentionState(opsAttentionState);
+      renderOperationsDashboard();
+    };
+  });
+  scope.querySelectorAll('[data-snooze-alert]').forEach(btn=>{
+    btn.onclick = e=>{
+      e.stopPropagation();
+      const id = btn.dataset.snoozeAlert;
+      opsAttentionState.snoozed[id] = snoozeUntilTomorrow();
+      opsAttentionState.dismissed.delete(id);
       saveOpsAttentionState(opsAttentionState);
       renderOperationsDashboard();
     };
