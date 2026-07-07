@@ -404,17 +404,27 @@ async function showBuildVersion(){
   }catch(_){}
 }
 
+// Capture a practice invite link (?join=CODE) so it survives the magic-link round trip.
+try{ const _jc = new URL(location.href).searchParams.get('join'); if(_jc) localStorage.setItem('roxium_join', _jc.trim()); }catch(_){}
+
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
   if(!email) return;
-  // Allowlisted emails (practice_invites) or existing auth users may sign in / sign up.
-  const { data: allowed } = await sb.rpc('email_is_invited', { p_email: email });
+  // Allowlisted emails, existing users, a registered domain, OR a valid practice
+  // invite link (?join=CODE) may sign in / sign up.
+  let { data: allowed } = await sb.rpc('email_is_invited', { p_email: email });
+  const joinCode = (localStorage.getItem('roxium_join') || '').trim();
+  if(!allowed && joinCode){
+    const { data: jpid } = await sb.rpc('join_code_practice', { p_code: joinCode });
+    allowed = !!jpid;
+  }
+  const redirectTo = location.origin + (joinCode ? '/?join=' + encodeURIComponent(joinCode) : '');
   const { error } = await sb.auth.signInWithOtp({
-    email, options:{ emailRedirectTo: location.origin, shouldCreateUser: !!allowed }
+    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: !!allowed }
   });
   $('loginMsg').textContent = error
     ? (!allowed
-        ? "That email isn't set up for access yet. Ask your ROXIUM lead to add you or your company's email domain."
+        ? "That email isn't set up for access yet. Ask your ROXIUM lead for an invite link, or to add you."
         : error.message)
     : allowed
       ? 'Check your email for the sign-in link.'
@@ -457,7 +467,13 @@ async function afterLogin(){
   authEmail = _user?.email || '';
 
   // Claim any pending allowlist invites on every sign-in (first signup or added to another practice).
-  const { data: claim } = await sb.rpc('claim_invites_for_user');
+  let { data: claim } = await sb.rpc('claim_invites_for_user');
+  // Redeem a practice invite link (?join=CODE) if no explicit invite/domain matched.
+  const joinCode = (localStorage.getItem('roxium_join') || '').trim();
+  if((!claim || !claim.claimed) && joinCode){
+    const { data: joinedPid } = await sb.rpc('join_practice_by_code', { p_code: joinCode });
+    if(joinedPid){ localStorage.removeItem('roxium_join'); claim = { ok:true, claimed:1, practice_id:joinedPid }; }
+  }
 
   let { data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single();
   if(error || !prof){
@@ -3284,6 +3300,25 @@ $('btnInvite').onclick = async ()=>{
     onbFlash('Invite failed: '+(e.message||e)+(sendEmail ? ' (is invite-user deployed?)' : ''));
   }finally{ $('btnInvite').disabled = false; }
 };
+
+async function showJoinLink(regenerate){
+  if(!isTeamView()) return;
+  const pid = $('accessPractice').value;
+  const msg = $('joinLinkMsg');
+  if(!pid){ if(msg) msg.textContent = 'Select a practice above first.'; return; }
+  const rpc = regenerate ? 'rotate_practice_join_code' : 'practice_join_link';
+  const { data: code, error } = await sb.rpc(rpc, { p_practice: pid });
+  if(error || !code){ if(msg) msg.textContent = 'Could not create link: ' + (error?.message || 'unknown error'); return; }
+  const link = `${location.origin}/?join=${code}`;
+  let copied = false;
+  try{ await navigator.clipboard.writeText(link); copied = true; }catch(_){}
+  if(msg) msg.textContent = `${copied ? 'Copied — ' : ''}Invite link: ${link}  ·  Share it with anyone; they sign in with any email and join this practice.`;
+}
+$('btnCopyJoinLink')?.addEventListener('click', ()=> showJoinLink(false));
+$('btnRotateJoinLink')?.addEventListener('click', async ()=>{
+  if(!await uiConfirm('Reset invite link', 'The current link will stop working and a new one is generated. Continue?')) return;
+  showJoinLink(true);
+});
 
 $('btnDeleteAccessClient')?.addEventListener('click', async ()=>{
   if(!isTeamView()) return;

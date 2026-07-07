@@ -232,6 +232,12 @@
             <button class="btn ghost sm" id="btnInvite">Send invite</button>
           </div>
         </div>
+        <p class="note" style="margin-top:6px"><b>Or share a self-service invite link</b> — works with any email (gmail, etc.). Anyone who opens it and signs in joins the selected practice; no per-person approval.</p>
+        <div class="invite-entry" style="align-items:center;gap:8px">
+          <button class="btn ghost sm" id="btnCopyJoinLink">Copy invite link for selected practice</button>
+          <button class="btn ghost sm" id="btnRotateJoinLink" title="Invalidate the old link and generate a new one">Reset link</button>
+        </div>
+        <div id="joinLinkMsg" class="note" style="word-break:break-all"></div>
         <div id="accessRoster" class="roster"></div>
         <div class="access-delete-row">
           <button class="btn ghost sm danger" id="btnDeleteAccessClient">Delete selected client</button>
