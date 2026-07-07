@@ -80,6 +80,7 @@ const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_
 let me = null;            // profile row
 let authEmail = '';       // signed-in user's email (display-name fallback)
 let myMembership = null;    // current practice membership { role: owner|member }
+let pendingLoginEmail = ''; // email awaiting a typed 6-digit code (Outlook fallback)
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
 // Selected reporting month is scoped PER PRACTICE so one client's choice can never
@@ -424,14 +425,33 @@ $('btnLogin').onclick = async ()=>{
   const { error } = await sb.auth.signInWithOtp({
     email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: !!allowed }
   });
-  $('loginMsg').textContent = error
-    ? (!allowed
-        ? "That email isn't set up for access yet. Ask your ROXIUM lead for an invite link, or to add you."
-        : error.message)
-    : allowed
-      ? 'Check your email for the sign-in link.'
+  if(!error && allowed){
+    // Reveal the typed-code path: Outlook's link scanner can consume or delay the
+    // one-time magic link, so a code the user types is the reliable fallback.
+    pendingLoginEmail = email;
+    $('loginCodeRow')?.classList.remove('hidden');
+    $('loginMsg').textContent = 'Check your email for the sign-in link — or type the 6-digit code from that email below.';
+  } else {
+    $('loginMsg').textContent = error
+      ? (!allowed
+          ? "That email isn't set up for access yet. Ask your ROXIUM lead for an invite link, or to add you."
+          : error.message)
       : "If this email was invited, you'll receive a link shortly.";
+  }
 };
+
+$('btnVerifyCode')?.addEventListener('click', async ()=>{
+  const token = ($('loginCode').value || '').replace(/\D/g, '').trim();
+  const email = pendingLoginEmail || $('loginEmail').value.trim();
+  if(!email || token.length < 6){ $('loginMsg').textContent = 'Enter the 6-digit code from your email.'; return; }
+  $('btnVerifyCode').disabled = true; $('loginMsg').textContent = 'Verifying…';
+  // Magic-link codes are type 'email'; invite emails are type 'invite' — try both.
+  let { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  if(error){ const r = await sb.auth.verifyOtp({ email, token, type: 'invite' }); if(!r.error) error = null; }
+  $('btnVerifyCode').disabled = false;
+  if(error){ $('loginMsg').textContent = 'That code did not work (it may have expired — send a new link): ' + error.message; return; }
+  // Success: onAuthStateChange fires boot(); nothing else to do here.
+});
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 
 async function loadMyMembership(){

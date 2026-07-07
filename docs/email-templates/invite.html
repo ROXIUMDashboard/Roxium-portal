@@ -31,8 +31,13 @@
           </td>
         </tr></table>
       </td></tr>
-      <!-- fallback -->
-      <tr><td style="padding:6px 44px 4px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A857A;">
+      <!-- typed-code fallback: reliable when Outlook blocks/rewrites the button -->
+      <tr><td align="center" style="padding:12px 44px 2px;font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#4A463E;">
+        Or type this code at <a href="{{ .SiteURL }}" style="color:#9A7B2E;">{{ .SiteURL }}</a>:
+        <div style="margin:8px auto 0;font-family:Georgia,'Times New Roman',serif;font-size:26px;letter-spacing:8px;color:#0D0C10;">{{ .Token }}</div>
+      </td></tr>
+      <!-- link fallback -->
+      <tr><td style="padding:10px 44px 4px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A857A;">
         If the button doesn't work, copy and paste this link:<br>
         <a href="{{ .ConfirmationURL }}" style="color:#9A7B2E;word-break:break-all;">{{ .ConfirmationURL }}</a>
       </td></tr>
