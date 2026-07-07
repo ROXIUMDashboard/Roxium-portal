@@ -1,6 +1,6 @@
 /* ============================================================
    ROXIUM CLIENT PORTAL · app.js
-   Front end: Netlify (static) · Backend: Supabase (auth + db + RLS)
+   Front end: Cloudflare Pages (static) · Backend: Supabase (auth + db + RLS)
    ============================================================ */
 
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);

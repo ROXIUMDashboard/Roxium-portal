@@ -1,15 +1,14 @@
 name: Deploy Portal to Cloudflare Pages
 
-# Single deploy path for production static assets.
+# The ONE production deploy path for the static portal.
 # Run scripts/prepare-pages.sh → upload site/ (never the raw repo root).
 #
 # Requires GitHub secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 #
-# If Cloudflare Git is also connected to this repo, set:
-#   Build command: bash scripts/prepare-pages.sh
-#   Build output:  site
-#   Deploy command (Workers): npx wrangler deploy
-# See docs/DEPLOYMENT.md — do NOT deploy the repo root (directory ".").
+# Do NOT also connect this repo as a Cloudflare dashboard "Git integration" (Pages or
+# Workers). A second auto-build races this Action for the project `roxium-portal` and
+# produces preview-only / stale deploys. The Cloudflare Worker path was removed
+# (wrangler.jsonc / .assetsignore deleted). See docs/DEPLOYMENT.md.
 on:
   push:
     branches: [main]
