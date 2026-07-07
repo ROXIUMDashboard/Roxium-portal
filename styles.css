@@ -317,6 +317,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-trend.up{color:var(--green)}
 .ops-trend.down{color:var(--red)}
 .ops-trend.flat{color:var(--muted)}
+.ops-trend-note{color:var(--muted);font-size:10px}
 .ops-kpi{background:var(--ink);border:1px solid var(--line);padding:12px;border-radius:3px}
 .ops-kpi-v{font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--cream);font-variant-numeric:tabular-nums}
 .ops-kpi-l{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}

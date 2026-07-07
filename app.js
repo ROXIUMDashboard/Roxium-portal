@@ -139,6 +139,8 @@ const periodLabel = p => p
   : '';
 const currentPeriod = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; };
 const KPI_SOURCE = 'marketing'; // the source the team form reads/writes; other sources land via imports
+const ALL_MONTHS = '__all__';   // reporting picker sentinel — month-over-month trend view
+const isAllMonthsSel = sel => sel === ALL_MONTHS;
 
 // True only when the real user is team AND not previewing the client view.
 function isTeamView(){ return me && me.role === 'team' && !previewMode; }
@@ -657,6 +659,24 @@ function clientDailyRows(){
 function opsDailyRows(){
   return (opsData?.kpiDailyRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
 }
+function buildMonthlyChartSeries(rows){
+  return [...rows].sort((a,b)=> String(a.period).localeCompare(String(b.period)))
+    .map(r=> ({
+      label: periodLabel(r.period),
+      period: r.period,
+      spend: N(r,'spend'), reach: N(r,'reach'), impr: N(r,'impr'), clicks: N(r,'clicks'),
+    }));
+}
+function summarizeKpiRange(rows){
+  const sorted = [...rows].sort((a,b)=> String(a.period).localeCompare(String(b.period)));
+  const latest = sorted[sorted.length-1] || null;
+  const prev = sorted.length > 1 ? sorted[sorted.length-2] : null;
+  const totals = { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0, lpv:0, page_engagement:0, page_likes:0, foll:0 };
+  sorted.forEach(r=>{
+    for(const k of Object.keys(totals)) totals[k] = (totals[k]||0) + (N(r,k)||0);
+  });
+  return { totals, latest, prev, monthCount: sorted.length };
+}
 function aggregateOpsDailyByDay(rows, viewPeriod, isLive){
   const cal = monthDayCalendar(viewPeriod);
   const byDay = new Map();
@@ -769,24 +789,31 @@ function bindInvestFilters(scope, canvasId){
   });
   syncInvestFilterButtons(panel);
 }
-function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, headTitle, headNote, chartTitle, chartSub }){
+function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, headTitle, headNote, chartTitle, chartSub, mode='daily' }){
   if(!wrap || typeof Chart==='undefined'){ if(wrap) wrap.classList.add('hidden'); return; }
-  if(!viewPeriod || !series.length){
+  if(!series.length){
     wrap.classList.add('hidden'); wrap.innerHTML=''; return;
   }
   const hasData = series.some(d=> INVEST_SERIES.some(s=> d[s.field]!=null));
   wrap.classList.remove('hidden');
   const labels = series.map(d=> d.label);
-  const hiIdx = isLive ? Math.max(0, series.findIndex(d=> d.spend!=null || d.reach!=null || d.impr!=null || d.clicks!=null)) : series.length-1;
-  const liveNote = isLive ? ' · live daily sync' : ' · archived month-end snapshot';
+  const hiIdx = mode==='monthly'
+    ? series.length - 1
+    : (isLive ? Math.max(0, series.findIndex(d=> d.spend!=null || d.reach!=null || d.impr!=null || d.clicks!=null)) : series.length-1);
+  const modeNote = mode==='monthly'
+    ? ' · month-over-month trend'
+    : (isLive ? ' · live daily sync' : ' · archived month-end snapshot');
+  const noDataNote = mode==='monthly'
+    ? ' · No monthly KPI data yet.'
+    : ' · No daily rows yet — run Sync after applying the kpi_daily migration.';
   wrap.innerHTML = `
     <div class="kpi-charts-head">
       <span class="chanlabel">${esc(headTitle)}</span>
-      <span class="note">${esc(headNote)}${liveNote}</span>
+      <span class="note">${esc(headNote)}${modeNote}</span>
     </div>
     <div class="chartpanel chartpanel-invest">
       <div class="charttitle">${esc(chartTitle)}</div>
-      <div class="chartsub">${esc(chartSub)}${hasData ? '' : ' · No daily rows yet — run Sync after applying the kpi_daily migration.'}</div>
+      <div class="chartsub">${esc(chartSub)}${hasData ? '' : noDataNote}</div>
       <div class="chart-filters" role="group" aria-label="Chart metrics">${INVEST_SERIES.map(s=>`
         <button type="button" class="chart-filter${investMetricEnabled[s.key]?' on':''}" data-metric="${s.key}" aria-pressed="${investMetricEnabled[s.key]?'true':'false'}">
           <span class="cf-box" style="--cf:${s.color}"></span><span class="cf-label">${esc(s.label)}</span>
@@ -807,14 +834,25 @@ function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, he
   kpiChartInstances.push(chart);
   bindInvestFilters(wrap, canvasId);
 }
-function renderKpiCharts(viewPeriod, isLive){
+function renderKpiCharts(viewPeriod, isLive, { allMonths=false }={}){
   destroyKpiCharts();
   const wrap = $('kpiCharts');
   if(!wrap) return;
-  const series = buildDailyChartSeries(clientDailyRows(), viewPeriod, isLive);
   const chanLbl = getChan()==='all' ? 'All channels' : channelLabel(getChan());
+  if(allMonths){
+    const series = buildMonthlyChartSeries(data.kpi||[]);
+    renderInvestChartPanel({
+      wrap, canvasId:'chartInvest', series, viewPeriod:ALL_MONTHS, isLive:false, mode:'monthly',
+      headTitle:'Are we improving?',
+      headNote:`${chanLbl} · ${series.length} month${series.length===1?'':'s'}`,
+      chartTitle:'Investment & performance',
+      chartSub:'Monthly trend across all reported months — select a month to drill into daily detail.',
+    });
+    return;
+  }
+  const series = buildDailyChartSeries(clientDailyRows(), viewPeriod, isLive);
   renderInvestChartPanel({
-    wrap, canvasId:'chartInvest', series, viewPeriod, isLive,
+    wrap, canvasId:'chartInvest', series, viewPeriod, isLive, mode:'daily',
     headTitle:'Are we improving?',
     headNote:`${chanLbl} · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
     chartTitle:'Investment & performance',
@@ -843,25 +881,34 @@ function render(){
   //              can enter that month's data); label says it's empty
   //      client → fall back to the latest archived snapshot (intended behaviour)
   const sel = getSel();
+  const allMonthsView = isAllMonthsSel(sel);
   let viewPeriod, emptySelected = false;
-  if(sel==null) viewPeriod = latestPeriod;
+  if(allMonthsView) viewPeriod = latestPeriod;
+  else if(sel==null) viewPeriod = latestPeriod;
   else if(hasData(sel)) viewPeriod = sel;
   else if(isTeamView()){ viewPeriod = sel; emptySelected = true; }
   else viewPeriod = latestPeriod;
-  const latest = (!emptySelected && viewPeriod!=null) ? data.kpi.find(x=>x.period===viewPeriod) : null;
+  const latest = (!emptySelected && !allMonthsView && viewPeriod!=null) ? data.kpi.find(x=>x.period===viewPeriod) : null;
   // the snapshot immediately before the viewed one — used for trend comparison
   const prev = latest ? reported.find(x=> x.period < latest.period) : null;
-  const isLive = !emptySelected && viewPeriod===latestPeriod;
-  $('updated').textContent = emptySelected
-    ? `No KPI data for ${periodLabel(viewPeriod)} yet — enter it in the Team tab and Save.`
-    : latest
-      ? `Showing ${periodLabel(latest.period)}${isLive?' (live)':' (archived snapshot)'} · KPI data live from Supabase`
-      : 'KPI data will appear here after the first month is reported.';
+  const isLive = !allMonthsView && !emptySelected && viewPeriod===latestPeriod;
+  const rangeSummary = allMonthsView ? summarizeKpiRange(data.kpi) : null;
+  $('updated').textContent = allMonthsView
+    ? (rangeSummary?.monthCount
+      ? `All months · ${rangeSummary.monthCount} reported month${rangeSummary.monthCount===1?'':'s'} · cards total the full range · trends compare latest vs previous month`
+      : 'No KPI data yet across any month.')
+    : emptySelected
+      ? `No KPI data for ${periodLabel(viewPeriod)} yet — enter it in the Team tab and Save.`
+      : latest
+        ? `Showing ${periodLabel(latest.period)}${isLive?' (live)':' (archived snapshot)'} · KPI data live from Supabase`
+        : 'KPI data will appear here after the first month is reported.';
   // build the month selector (latest + any reported months, + the empty month if team is on one)
-  buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected);
+  buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected, allMonthsView);
   // build the channel selector (only when this practice has more than one ad channel)
   buildChannelPicker();
-  $('kpiSub').textContent = emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
+  $('kpiSub').textContent = allMonthsView
+    ? (rangeSummary?.monthCount ? `All ${rangeSummary.monthCount} reported months — monthly trend view.` : 'No months reported yet.')
+    : emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
     : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
   // hero stats — real ad metrics (spend / reach / link clicks) + project progress
@@ -896,37 +943,57 @@ function render(){
   // KPI cards + status board — driven by the real ad metric model; only metrics
   // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
-    renderKpiCharts(viewPeriod, isLive);
+    renderKpiCharts(viewPeriod, isLive, { allMonths: allMonthsView });
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
       clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
-    // delta vs the previous month's snapshot; lowerBetter flips colour for cost metrics
+    const rangeSubs = {spend:'total across all months', reach:'total unique people', impr:'total impressions',
+      clicks:'total link clicks', ctr:'avg across full range', cpm:'avg across full range', cpc:'avg across full range'};
+    const trendVs = allMonthsView ? 'previous month' : (prev ? periodLabel(prev.period) : '');
     const trend = (cur, before, opts={})=>{
       if(before==null || cur==null || !isFinite(+before) || !isFinite(+cur) || +before===0) return '';
       const pct = (cur-before)/Math.abs(before)*100;
-      if(Math.abs(pct)<0.5) return `<div class="trend flat">±0% vs ${periodLabel(prev.period)}</div>`;
+      if(Math.abs(pct)<0.5) return `<div class="trend flat">±0% vs ${esc(trendVs)}</div>`;
       const up = pct>0, good = opts.lowerBetter ? !up : up;
-      return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}% vs ${periodLabel(prev.period)}</div>`;
+      const sign = up ? '+' : '-';
+      return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${sign}${Math.abs(pct).toFixed(1)}% vs ${esc(trendVs)}</div>`;
     };
-    // month-aware green sublabel for each card: 'this month' (live) or 'in March' (snapshot)
-    const cardNote = latest ? monthNote(latest.period, isLive) : '';
+    const cardNote = allMonthsView
+      ? (rangeSummary?.monthCount ? `across ${rangeSummary.monthCount} months` : '')
+      : (latest ? monthNote(latest.period, isLive) : '');
+    const metricRow = allMonthsView ? rangeSummary?.totals : latest;
+    const trendRow = allMonthsView ? rangeSummary?.latest : latest;
+    const trendPrev = allMonthsView ? rangeSummary?.prev : prev;
     const cards = CORE_METRICS.map(def=>{
-      const v = latest ? metricValue(def, latest) : null;
-      if(v==null) return null;                                   // omit metrics with no source data
-      const bv = prev ? metricValue(def, prev) : null;
+      const v = metricRow ? metricValue(def, metricRow) : null;
+      if(v==null) return null;
+      const bv = trendRow && trendPrev ? metricValue(def, trendPrev) : null;
       const info = METRIC_INFO[def.k]
         ? `<button class="metricinfo" type="button" data-metric="${def.k}" title="What is ${def.label}?" aria-label="What is ${def.label}?">ⓘ</button>` : '';
+      const sub = allMonthsView ? (rangeSubs[def.k]||'') : (subtitles[def.k]||'');
       return `<div class="card"><div class="k">${def.label}${info}</div><div class="big">${def.fmt(v)}</div>`+
-        `<div class="tgt">${subtitles[def.k]||''}</div><div class="mnote g">${cardNote}</div>${trend(v, bv, {lowerBetter:def.lowerBetter})}</div>`;
+        `<div class="tgt">${sub}</div><div class="mnote g">${cardNote}</div>${trend(metricValue(def, trendRow), bv, {lowerBetter:def.lowerBetter})}</div>`;
     }).filter(Boolean);
+    if(allMonthsView && rangeSummary?.totals){
+      [['cons','Total consults',fmtNum],['proc','Total procedures',fmtNum]].forEach(([k,l,fmt])=>{
+        const v = N(rangeSummary.totals,k);
+        if(v==null || v===0) return;
+        const bv = rangeSummary.prev ? N(rangeSummary.prev,k) : null;
+        const cv = rangeSummary.latest ? N(rangeSummary.latest,k) : null;
+        cards.push(`<div class="card"><div class="k">${l}</div><div class="big">${fmt(v)}</div>`+
+          `<div class="tgt">total across all months</div><div class="mnote g">across ${rangeSummary.monthCount} months</div>`+
+          `${trend(cv, bv)}</div>`);
+      });
+    }
     $('kpiCards').innerHTML = cards.length ? cards.join('')
-      : `<div class="note">No ad performance data for this month yet — it syncs automatically from the reporting sheet.</div>`;
+      : `<div class="note">${allMonthsView ? 'No ad performance data across any month yet.' : 'No ad performance data for this month yet — it syncs automatically from the reporting sheet.'}</div>`;
     // wire the ⓘ info buttons (client-facing metric explanations, themed popover)
     $('kpiCards').querySelectorAll('.metricinfo').forEach(b=>
       b.onclick = (e)=>{ e.stopPropagation(); openMetricInfo(b.dataset.metric); });
 
     // secondary: optional ad metrics, shown only when present
-    const rows = (latest ? OPTIONAL_METRICS : []).map(def=>{
-      const v = metricValue(def, latest); if(v==null) return null;
+    const optionalSource = allMonthsView ? rangeSummary?.totals : latest;
+    const rows = (optionalSource ? OPTIONAL_METRICS : []).map(def=>{
+      const v = metricValue(def, optionalSource); if(v==null) return null;
       return `<div class="srow"><span class="n">${def.label}</span><span class="s g">${def.fmt(v)}</span></div>`;
     }).filter(Boolean);
     $('statusBoard').innerHTML = rows.join('');
@@ -968,20 +1035,20 @@ function render(){
 /* Month selector for performance metrics: 'Latest (live)' + each reported month snapshot.
    Drives the per-practice selection (setSel). emptySelected adds a transient option so
    the dropdown stays in sync when the team sits on a month that has no data yet. */
-function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected){
+function buildMetricsPicker(reported, viewPeriod, latestPeriod, emptySelected, allMonthsView){
   const mount = $('metricsPicker');
   if(!mount) return;
   if(!reported.length && !emptySelected){ mount.style.display='none'; return; }
   mount.style.display='';
-  // 'Latest (live)' + each reported month, newest → oldest
-  const opts = [{ value:'', label:'Latest month (live)' }]
+  const opts = [{ value:ALL_MONTHS, label:'All Months' }]
     .concat(reported.slice().sort((a,b)=> a.period<b.period?1:a.period>b.period?-1:0).map(r=>
       ({ value:r.period, label:`${periodLabel(r.period)}${r.period===latestPeriod?' (latest)':''}` })));
   if(emptySelected) opts.push({ value:viewPeriod, label:`${periodLabel(viewPeriod)} (no data yet)` });
-  const cur = getSel(); const val = (cur!=null) ? String(cur) : '';
+  const cur = getSel();
+  const val = allMonthsView ? ALL_MONTHS : (cur!=null ? String(cur) : (latestPeriod ? String(latestPeriod) : ''));
   if(!metricsSelApi || metricsSelApi._mount !== mount){
-    metricsSelApi = themedSelect(mount, { options:opts, value:val, placeholder:'Latest month (live)',
-      onChange:(v)=>{ setSel(v===''? null : v); render(); } });
+    metricsSelApi = themedSelect(mount, { options:opts, value:val, placeholder:'Reporting month',
+      onChange:(v)=>{ setSel(v===ALL_MONTHS ? ALL_MONTHS : v); render(); } });
     metricsSelApi._mount = mount;
   } else {
     metricsSelApi.setOptions(opts); metricsSelApi.setValue(val);
@@ -2348,13 +2415,25 @@ function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, vide
 }
 function openOpsClient(pid){ openOpsDeepLink({ practiceId: pid, view: 'roadmap' }); }
 function destroyOpsCharts(){ destroyKpiCharts(); }
-function renderOpsCompanyKpi(viewPeriod, isLive){
+function renderOpsCompanyKpi(viewPeriod, isLive, { allMonths=false }={}){
   destroyOpsCharts();
   const wrap = $('opsKpiCharts');
   if(!wrap) return;
+  if(allMonths){
+    const monthly = aggregateCompanyKpiByMonth(opsData?.kpiRaw||[]);
+    const series = buildMonthlyChartSeries(monthly);
+    renderInvestChartPanel({
+      wrap, canvasId:'opsChartInvest', series, viewPeriod:ALL_MONTHS, isLive:false, mode:'monthly',
+      headTitle:'Company trend',
+      headNote:`All clients · Meta/marketing · ${series.length} month${series.length===1?'':'s'}`,
+      chartTitle:'Investment & performance',
+      chartSub:'Monthly company-wide rollup — select a month to drill into daily detail.',
+    });
+    return;
+  }
   const series = aggregateOpsDailyByDay(opsDailyRows(), viewPeriod, isLive);
   renderInvestChartPanel({
-    wrap, canvasId:'opsChartInvest', series, viewPeriod, isLive,
+    wrap, canvasId:'opsChartInvest', series, viewPeriod, isLive, mode:'daily',
     headTitle:'Company trend',
     headNote:`All clients · Meta/marketing · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
     chartTitle:'Investment & performance',
@@ -2384,27 +2463,29 @@ function aggregateCompanyKpiByMonth(kpiRaw){
       return row;
     });
 }
-function opsKpiTrend(cur, prev, key, { lowerBetter=false }={}){
+function opsKpiTrend(cur, prev, key, { lowerBetter=false, decimals=0 }={}){
   const c = N(cur,key), p = prev ? N(prev,key) : null;
   if(c==null || p==null || !isFinite(+p) || +p===0) return null;
   const pct = (c-p)/Math.abs(p)*100;
-  if(Math.abs(pct) < 0.5) return { text:'±0%', cls:'flat' };
+  if(Math.abs(pct) < 0.5) return { text:'±0%', cls:'flat', note:'vs previous month' };
   const up = pct > 0;
   const good = lowerBetter ? !up : up;
-  return { text:`${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}%`, cls: good ? 'up' : 'down' };
+  const sign = up ? '+' : '-';
+  return { text:`${up?'▲':'▼'} ${sign}${Math.abs(pct).toFixed(decimals)}%`, cls: good ? 'up' : 'down', note:'vs previous month' };
 }
 function buildOpsMonthPicker(monthly, viewPeriod, latestPeriod){
   const mount = $('opsKpiMonthPicker');
   if(!mount) return;
   if(!monthly.length){ mount.innerHTML = ''; return; }
-  const opts = monthly.slice().reverse().map(r=> ({
-    value: r.period,
-    label: `${periodLabel(r.period)}${String(r.period)===String(latestPeriod)?' (latest)':''}`,
-  }));
-  const val = viewPeriod || latestPeriod || opts[0]?.value || '';
+  const opts = [{ value:ALL_MONTHS, label:'All Months' }]
+    .concat(monthly.slice().reverse().map(r=> ({
+      value: r.period,
+      label: `${periodLabel(r.period)}${String(r.period)===String(latestPeriod)?' (latest)':''}`,
+    })));
+  const val = isAllMonthsSel(opsCompanyPeriod) ? ALL_MONTHS : (opsCompanyPeriod || latestPeriod || opts[1]?.value || '');
   if(!opsMonthSelApi || opsMonthSelApi._mount !== mount){
     opsMonthSelApi = themedSelect(mount, { options:opts, value:val, placeholder:'Reporting month',
-      onChange:p=>{ opsCompanyPeriod = p || null; renderOperationsDashboard(); } });
+      onChange:p=>{ opsCompanyPeriod = p; renderOperationsDashboard(); } });
     opsMonthSelApi._mount = mount;
   } else {
     opsMonthSelApi.setOptions(opts);
@@ -2775,33 +2856,41 @@ function renderOperationsDashboard(){
   // KPI rollup — selected reporting month across all clients
   const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
   const latestPeriod = monthly.length ? monthly[monthly.length-1].period : null;
-  const viewPeriod = opsCompanyPeriod || latestPeriod;
+  const allMonthsView = isAllMonthsSel(opsCompanyPeriod);
+  const viewPeriod = allMonthsView ? latestPeriod : (opsCompanyPeriod || latestPeriod);
   const monthIdx = monthly.findIndex(r=> String(r.period)===String(viewPeriod));
   const agg = monthIdx >= 0 ? monthly[monthIdx] : { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0, ctr:null, cpc:null, cpm:null };
   const prevMonth = monthIdx > 0 ? monthly[monthIdx-1] : null;
-  const isLive = latestPeriod && String(viewPeriod)===String(latestPeriod);
+  const isLive = !allMonthsView && latestPeriod && String(viewPeriod)===String(latestPeriod);
+  const rangeSummary = allMonthsView ? summarizeKpiRange(monthly) : null;
   buildOpsMonthPicker(monthly, viewPeriod, latestPeriod);
   $('opsKpiPeriod').textContent = monthly.length
-    ? `${isLive ? 'Live' : 'Archived snapshot'} · ${periodLabel(viewPeriod)} · sum of every client's marketing KPIs for this month`
+    ? (allMonthsView
+      ? `All months · ${rangeSummary?.monthCount||0} reported · company-wide marketing KPIs · trends compare latest vs previous month`
+      : `${isLive ? 'Live' : 'Archived snapshot'} · ${periodLabel(viewPeriod)} · sum of every client's marketing KPIs for this month`)
     : 'No KPI data yet across clients.';
+  const rollup = allMonthsView && rangeSummary ? rangeSummary.totals : agg;
+  const trendCur = allMonthsView && rangeSummary ? rangeSummary.latest : agg;
+  const trendPrev = allMonthsView && rangeSummary ? rangeSummary.prev : prevMonth;
+  const dec = allMonthsView ? 1 : 0;
   const kpiCards = [
-    { l:'Total reach', v: fmtNum(agg.reach), trend: opsKpiTrend(agg, prevMonth, 'reach') },
-    { l:'Total impressions', v: fmtNum(agg.impr), trend: opsKpiTrend(agg, prevMonth, 'impr') },
-    { l:'Total spend', v: fmt$(agg.spend), trend: opsKpiTrend(agg, prevMonth, 'spend', { lowerBetter:true }) },
-    { l:'Link clicks', v: fmtNum(agg.clicks), trend: opsKpiTrend(agg, prevMonth, 'clicks') },
-    { l:'Avg CTR', v: agg.ctr!=null ? fmtP(agg.ctr) : '—', trend: opsKpiTrend(agg, prevMonth, 'ctr') },
-    { l:'Avg CPC', v: agg.cpc!=null ? fmt$(agg.cpc) : '—', trend: opsKpiTrend(agg, prevMonth, 'cpc', { lowerBetter:true }) },
-    { l:'Avg CPM', v: agg.cpm!=null ? fmt$(agg.cpm) : '—', trend: opsKpiTrend(agg, prevMonth, 'cpm', { lowerBetter:true }) },
-    { l:'Total consults', v: fmtNum(agg.cons), trend: opsKpiTrend(agg, prevMonth, 'cons') },
-    { l:'Total procedures', v: fmtNum(agg.proc), trend: opsKpiTrend(agg, prevMonth, 'proc') },
+    { l:'Total reach', v: fmtNum(rollup.reach), trend: opsKpiTrend(trendCur, trendPrev, 'reach', { decimals:dec }) },
+    { l:'Total impressions', v: fmtNum(rollup.impr), trend: opsKpiTrend(trendCur, trendPrev, 'impr', { decimals:dec }) },
+    { l:'Total spend', v: fmt$(rollup.spend), trend: opsKpiTrend(trendCur, trendPrev, 'spend', { lowerBetter:true, decimals:dec }) },
+    { l:'Link clicks', v: fmtNum(rollup.clicks), trend: opsKpiTrend(trendCur, trendPrev, 'clicks', { decimals:dec }) },
+    { l:'Avg CTR', v: (allMonthsView ? (rollup.impr ? rollup.clicks/rollup.impr : null) : agg.ctr)!=null ? fmtP(allMonthsView ? rollup.clicks/rollup.impr : agg.ctr) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'ctr', { decimals:dec }) },
+    { l:'Avg CPC', v: (allMonthsView ? (rollup.clicks ? rollup.spend/rollup.clicks : null) : agg.cpc)!=null ? fmt$(allMonthsView ? rollup.spend/rollup.clicks : agg.cpc) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'cpc', { lowerBetter:true, decimals:dec }) },
+    { l:'Avg CPM', v: (allMonthsView ? (rollup.impr ? rollup.spend/(rollup.impr/1000) : null) : agg.cpm)!=null ? fmt$(allMonthsView ? rollup.spend/(rollup.impr/1000) : agg.cpm) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'cpm', { lowerBetter:true, decimals:dec }) },
+    { l:'Total consults', v: fmtNum(rollup.cons), trend: opsKpiTrend(trendCur, trendPrev, 'cons', { decimals:dec }) },
+    { l:'Total procedures', v: fmtNum(rollup.proc), trend: opsKpiTrend(trendCur, trendPrev, 'proc', { decimals:dec }) },
   ];
   $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
     <div class="card ops-metric ops-metric-secondary">
       <div class="k">${esc(c.l)}</div>
       <div class="big">${esc(c.v)}</div>
-      ${c.trend ? `<div class="ops-trend ${c.trend.cls}">${esc(c.trend.text)}</div>` : ''}
+      ${c.trend ? `<div class="ops-trend ${c.trend.cls}">${esc(c.trend.text)}${c.trend.note ? ` <span class="ops-trend-note">${esc(c.trend.note)}</span>`:''}</div>` : ''}
     </div>`).join('');
-  renderOpsCompanyKpi(viewPeriod, isLive);
+  renderOpsCompanyKpi(viewPeriod, isLive, { allMonths: allMonthsView });
   // Client overview — unified search + expandable inline edits
   const clientQ = opsClientFilter.trim().toLowerCase();
   let overviewRows = healthRows.filter(r=> opsClientMatchesFilter(r, clientQ));
