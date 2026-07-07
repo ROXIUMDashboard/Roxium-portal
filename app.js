@@ -957,12 +957,17 @@ function render(){
 
   // hero stats — real ad metrics (spend / reach / link clicks) + project progress
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
-  const hv = (k)=> latest ? N(latest,k) : null;
-  // month-aware sublabels: 'this month' when live, else month-specific ('in March').
-  const mNote = latest ? monthNote(latest.period, isLive) : 'awaiting data';
+  // Hero source: the viewed month, or the all-months TOTALS when in the range view —
+  // otherwise the cards read null in All-Months and wrongly show "awaiting data".
+  const heroSource = allMonthsView ? (rangeSummary && rangeSummary.monthCount ? rangeSummary.totals : null) : latest;
+  const hv = (k)=> heroSource ? N(heroSource,k) : null;
+  // sublabel: 'this month'/'in March' for a single month, or 'across N months' for the range.
+  const mNote = allMonthsView
+    ? (rangeSummary && rangeSummary.monthCount ? `across ${rangeSummary.monthCount} month${rangeSummary.monthCount===1?'':'s'}` : 'awaiting data')
+    : (latest ? monthNote(latest.period, isLive) : 'awaiting data');
   const heroes = [
     {v: fmt$(hv('spend')),   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: mNote},
-    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: latest? `people reached ${mNote}`:'awaiting data'},
+    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: heroSource? `people reached ${mNote}`:'awaiting data'},
     {v: fmtNum(hv('clicks')),l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: mNote},
     {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
   ];
