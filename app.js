@@ -268,7 +268,6 @@ function syncChrome(){
     t.classList.toggle('active', active);
   });
   $('btnPreview').classList.toggle('hidden', !realTeam || globalTeam);
-  $('btnAddMilestone')?.classList.toggle('hidden', !teamView || globalTeam);
   $('practiceSwitcher').classList.toggle('hidden', !realTeam || ws!=='clients');
   document.querySelector('.hero')?.classList.toggle('hidden', globalTeam);
   $('tabnav').classList.toggle('hidden', globalTeam);
@@ -673,7 +672,7 @@ function clientDailyRows(){
   return chan==='all' ? rows : rows.filter(r=> r.source===chan);
 }
 function opsDailyRows(){
-  return (opsData?.kpiDailyRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
+  return (opsData?.kpiDailyRaw||[]);   // all channels — summed per day downstream
 }
 function buildMonthlyChartSeries(rows){
   return [...rows].sort((a,b)=> String(a.period).localeCompare(String(b.period)))
@@ -738,11 +737,13 @@ function buildInvestChartOptions(highlightIdx, en){
     },
     scales:{
       x:{ ticks:{ color:muted, font:{ family:'Jost', size:10 }, maxRotation:0, autoSkipPadding:8, maxTicksLimit: 16 }, grid:{ color:line } },
-      y:{  type:'linear', position:'left',  beginAtZero:true, display: clicksOnly ? false : leftAxisEnabled(en),
-           ticks:{ color:INVEST_SERIES[0].color, font:{ family:'Jost', size:10 }, maxTicksLimit:6, callback:axisFmt('dollar') },
+      // Both axes use the SAME fixed tick count so every left gridline lines up with a
+      // right-axis label — each value sits exactly on its horizontal grid line.
+      y:{  type:'linear', position:'left',  beginAtZero:true, alignToPixels:true, display: clicksOnly ? false : leftAxisEnabled(en),
+           ticks:{ color:INVEST_SERIES[0].color, font:{ family:'Jost', size:10 }, count:6, callback:axisFmt('dollar') },
            grid:{ color:line } },
-      y1:{ type:'linear', position: clicksOnly ? 'left' : 'right', beginAtZero:true, display: clicksOnly ? true : rightAxisEnabled(en),
-           ticks:{ color: clicksOnly ? INVEST_SERIES[3].color : muted, font:{ family:'Jost', size:10 }, maxTicksLimit:6, callback:axisFmt('num') },
+      y1:{ type:'linear', position: clicksOnly ? 'left' : 'right', beginAtZero:true, alignToPixels:true, display: clicksOnly ? true : rightAxisEnabled(en),
+           ticks:{ color: clicksOnly ? INVEST_SERIES[3].color : muted, font:{ family:'Jost', size:10 }, count:6, callback:axisFmt('num') },
            grid:{ drawOnChartArea: clicksOnly } },
     },
     elements:{
@@ -824,7 +825,7 @@ function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, he
     : ' · No daily rows yet — run Sync after applying the kpi_daily migration.';
   wrap.innerHTML = `
     <div class="kpi-charts-head">
-      <span class="chanlabel">${esc(headTitle)}</span>
+      ${headTitle ? `<span class="chanlabel">${esc(headTitle)}</span>` : ''}
       <span class="note">${esc(headNote)}${modeNote}</span>
     </div>
     <div class="chartpanel chartpanel-invest">
@@ -859,7 +860,7 @@ function renderKpiCharts(viewPeriod, isLive, { allMonths=false }={}){
     const series = buildMonthlyChartSeries(data.kpi||[]);
     renderInvestChartPanel({
       wrap, canvasId:'chartInvest', series, viewPeriod:ALL_MONTHS, isLive:false, mode:'monthly',
-      headTitle:'Are we improving?',
+      headTitle:'',
       headNote:`${chanLbl} · ${series.length} month${series.length===1?'':'s'}`,
       chartTitle:'Investment & performance',
       chartSub:'Monthly trend across all reported months — select a month to drill into daily detail.',
@@ -869,7 +870,7 @@ function renderKpiCharts(viewPeriod, isLive, { allMonths=false }={}){
   const series = buildDailyChartSeries(clientDailyRows(), viewPeriod, isLive);
   renderInvestChartPanel({
     wrap, canvasId:'chartInvest', series, viewPeriod, isLive, mode:'daily',
-    headTitle:'Are we improving?',
+    headTitle:'',
     headNote:`${chanLbl} · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
     chartTitle:'Investment & performance',
     chartSub:'Daily trend for the selected reporting month. Spend ($, left) and reach / impressions (#, right). Link clicks uses its own scale.',
@@ -897,7 +898,8 @@ function render(){
   //              can enter that month's data); label says it's empty
   //      client → fall back to the latest archived snapshot (intended behaviour)
   const sel = getSel();
-  const allMonthsView = isAllMonthsSel(sel);
+  // Default to the All-Months overview until the user explicitly picks a month.
+  const allMonthsView = isAllMonthsSel(sel) || sel==null;
   let viewPeriod, emptySelected = false;
   if(allMonthsView) viewPeriod = latestPeriod;
   else if(sel==null) viewPeriod = latestPeriod;
@@ -1821,6 +1823,17 @@ function closeModal(){ const m=$('modal'); m.classList.remove('open'); m.innerHT
 /* ---- MILESTONES: client timeline + team editable / draggable list ---- */
 const MILE_PHASE_DEFAULT = 'Roadmap';
 function sortedMilestones(){ return [...data.miles].sort((a,b)=>(a.sort||0)-(b.sort||0)); }
+// Displayed milestone status, normalized by sequence so labels stay monotonic: once a
+// later milestone is current/done, every earlier one reads Complete — so a milestone in
+// an early slot can never wrongly show "Up next" after the roadmap has moved past it.
+function milestoneDisplayStatusMap(){
+  const miles = sortedMilestones();
+  let frontier = -1;
+  miles.forEach((m,i)=>{ if(m.status==='done' || m.status==='current') frontier = i; });
+  const map = new Map();
+  miles.forEach((m,i)=> map.set(m.id, i < frontier ? 'done' : i === frontier ? m.status : 'upcoming'));
+  return map;
+}
 function milestonePhases(){
   const phases = [];
   const seen = new Set();
@@ -1841,10 +1854,12 @@ function renderTimeline(isTeam){
 }
 function renderMilestoneClientTimeline(wrap){
   wrap.className = 'timeline';
+  const ds = milestoneDisplayStatusMap();
   wrap.innerHTML = sortedMilestones().map(m=>{
-    const tagLabel = m.status==='done'?'Complete':m.status==='current'?'You are here':'Up next';
+    const st = ds.get(m.id) || m.status;
+    const tagLabel = st==='done'?'Complete':st==='current'?'You are here':'Up next';
     let dateEl = '';
-    if(m.status==='done'){
+    if(st==='done'){
       const dd = m.completed_on || m.target_date;
       if(dd) dateEl = `<span class="tldate-done">✓ Completed ${esc(prettyDate(dd))}</span>`;
     } else if(m.target_date){
@@ -1852,7 +1867,7 @@ function renderMilestoneClientTimeline(wrap){
     }
     const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
     const link = m.link_url ? `<a class="mslink" href="${esc(m.link_url)}" target="_blank" rel="noopener">View link</a>` : '';
-    return `<div class="tl ${m.status}" data-milestone="${m.id}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
+    return `<div class="tl ${st}" data-milestone="${m.id}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
        <div class="d">${esc(m.detail||'')}</div>${prog}${link}
        <span class="tag">${tagLabel}</span>${dateEl}</div>`;
   }).join('');
@@ -1860,11 +1875,12 @@ function renderMilestoneClientTimeline(wrap){
 function renderMilestoneTeamList(wrap){
   wrap.className = 'mslist';
   const phases = milestonePhases();
+  const ds = milestoneDisplayStatusMap();
   wrap.innerHTML = phases.map(phase=>{
     const items = sortedMilestones().filter(m=> ((m.phase||'').trim() || MILE_PHASE_DEFAULT)===phase);
     return `<div class="msphase" data-phase="${esc(phase)}">
       <div class="msphase-head"><span class="chanlabel">${esc(phase)}</span><span class="note">${items.length} milestone${items.length===1?'':'s'}</span></div>
-      <div class="msphase-items">${items.map(m=> milestoneTeamRow(m)).join('')}</div>
+      <div class="msphase-items">${items.map(m=> milestoneTeamRow(m, ds)).join('')}</div>
     </div>`;
   }).join('');
   wrap.querySelectorAll('.msrow[draggable]').forEach(row=>{
@@ -1884,15 +1900,16 @@ function renderMilestoneTeamList(wrap){
     row.querySelector('.msedit')?.addEventListener('click', e=>{ e.stopPropagation(); openMilestoneEditor(row.dataset.id); });
   });
 }
-function milestoneTeamRow(m){
-  const tag = m.status==='done'?'Complete':m.status==='current'?'Current':'Up next';
+function milestoneTeamRow(m, ds){
+  const st = ds ? (ds.get(m.id) || m.status) : m.status;
+  const tag = st==='done'?'Complete':st==='current'?'Current':'Up next';
   const dates = [
     m.target_date ? `Planned ${prettyDate(m.target_date,'month')}` : null,
     m.completed_on ? `Done ${prettyDate(m.completed_on)}` : null,
   ].filter(Boolean).join(' · ');
   const owner = m.owner_seat ? `<span class="msowner">${esc(m.owner_seat)}</span>` : '';
   const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
-  return `<div class="msrow ${m.status}" draggable="true" data-id="${m.id}" data-milestone="${m.id}">
+  return `<div class="msrow ${st}" draggable="true" data-id="${m.id}" data-milestone="${m.id}">
     <span class="grip" title="Drag to reorder">⋮⋮</span>
     <div class="msrow-main">
       <div class="msrow-title">${esc(m.name)} ${owner} ${prog}</div>
@@ -2019,18 +2036,6 @@ async function openMilestoneEditor(id){
     closeModal(); loadAll();
   };
 }
-async function addMilestone(){
-  if(!isTeamView() || !practiceId) return;
-  const name = await uiPrompt('New milestone', 'Add a roadmap milestone for this practice.', '', 'Milestone title');
-  if(name===null || !name.trim()) return;
-  const maxSort = Math.max(0, ...data.miles.map(m=> m.sort||0));
-  const { error } = await sb.from('milestones').insert({
-    practice_id: practiceId, name: name.trim(), detail: null, status: 'upcoming',
-    phase: MILE_PHASE_DEFAULT, sort: maxSort+1, status_manual: true,
-  });
-  flash(error ? error.message : 'Milestone added.'); if(!error) loadAll();
-}
-$('btnAddMilestone')?.addEventListener('click', ()=> addMilestone());
 async function updateMilestoneStatus(id, status){
   const prev = data.miles.find(m=>m.id===id);
   await sb.from('milestones').update({ status }).eq('id', id);
@@ -2118,7 +2123,7 @@ let opsData = null;
 let opsClientFilter = '';
 let opsExpandedClient = null;
 let opsClientSortAsc = true;
-let opsCompanyPeriod = null;
+let opsCompanyPeriod = ALL_MONTHS;   // default the company overview to All-Months
 let opsMonthSelApi = null;
 let opsLoadPromise = null;
 const OPS_ATTN_STORE = 'roxium_ops_attention_v2';
@@ -2441,7 +2446,7 @@ function renderOpsCompanyKpi(viewPeriod, isLive, { allMonths=false }={}){
     renderInvestChartPanel({
       wrap, canvasId:'opsChartInvest', series, viewPeriod:ALL_MONTHS, isLive:false, mode:'monthly',
       headTitle:'Company trend',
-      headNote:`All clients · Meta/marketing · ${series.length} month${series.length===1?'':'s'}`,
+      headNote:`All clients · all channels · ${series.length} month${series.length===1?'':'s'}`,
       chartTitle:'Investment & performance',
       chartSub:'Monthly company-wide rollup — select a month to drill into daily detail.',
     });
@@ -2451,13 +2456,15 @@ function renderOpsCompanyKpi(viewPeriod, isLive, { allMonths=false }={}){
   renderInvestChartPanel({
     wrap, canvasId:'opsChartInvest', series, viewPeriod, isLive, mode:'daily',
     headTitle:'Company trend',
-    headNote:`All clients · Meta/marketing · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
+    headNote:`All clients · all channels · ${periodLabel(viewPeriod)} · days 1–${series.length}`,
     chartTitle:'Investment & performance',
     chartSub:'Daily rollup across the roster for the selected reporting month.',
   });
 }
 function aggregateCompanyKpiByMonth(kpiRaw){
-  const norm = normalizeKpiRows(kpiRaw||[]).filter(r=> sourceKey(r.source)==='marketing');
+  // Sum across EVERY channel/source (Meta + Google + …), not just marketing — one
+  // normalized row per (period, source), then add additive metrics per period.
+  const norm = normalizeKpiRows(kpiRaw||[]);
   const byPeriod = new Map();
   norm.forEach(r=>{
     const key = String(r.period);
@@ -2882,24 +2889,31 @@ function renderOperationsDashboard(){
   buildOpsMonthPicker(monthly, viewPeriod, latestPeriod);
   $('opsKpiPeriod').textContent = monthly.length
     ? (allMonthsView
-      ? `All months · ${rangeSummary?.monthCount||0} reported · company-wide marketing KPIs · trends compare latest vs previous month`
-      : `${isLive ? 'Live' : 'Archived snapshot'} · ${periodLabel(viewPeriod)} · sum of every client's marketing KPIs for this month`)
+      ? `All months · ${rangeSummary?.monthCount||0} reported · company-wide KPIs across all channels · trends compare latest vs previous month`
+      : `${isLive ? 'Live' : 'Archived snapshot'} · ${periodLabel(viewPeriod)} · sum of every client's KPIs across all channels for this month`)
     : 'No KPI data yet across clients.';
   const rollup = allMonthsView && rangeSummary ? rangeSummary.totals : agg;
   const trendCur = allMonthsView && rangeSummary ? rangeSummary.latest : agg;
   const trendPrev = allMonthsView && rangeSummary ? rangeSummary.prev : prevMonth;
   const dec = allMonthsView ? 1 : 0;
+  // Only surface metrics the current dataset actually supports. Core ad metrics
+  // (reach/impr/spend/clicks) always show; derived ratios show when computable;
+  // consults/procedures show only when the data carries them (>0), so we never
+  // display misleading empty/zero rows for metrics the sync doesn't populate.
+  const ctrV = allMonthsView ? (rollup.impr ? rollup.clicks/rollup.impr : null) : agg.ctr;
+  const cpcV = allMonthsView ? (rollup.clicks ? rollup.spend/rollup.clicks : null) : agg.cpc;
+  const cpmV = allMonthsView ? (rollup.impr ? rollup.spend/(rollup.impr/1000) : null) : agg.cpm;
   const kpiCards = [
     { l:'Total reach', v: fmtNum(rollup.reach), trend: opsKpiTrend(trendCur, trendPrev, 'reach', { decimals:dec }) },
     { l:'Total impressions', v: fmtNum(rollup.impr), trend: opsKpiTrend(trendCur, trendPrev, 'impr', { decimals:dec }) },
     { l:'Total spend', v: fmt$(rollup.spend), trend: opsKpiTrend(trendCur, trendPrev, 'spend', { lowerBetter:true, decimals:dec }) },
     { l:'Link clicks', v: fmtNum(rollup.clicks), trend: opsKpiTrend(trendCur, trendPrev, 'clicks', { decimals:dec }) },
-    { l:'Avg CTR', v: (allMonthsView ? (rollup.impr ? rollup.clicks/rollup.impr : null) : agg.ctr)!=null ? fmtP(allMonthsView ? rollup.clicks/rollup.impr : agg.ctr) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'ctr', { decimals:dec }) },
-    { l:'Avg CPC', v: (allMonthsView ? (rollup.clicks ? rollup.spend/rollup.clicks : null) : agg.cpc)!=null ? fmt$(allMonthsView ? rollup.spend/rollup.clicks : agg.cpc) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'cpc', { lowerBetter:true, decimals:dec }) },
-    { l:'Avg CPM', v: (allMonthsView ? (rollup.impr ? rollup.spend/(rollup.impr/1000) : null) : agg.cpm)!=null ? fmt$(allMonthsView ? rollup.spend/(rollup.impr/1000) : agg.cpm) : '—', trend: opsKpiTrend(trendCur, trendPrev, 'cpm', { lowerBetter:true, decimals:dec }) },
-    { l:'Total consults', v: fmtNum(rollup.cons), trend: opsKpiTrend(trendCur, trendPrev, 'cons', { decimals:dec }) },
-    { l:'Total procedures', v: fmtNum(rollup.proc), trend: opsKpiTrend(trendCur, trendPrev, 'proc', { decimals:dec }) },
-  ];
+    ctrV!=null ? { l:'Avg CTR', v: fmtP(ctrV), trend: opsKpiTrend(trendCur, trendPrev, 'ctr', { decimals:dec }) } : null,
+    cpcV!=null ? { l:'Avg CPC', v: fmt$(cpcV), trend: opsKpiTrend(trendCur, trendPrev, 'cpc', { lowerBetter:true, decimals:dec }) } : null,
+    cpmV!=null ? { l:'Avg CPM', v: fmt$(cpmV), trend: opsKpiTrend(trendCur, trendPrev, 'cpm', { lowerBetter:true, decimals:dec }) } : null,
+    N(rollup,'cons') ? { l:'Total consults', v: fmtNum(rollup.cons), trend: opsKpiTrend(trendCur, trendPrev, 'cons', { decimals:dec }) } : null,
+    N(rollup,'proc') ? { l:'Total procedures', v: fmtNum(rollup.proc), trend: opsKpiTrend(trendCur, trendPrev, 'proc', { decimals:dec }) } : null,
+  ].filter(Boolean);
   $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
     <div class="card ops-metric ops-metric-secondary">
       <div class="k">${esc(c.l)}</div>
@@ -3301,24 +3315,6 @@ $('btnInvite').onclick = async ()=>{
   }finally{ $('btnInvite').disabled = false; }
 };
 
-async function showJoinLink(regenerate){
-  if(!isTeamView()) return;
-  const pid = $('accessPractice').value;
-  const msg = $('joinLinkMsg');
-  if(!pid){ if(msg) msg.textContent = 'Select a practice above first.'; return; }
-  const rpc = regenerate ? 'rotate_practice_join_code' : 'practice_join_link';
-  const { data: code, error } = await sb.rpc(rpc, { p_practice: pid });
-  if(error || !code){ if(msg) msg.textContent = 'Could not create link: ' + (error?.message || 'unknown error'); return; }
-  const link = `${location.origin}/?join=${code}`;
-  let copied = false;
-  try{ await navigator.clipboard.writeText(link); copied = true; }catch(_){}
-  if(msg) msg.textContent = `${copied ? 'Copied — ' : ''}Invite link: ${link}  ·  Share it with anyone; they sign in with any email and join this practice.`;
-}
-$('btnCopyJoinLink')?.addEventListener('click', ()=> showJoinLink(false));
-$('btnRotateJoinLink')?.addEventListener('click', async ()=>{
-  if(!await uiConfirm('Reset invite link', 'The current link will stop working and a new one is generated. Continue?')) return;
-  showJoinLink(true);
-});
 
 $('btnDeleteAccessClient')?.addEventListener('click', async ()=>{
   if(!isTeamView()) return;
