@@ -252,9 +252,9 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-head{margin-bottom:22px}
 .ops-head h2{margin-bottom:4px}
 .ops-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:24px}
-.ops-split-balanced{grid-template-columns:1fr 1fr}
-.ops-panel-queue{display:flex;flex-direction:column;min-height:280px}
-.ops-queue-panel{flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-height:200px}
+.ops-panel-attention{margin-bottom:16px}
+.ops-attention-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.ops-attention-list{display:flex;flex-direction:column;gap:8px;min-height:120px}
 .ops-empty-note{margin:auto 0;text-align:center;padding:18px 8px}
 .ops-metric{min-height:108px;display:flex;flex-direction:column;justify-content:flex-start}
 .ops-metric-primary .big{font-size:32px}
@@ -275,8 +275,21 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-panel h3{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--cream);margin:0 0 2px;line-height:1.25}
 .ops-panel-note{margin:0 0 12px;line-height:1.45}
 .ops-queue,.ops-feed{display:flex;flex-direction:column;gap:8px}
-.ops-alert{display:flex;gap:10px;padding:11px 12px;background:var(--ink);border:1px solid var(--line);border-radius:3px;cursor:pointer;transition:border-color .15s ease,transform .12s ease;align-items:flex-start}
-.ops-alert:hover{border-color:rgba(201,168,76,.35);transform:translateX(2px)}
+.ops-alert{display:flex;gap:10px;padding:11px 12px;background:var(--ink);border:1px solid var(--line);border-radius:3px;transition:border-color .15s ease,transform .12s ease;align-items:flex-start}
+.ops-alert-item{align-items:center}
+.ops-alert-item:hover{border-color:rgba(201,168,76,.35)}
+.ops-alert-item.dragging{opacity:.45}
+.ops-alert-item.over{box-shadow:inset 0 2px 0 var(--gold)}
+.ops-alert-item.pinned{border-color:rgba(201,168,76,.45)}
+.ops-alert-grip{color:var(--muted);cursor:grab;font-size:10px;letter-spacing:-2px;user-select:none;flex-shrink:0;padding:0 2px}
+.ops-alert-item:hover .ops-alert-grip{color:var(--gold)}
+.ops-alert-body.ops-alert-link{cursor:pointer;flex:1;min-width:0}
+.ops-alert-body.ops-alert-link:hover .ops-alert-title{color:var(--gold)}
+.ops-alert-actions{display:flex;gap:4px;flex-shrink:0;align-items:center}
+.ops-alert-pin,.ops-alert-dismiss{background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:4px 6px;border-radius:2px}
+.ops-alert-pin:hover,.ops-alert-dismiss:hover{border-color:var(--line);color:var(--gold)}
+.ops-alert-pin.active{color:var(--gold);border-color:rgba(201,168,76,.35)}
+.ops-alert-dismiss:hover{color:var(--red);border-color:rgba(198,106,88,.35)}
 .ops-alert-icon{font-size:14px;line-height:1.2;flex-shrink:0;margin-top:1px}
 .ops-alert-body{display:flex;flex-direction:column;justify-content:center;min-height:44px}
 .ops-alert-practice{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);line-height:1.3}
@@ -286,6 +299,15 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-alert-yellow{border-left:3px solid var(--amber)}
 .ops-alert-green{border-left:3px solid var(--green)}
 .ops-kpi-rollup{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:8px}
+.ops-kpi-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+.ops-kpi-toolbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.ops-kpi-month-field{margin:0}
+.ops-kpi-month-field label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:6px}
+.ops-kpi-month-field .tsel{min-width:200px}
+.ops-trend{margin-top:6px;font-size:11.5px;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.ops-trend.up{color:var(--green)}
+.ops-trend.down{color:var(--red)}
+.ops-trend.flat{color:var(--muted)}
 .ops-kpi{background:var(--ink);border:1px solid var(--line);padding:12px;border-radius:3px}
 .ops-kpi-v{font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--cream);font-variant-numeric:tabular-nums}
 .ops-kpi-l{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
