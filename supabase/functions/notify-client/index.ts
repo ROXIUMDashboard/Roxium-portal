@@ -31,14 +31,28 @@ function escapeHtml(s: string) {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 }
 
-const emailHtml = (message: string) => `
-  <div style="font-family:Arial,Helvetica,sans-serif;background:#0D0C10;padding:32px;color:#F2EDE3">
-    <div style="max-width:520px;margin:0 auto;border:1px solid rgba(201,168,76,.35);border-radius:8px;padding:28px 30px">
-      <div style="letter-spacing:.4em;font-weight:600;color:#F2EDE3">ROX<span style="color:#C9A84C">I</span>UM</div>
-      <p style="font-size:16px;line-height:1.6;margin:22px 0;color:#F2EDE3">${escapeHtml(message)}</p>
-      <p style="font-size:12px;color:#9A948A;margin-top:24px">Sign in to your portal to see the details.</p>
-    </div>
-  </div>`;
+// Branded, Outlook-safe (table + inline CSS) completion notice.
+const emailHtml = (practiceName: string, message: string, whenStr: string, site: string) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0D0C10;margin:0;padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#141218;border:1px solid rgba(201,168,76,.35);border-radius:10px;">
+        <tr><td align="center" style="padding:30px 40px 6px;">
+          <div style="font-family:Georgia,'Times New Roman',serif;letter-spacing:6px;font-size:22px;color:#F2EDE3;">ROX<span style="color:#C9A84C;">I</span>UM</div>
+          <div style="height:2px;width:40px;background:#C9A84C;margin:12px auto 0;"></div>
+        </td></tr>
+        <tr><td align="center" style="padding:18px 44px 0;font-family:Georgia,'Times New Roman',serif;font-size:21px;line-height:1.35;color:#F2EDE3;">Your ROXIUM Portal has been updated</td></tr>
+        ${practiceName ? `<tr><td align="center" style="padding:6px 44px 0;font-family:Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:1.5px;color:#C9A84C;text-transform:uppercase;">${escapeHtml(practiceName)}</td></tr>` : ""}
+        <tr><td style="padding:20px 44px 2px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;color:#F2EDE3;">${escapeHtml(message)}</td></tr>
+        ${whenStr ? `<tr><td style="padding:2px 44px 4px;font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#9A948A;">Completed on ${escapeHtml(whenStr)}</td></tr>` : ""}
+        <tr><td align="center" style="padding:24px 44px 6px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#C9A84C" style="border-radius:6px;">
+            <a href="${escapeHtml(site)}" style="display:inline-block;padding:13px 30px;font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#0D0C10;text-decoration:none;">Review in your portal</a>
+          </td></tr></table>
+        </td></tr>
+        <tr><td style="padding:16px 44px 30px;font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#7C776E;border-top:1px solid rgba(201,168,76,.18);">You're receiving this because your practice uses the ROXIUM portal.</td></tr>
+      </table>
+    </td></tr>
+  </table>`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -58,9 +72,15 @@ Deno.serve(async (req) => {
 
     const RESEND = Deno.env.get("RESEND_API_KEY");
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
+    const SITE = Deno.env.get("SITE_URL") || "https://roxium.com";
+    const when = new Date().toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+      month: "long", day: "numeric", year: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    });
     const sb = serviceClient();
 
-    const { data: practice } = await sb.from("practices").select("id").eq("id", practice_id).maybeSingle();
+    const { data: practice } = await sb.from("practices").select("id, name").eq("id", practice_id).maybeSingle();
     if (!practice) return respond({ ok: false, error: "practice not found" }, 404);
 
     const { data: rows, error } = await sb.rpc("practice_member_emails", { p_id: practice_id });
@@ -72,7 +92,7 @@ Deno.serve(async (req) => {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM, to, subject: SUBJECTS[kind] || "An update from ROXIUM", html: emailHtml(message) }),
+      body: JSON.stringify({ from: FROM, to, subject: SUBJECTS[kind] || "An update from ROXIUM", html: emailHtml((practice as { name?: string }).name || "", message, when, SITE) }),
     });
     if (!res.ok) return respond({ ok: false, error: `resend ${res.status}: ${await res.text()}` }, 502);
     return respond({ ok: true, emailed: to.length });
