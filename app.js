@@ -413,8 +413,8 @@ $('btnLogin').onclick = async ()=>{
     email, options:{ emailRedirectTo: location.origin, shouldCreateUser: !!allowed }
   });
   $('loginMsg').textContent = error
-    ? (/not.*found|signups?.*disabled|user/i.test(error.message)
-        ? "We couldn't find an invite for that email. Ask your ROXIUM lead to add you."
+    ? (!allowed
+        ? "That email isn't set up for access yet. Ask your ROXIUM lead to add you or your company's email domain."
         : error.message)
     : allowed
       ? 'Check your email for the sign-in link.'
