@@ -54,6 +54,20 @@ create table if not exists kpi_monthly (
   unique (practice_id, period, source)
 );
 
+-- Daily KPI snapshots — one row per calendar day per source (Coefficient daily tabs).
+create table if not exists kpi_daily (
+  id uuid primary key default gen_random_uuid(),
+  practice_id uuid not null references practices(id) on delete cascade,
+  day date not null,
+  source text not null default 'marketing',
+  spend numeric, reach numeric, impr numeric, clicks numeric, lpv numeric,
+  page_likes numeric, page_engagement numeric, foll numeric,
+  finalized boolean not null default false,
+  updated_at timestamptz default now(),
+  unique (practice_id, day, source)
+);
+create index if not exists kpi_daily_practice_day_idx on kpi_daily (practice_id, day);
+
 -- Per-client reporting sheet source (one published-CSV per practice).
 create table if not exists sheet_sources (
   id uuid primary key default gen_random_uuid(),
@@ -223,6 +237,7 @@ create unique index if not exists practice_invites_practice_email_uq
 alter table practices      enable row level security;
 alter table profiles       enable row level security;
 alter table kpi_monthly    enable row level security;
+alter table kpi_daily      enable row level security;
 alter table deliverables   enable row level security;
 alter table milestones     enable row level security;
 alter table video_pipeline enable row level security;
@@ -364,6 +379,11 @@ create policy "read kpi"   on kpi_monthly    for select using (is_team() or is_m
 drop policy if exists "team kpi" on kpi_monthly;
 create policy "team kpi"   on kpi_monthly    for all using (is_team()) with check (is_team());
 
+drop policy if exists "read kpi daily" on kpi_daily;
+create policy "read kpi daily" on kpi_daily for select using (is_team() or is_member_of(practice_id));
+drop policy if exists "team kpi daily" on kpi_daily;
+create policy "team kpi daily" on kpi_daily for all using (is_team()) with check (is_team());
+
 drop policy if exists "read deliv" on deliverables;
 create policy "read deliv" on deliverables   for select using (is_team() or is_member_of(practice_id));
 drop policy if exists "team deliv" on deliverables;
@@ -467,6 +487,8 @@ begin
   end if;
   update kpi_monthly set finalized = true
    where finalized = false and period < date_trunc('month', now())::date;
+  update kpi_daily set finalized = true
+   where finalized = false and day < date_trunc('month', now())::date;
 end $$;
 revoke all on function finalize_past_months() from public, anon, authenticated;
 
@@ -506,6 +528,18 @@ create trigger trg_video_stage before update on video_pipeline
 drop trigger if exists trg_protect_finalized_kpi on kpi_monthly;
 create trigger trg_protect_finalized_kpi before update on kpi_monthly
   for each row execute function protect_finalized_kpi();
+
+create or replace function protect_finalized_kpi_daily() returns trigger
+language plpgsql as $$
+begin
+  if tg_op = 'DELETE' then return old; end if;
+  if old.finalized then return old; end if;
+  return new;
+end $$;
+
+drop trigger if exists trg_protect_finalized_kpi_daily on kpi_daily;
+create trigger trg_protect_finalized_kpi_daily before update on kpi_daily
+  for each row execute function protect_finalized_kpi_daily();
 
 drop trigger if exists trg_sync_kpi_month on kpi_monthly;
 create trigger trg_sync_kpi_month before insert or update on kpi_monthly

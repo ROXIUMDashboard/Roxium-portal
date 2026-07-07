@@ -115,6 +115,42 @@ function resolvePeriod(raw: string): string | null {
   return null;
 }
 
+// Full calendar day for daily-tab ingestion (YYYY-MM-DD). Falls back to month-start
+// when the sheet only has month-level dates.
+function resolveDay(raw: string): string | null {
+  const s = (raw || "").trim();
+  if (!s) return null;
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/^(\d{4,6})(?:\.\d+)?$/))) {
+    const serial = +m[1];
+    if (serial >= 20000 && serial <= 80000) {
+      const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+    }
+  }
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
+    const y = +m[1], mo = +m[2], da = +m[3];
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31)
+      return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
+    return null;
+  }
+  if ((m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/))) {
+    const y = +m[1], mo = +m[2], da = +m[3];
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31)
+      return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
+    return null;
+  }
+  if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) {
+    const mo = +m[1]; let y = +m[3]; const da = +m[2];
+    if (y < 100) y += 2000;
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31)
+      return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
+    return null;
+  }
+  const period = resolvePeriod(s);
+  return period;
+}
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-sync-key",
@@ -311,6 +347,12 @@ interface MonthBucket {
   [metric: string]: string | number | null;
 }
 
+interface DayBucket {
+  practice_id: string;
+  day: string;
+  [metric: string]: string | number | null;
+}
+
 // Bare month name (no year) → current year first-of-month. resolvePeriod requires a
 // year, so this covers wide sheets whose column headers are just "Jan"/"March".
 const MONTHS_BARE = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
@@ -446,26 +488,27 @@ function detectShape(grid: string[][]): ShapeDetection {
 
 // Step 4+5: parse per detected shape and normalize into kpi_monthly rows + a report.
 function parseGrid(grid: string[][], source: string, defaultPid: string | null, label: string):
-  { rows: Record<string, unknown>[]; report: ParseReport } {
+  { rows: Record<string, unknown>[]; dailyRows: Record<string, unknown>[]; report: ParseReport } {
   const report: ParseReport = { source: label, shape: "unknown", header_row: null, period_field: null,
     normalized_headers: {}, metric_columns: [], produced: 0, months: [], skipped_rows: 0,
     skipped_samples: [], confidence: "none", reason: "" };
-  if (grid.length < 2) { report.reason = "tab is empty or has no data rows"; return { rows: [], report }; }
+  if (grid.length < 2) { report.reason = "tab is empty or has no data rows"; return { rows: [], dailyRows: [], report }; }
 
   const det = detectShape(grid);
   report.shape = det.shape; report.confidence = det.confidence;
   report.header_row = det.headerRow >= 0 ? det.headerRow + 1 : null;
   report.period_field = det.periodField; report.normalized_headers = det.normalized; report.metric_columns = det.metricCols;
-  if (det.shape === "unknown") { report.reason = det.reason; return { rows: [], report }; }
+  if (det.shape === "unknown") { report.reason = det.reason; return { rows: [], dailyRows: [], report }; }
 
   const skips: Record<string, number> = {}; const samples: unknown[] = [];
   const skip = (reason: string, extra?: Record<string, unknown>) => {
     skips[reason] = (skips[reason] || 0) + 1; if (samples.length < 5) samples.push({ reason, ...extra }); };
   let rows: Record<string, unknown>[] = [];
+  let dailyRows: Record<string, unknown>[] = [];
 
   if (det.shape === "wide" && det.wide) {
     const pid = defaultPid || "";
-    if (!UUID_RE.test(pid)) { report.reason = "month-block sheet has no client to attach to (missing practice_id)"; return { rows: [], report }; }
+    if (!UUID_RE.test(pid)) { report.reason = "month-block sheet has no client to attach to (missing practice_id)"; return { rows: [], dailyRows: [], report }; }
     const { labelCol, headerRow, colPeriod } = det.wide;
     const buckets = new Map<string, MonthBucket>();
     for (let r = 0; r < grid.length; r++) {
@@ -487,6 +530,8 @@ function parseGrid(grid: string[][], source: string, defaultPid: string | null, 
     const header = grid[det.headerRow].map(h => (h ?? "").trim());
     const pidIdx = header.findIndex(h => normHeader(h) === "practice id");
     const buckets = new Map<string, MonthBucket>();
+    const dayBuckets = new Map<string, DayBucket>();
+    const isDailyShape = det.shape === "daily";
     for (let i = det.headerRow + 1; i < grid.length; i++) {
       const r = grid[i];
       const pid = pidIdx >= 0 ? (r[pidIdx] ?? "").trim() : (defaultPid || "");
@@ -505,10 +550,26 @@ function parseGrid(grid: string[][], source: string, defaultPid: string | null, 
         else b[col] = Math.max(typeof b[col] === "number" ? b[col] as number : -Infinity, v);
       }
       buckets.set(key, b);
+      if (isDailyShape) {
+        const day = resolveDay(raw);
+        if (!day) { skip("unparseable day", { value: raw }); continue; }
+        const dkey = pid + "|" + day;
+        const db = dayBuckets.get(dkey) || { practice_id: pid, day };
+        for (let c = 0; c < header.length; c++) {
+          const col = aliasOf(header[c]); if (!col) continue;
+          const v = num((r[c] ?? "").trim()); if (v == null) continue;
+          if (ADDITIVE.has(col)) db[col] = (typeof db[col] === "number" ? db[col] as number : 0) + v;
+          else db[col] = Math.max(typeof db[col] === "number" ? db[col] as number : -Infinity, v);
+        }
+        dayBuckets.set(dkey, db);
+      }
     }
     rows = [...buckets.values()]
       .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "period" && typeof b[k] === "number"))
       .map(b => { const { practice_id, period, ...m } = b; return { practice_id, period, source, ...m }; });
+    dailyRows = [...dayBuckets.values()]
+      .filter(b => Object.keys(b).some(k => k !== "practice_id" && k !== "day" && typeof b[k] === "number"))
+      .map(b => { const { practice_id, day, ...m } = b; return { practice_id, day, source, ...m }; });
   }
 
   report.produced = rows.length;
@@ -516,7 +577,7 @@ function parseGrid(grid: string[][], source: string, defaultPid: string | null, 
   report.skipped_rows = Object.values(skips).reduce((a, b) => a + b, 0);
   report.skipped_samples = samples;
   if (rows.length) {
-    const note = det.shape === "daily" ? " (daily rows aggregated by month)" : det.shape === "wide" ? " (month-block)" : "";
+    const note = det.shape === "daily" ? " (daily rows aggregated by month + per-day snapshots)" : det.shape === "wide" ? " (month-block)" : "";
     report.reason = `parsed as ${det.shape}${note} → ${report.months.join(", ")}`;
   } else if (skips["no/invalid practice_id"]) {
     report.reason = "rows found but none attached to a client (no/invalid practice_id) — usually the global CSV_URL path; use a per-client source";
@@ -525,7 +586,7 @@ function parseGrid(grid: string[][], source: string, defaultPid: string | null, 
   } else {
     report.reason = "no monthly rows produced — no numeric metric values under the recognized columns";
   }
-  return { rows, report };
+  return { rows, dailyRows, report };
 }
 
 async function isTeamCaller(req: Request, admin: SupabaseClient): Promise<boolean> {
@@ -681,6 +742,7 @@ Deno.serve(async (req) => {
       : "no active sheet sources and no CSV_URL" }, 400);
 
     const upserts: Record<string, unknown>[] = [];
+    const dailyUpserts: Record<string, unknown>[] = [];
     const perSource: Record<string, Record<string, unknown>> = {};
     const reports: ParseReport[] = [];     // full per-tab parse report (shape, header, reason…)
     const allMonths = new Set<string>();   // distinct 'YYYY-MM' months seen across every source
@@ -696,13 +758,14 @@ Deno.serve(async (req) => {
           if (!res.ok) throw new Error(`fetch ${res.status}`);
           grid = parseCSV(await res.text());
         }
-        const { rows, report } = parseGrid(grid, job.source, job.pid, job.label);
+        const { rows, dailyRows, report } = parseGrid(grid, job.source, job.pid, job.label);
         reports.push(report);
         upserts.push(...rows);
+        dailyUpserts.push(...dailyRows);
         const months = report.months;
         months.forEach(m => allMonths.add(m));
         const ok = rows.length > 0;
-        perSource[job.label] = { ok, rows: rows.length, months, shape: report.shape,
+        perSource[job.label] = { ok, rows: rows.length, daily_rows: dailyRows.length, months, shape: report.shape,
           header_row: report.header_row, confidence: report.confidence,
           skipped: report.skipped_rows, reason: report.reason };
         // a zero-row parse is a soft failure: keep it visible in the global skipped list
@@ -722,11 +785,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    let upserted = 0, error: string | null = null;
+    let upserted = 0, dailyUpserted = 0, error: string | null = null;
     if (upserts.length) {
       const { data, error: e } = await sb.from("kpi_monthly")
         .upsert(upserts, { onConflict: "practice_id,period,source" }).select("id");
       if (e) error = e.message; else upserted = data?.length ?? upserts.length;
+    }
+    if (!error && dailyUpserts.length) {
+      const { data, error: e } = await sb.from("kpi_daily")
+        .upsert(dailyUpserts, { onConflict: "practice_id,day,source" }).select("id");
+      if (e) error = e.message; else dailyUpserted = data?.length ?? dailyUpserts.length;
     }
     await sb.rpc("finalize_past_months");
 
@@ -742,6 +810,7 @@ Deno.serve(async (req) => {
     } catch (_) { /* sync_runs table not present yet */ }
 
     return json({ ok, ran_at: ranAt, trigger, sources: perSource, rows_seen: upserts.length, upserted,
+      daily_rows_seen: dailyUpserts.length, daily_upserted: dailyUpserted,
       skipped_count: skipped.length, months_seen, skipped: skipped.slice(0, 25),
       reports, error }, error ? 500 : 200);
   } catch (e) {
