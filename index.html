@@ -139,20 +139,26 @@
         <div class="sub">What needs our attention today?</div>
       </div>
       <div id="opsExecCards" class="ops-cards cards"></div>
-      <div class="ops-split ops-split-balanced">
-        <div class="ops-panel ops-panel-queue">
-          <h3>Morning meeting queue</h3>
-          <p class="note ops-panel-note">Auto-sorted: red first, then yellow.</p>
-          <div id="opsMorningQueue" class="ops-queue ops-queue-panel"></div>
+      <div class="ops-panel ops-panel-attention">
+        <div class="ops-attention-head">
+          <div>
+            <h3>Needs attention</h3>
+            <p class="note ops-panel-note">Your morning focus — drag to reorder, pin important items, or dismiss handled flags. Defaults to severity (🔴 → 🟡 → 🟢).</p>
+          </div>
+          <button type="button" class="btn sm ghost" id="opsAttentionReset" hidden>Reset sort</button>
         </div>
-        <div class="ops-panel ops-panel-queue">
-          <h3>Needs attention</h3>
-          <p class="note ops-panel-note">Same flags as the metric above — newest first.</p>
-          <div id="opsAttentionFeed" class="ops-feed ops-queue-panel"></div>
-        </div>
+        <div id="opsAttentionFeed" class="ops-attention-list"></div>
       </div>
       <div class="ops-panel">
-        <h3>Company KPI overview</h3>
+        <div class="ops-kpi-head">
+          <h3>Company KPI overview</h3>
+          <div class="ops-kpi-toolbar">
+            <div class="f ops-kpi-month-field">
+              <label for="opsKpiMonthPicker">Reporting month</label>
+              <div id="opsKpiMonthPicker"></div>
+            </div>
+          </div>
+        </div>
         <p class="note ops-panel-note" id="opsKpiPeriod"></p>
         <div id="opsKpiRollup" class="ops-kpi-rollup cards"></div>
         <div id="opsKpiCharts" class="ops-kpi-charts hidden"></div>
