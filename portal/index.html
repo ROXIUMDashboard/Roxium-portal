@@ -17,8 +17,8 @@
 <div id="login" class="login hidden">
   <div class="login-card">
     <div class="mark big">ROX<b>I</b>UM</div>
-    <div class="eyebrow">Sign in to your portal</div>
-    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed. If your practice invited you (or you're on the roster), signing up is automatic — no manual approval needed.</p>
+    <div class="eyebrow">Sign in or create your account</div>
+    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed. Invited by your practice? Use the same email your invitation was sent to and you're in instantly. New to ROXIUM? Your account is created right away and unlocked as soon as our team approves it.</p>
     <input id="loginEmail" type="email" placeholder="you@practice.com">
     <button class="btn" id="btnLogin">Send sign-in link</button>
     <div id="loginCodeRow" class="hidden" style="margin-top:10px">
@@ -28,6 +28,17 @@
     </div>
     <p class="note login-persist">After you sign in once, this browser keeps you signed in until you choose Sign out.</p>
     <p class="note" id="loginMsg"></p>
+    <p class="note" style="margin-top:14px"><a href="/" style="color:var(--gold);text-decoration:none">← Back to roxium.com</a></p>
+  </div>
+</div>
+
+<!-- ============ PENDING APPROVAL (self-service signups await review) ============ -->
+<div id="pendingPane" class="login hidden">
+  <div class="login-card">
+    <div class="mark big">ROX<b>I</b>UM</div>
+    <div class="eyebrow" id="pendingTitle">Almost there</div>
+    <p class="note" id="pendingBody" style="text-align:left;line-height:1.6"></p>
+    <button class="btn ghost" id="btnPendingSignout" style="margin-top:18px">Sign out</button>
     <p class="note" style="margin-top:14px"><a href="/" style="color:var(--gold);text-decoration:none">← Back to roxium.com</a></p>
   </div>
 </div>
@@ -220,7 +231,11 @@
 
       <!-- B · ACCESS / INVITES -->
       <div class="admin-tab hidden" data-atab="access">
-        <h3>Platform administrators</h3>
+        <h3>Account approvals</h3>
+        <p class="note" style="margin-top:-2px">Self-service sign-ups waiting for review. Every practice needs approval before it can see anything — assign the account to a practice and approve, or reject it. Invited emails never appear here (the invitation approves them automatically).</p>
+        <div id="accountApprovals" class="roster roster-compact"><p class="note">Loading…</p></div>
+
+        <h3 style="margin-top:22px">Platform administrators</h3>
         <p class="note" style="margin-top:-2px">Who can open Team Controls. <b>Make admin</b> grants full platform configuration access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
         <div class="entry">
           <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
