@@ -1849,9 +1849,8 @@ function openVideoDetail(id){
     }catch(e){
       $('mMsg').textContent = 'Posted to portal, but email failed: '+e.message;
     }
-    const v = data.video.find(x=>x.id===id);
-    // write a banner notification (the email is handled by notify-video-ready)
-    await sb.from('notifications').insert({ practice_id: practiceId, kind:'video', message:`New video published: ${v? v.item : 'your video'}. Watch it in your portal.` });
+    // In-app notification is created by the trg_notify_video_stage DB trigger (on the
+    // stage → 'posted' change), deduped per video; here we only handle the email.
     await loadAll();
     setTimeout(closeModal, 1400);
   };
