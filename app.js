@@ -3171,6 +3171,7 @@ function renderOperationsDashboard(){
     ? attentionList.map(a=> renderOpsAlertItem(a)).join('')
     : '<p class="note ops-empty-note">No priorities flagged — everything looks on track.</p>';
   wireOpsAttentionList(feed);
+  safe('ops accountability', ()=> renderOpsAccountability());
   // KPI rollup — selected reporting month across all clients
   const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
   const latestPeriod = monthly.length ? monthly[monthly.length-1].period : null;
@@ -3268,6 +3269,40 @@ function renderOperationsDashboard(){
   }
   const countEl = $('opsClientCount');
   if(countEl) countEl.textContent = `${overviewRows.length} client${overviewRows.length===1?'':'s'}${clientQ? ' matching search':''}`;
+}
+// Delivery accountability — quantify execution per client the way response time
+// quantifies a front office: shipped volume, on-time rate, and what's aging.
+// Uses only columns the ops loader already fetches (due / delivered_at /
+// status / status_since) — no schema change.
+function renderOpsAccountability(){
+  const el = $('opsAccountability'); if(!el || !opsData) return;
+  const now = Date.now(), d30 = now - 30*86400000;
+  const rows = (opsData.practices||[]).map(p=>{
+    const ds = (opsData.deliverables||[]).filter(d=> d.practice_id===p.id);
+    if(!ds.length) return null;
+    const delivered30 = ds.filter(d=> d.status==='delivered' && d.delivered_at && new Date(d.delivered_at).getTime()>=d30).length;
+    const judged = ds.filter(d=> d.status==='delivered' && d.delivered_at && d.due);
+    const onTime = judged.length
+      ? Math.round(100 * judged.filter(d=> new Date(d.delivered_at) <= new Date(String(d.due).slice(0,10)+'T23:59:59')).length / judged.length)
+      : null;
+    const openOverdue = ds.filter(d=> d.status!=='delivered' && d.due && new Date(d.due) < new Date()).length;
+    const inProg = ds.filter(d=> d.status==='in_progress').map(d=> daysIn(d.status_since));
+    const oldestInProg = inProg.length ? Math.max(...inProg) : null;
+    return { name: p.name, delivered30, onTime, judgedCount: judged.length, openOverdue, oldestInProg };
+  }).filter(Boolean);
+  if(!rows.length){ el.innerHTML = '<p class="note">No deliverables tracked yet.</p>'; return; }
+  rows.sort((a,b)=> b.openOverdue - a.openOverdue || (a.onTime??101) - (b.onTime??101) || b.delivered30 - a.delivered30);
+  const otCell = r => r.onTime==null ? '<span class="note">—</span>'
+    : `<span class="${r.onTime>=80?'ssok':r.onTime>=50?'sswarn':'ssbad'}" title="${r.judgedCount} delivered item(s) had a due date">${r.onTime}%</span>`;
+  el.innerHTML = `<table class="ops-table ops-table-compact"><thead><tr>
+      <th>Client</th><th>Delivered 30d</th><th>On-time rate</th><th>Open overdue</th><th>Longest in progress</th>
+    </tr></thead><tbody>${rows.map(r=>`<tr class="${r.openOverdue? 'ops-row-warn':''}">
+      <td>${esc(r.name)}</td>
+      <td>${r.delivered30 || '—'}</td>
+      <td>${otCell(r)}</td>
+      <td>${r.openOverdue ? `<span class="ssbad">${r.openOverdue}</span>` : '0'}</td>
+      <td>${r.oldestInProg!=null ? `${r.oldestInProg}d${r.oldestInProg>=14?' <span class="ssbad">⚠</span>':r.oldestInProg>=7?' <span class="sswarn">⚠</span>':''}` : '—'}</td>
+    </tr>`).join('')}</tbody></table>`;
 }
 async function loadOperationsData(force){
   if(!isTeamView()) return;
