@@ -587,6 +587,14 @@ async function loadAll(){
   ]);
   data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
+  // Pending platform-access requests visible to the CLIENT ("Your part" block).
+  // Via security-definer RPC because sheet_sources itself is team-only under RLS.
+  // Fail-soft: databases without the migration simply render no block.
+  data.pendingAccess = [];
+  try{
+    const { data: pa, error: paErr } = await sb.rpc('get_my_pending_access', { p_practice: practiceId });
+    if(!paErr && Array.isArray(pa)) data.pendingAccess = pa;
+  }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -926,6 +934,38 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- "Your part" (client-facing next actions) ----------------
+   The next-action doctrine pointed at the client: the only things ROXIUM is
+   waiting on THEM for — approvals blocking videos, and platform-access
+   requests they haven't granted yet. Hidden entirely when there's nothing. */
+function renderYourPart(){
+  const el = $('yourPart'); if(!el) return;
+  // Client-facing (including team "Preview as client"); the team has the ops queue.
+  if(isTeamView()){ el.classList.add('hidden'); el.innerHTML=''; return; }
+  const items = [];
+  (data.video||[]).forEach(v=>{
+    if(v.blocked && v.stage!=='posted' && v.stage!=='delivered'){
+      const days = daysIn(v.stage_since);
+      items.push({ text:`Approve “${v.item}”${v.blocked_reason? ` — ${v.blocked_reason}`:''}`,
+        note: days>=3 ? `waiting ${days} days` : 'waiting on you', urgent: days>=7 });
+    }
+  });
+  (data.pendingAccess||[]).filter(a=> a.access_status==='requested').forEach(a=>{
+    items.push({ text:`Grant ${channelLabel(a.source)} access`,
+      note: a.requested_days!=null ? `we sent instructions ${a.requested_days}d ago — check your inbox` : 'instructions are in your inbox',
+      urgent: (a.requested_days??0)>=7 });
+  });
+  if(!items.length){ el.classList.add('hidden'); el.innerHTML=''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="yourpart-head">Your part <span class="yourpart-sub">— only you can unblock these</span></div>
+    ${items.map(i=>`<div class="yourpart-item${i.urgent?' urgent':''}">
+       <span class="yourpart-dot" aria-hidden="true"></span>
+       <span class="yourpart-text">${esc(i.text)}</span>
+       <span class="yourpart-note">${esc(i.note)}</span>
+     </div>`).join('')}`;
+}
+
 /* ---------------- engagement timeline ----------------
    One chronological feed per practice: team-posted updates + the system events
    that already exist in the data (deliverables delivered, milestones completed,
@@ -1071,6 +1111,9 @@ function render(){
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
+
+  // "Your part" — what ROXIUM is waiting on the client for (client view only)
+  safe('your part', ()=> renderYourPart());
 
   // timeline
   const isTeam = isTeamView();
