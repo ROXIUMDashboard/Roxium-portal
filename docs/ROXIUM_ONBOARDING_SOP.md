@@ -75,16 +75,26 @@ Do these in order. All steps are in the portal unless noted.
 
 ## 3. Marketing Data Onboarding (what we need from every client)
 
+> **The full client-side onboarding system lives in [`onboarding/`](onboarding/README.md):**
+> the 3-tier intake flow (agency / in-house / live call), the universal access checklist,
+> Meta and Google step-by-step guides, the Tier 3 live-call script, client-facing assets
+> (agency checklist, client checklist, demo-video script, "why ROXIUM" explainer), and
+> ROXIUM's one-time internal setup (Meta Business ID, reporting email, Google Ads MCC).
+> Start every new client there. This section remains the pipeline reference — what the
+> team does after access is granted.
+
 **How it works end to end:** the client grants us access to their ad platform → **Coefficient**
 pulls that platform's metrics into a **tab** in the client's Google **workbook** → our
 `sync-coefficient` job reads each tab → writes rows into `kpi_monthly` (and `kpi_daily`) in
 Supabase → the portal renders them. One **tab = one source/channel**; "All channels" on the
 dashboard sums every source for the month.
 
-**General access pattern (all platforms):** the client adds our Coefficient/reporting Google
-account (or service account) as a **read-only/Viewer/Analyst** user on their ad account, then we
-connect that account in Coefficient and point a workbook tab at it. Never ask for passwords — use
-the platform's native "add user / grant access" flow.
+**General access pattern (all platforms):** the client grants ROXIUM **delegated read access**
+via the platform's native sharing flow — for the Meta family that means **partner access to our
+Business ID** (one grant covers ad account + Instagram + Page; person-level "add people" is the
+fallback, see `onboarding/meta-access-guide.md`), and for Google/other platforms an invite to our
+reporting account (or an MCC link for Google Ads) at **read-only/Viewer/Analyst** level. Then we
+connect that access in Coefficient and point a workbook tab at it. Never ask for passwords.
 
 Metrics we standardize on per source (as available): **Spend, Reach, Impressions, Link Clicks**
 (+ derived CTR / CPM / CPC), and where provided: **Landing Page Views, Page Likes, Page
@@ -92,11 +102,12 @@ Engagement, Followers**. Empty metrics are hidden automatically.
 
 | Platform | Access required | How the client grants it | Coefficient connection | Workbook tab | Portal source key |
 |----------|-----------------|--------------------------|------------------------|--------------|-------------------|
-| **Meta Ads** | Ad account **Analyst** (read) | Business Settings → Ad Accounts → Add People → our account, Analyst | Coefficient → Meta Ads connector → select ad account | `Meta Ads` tab | `marketing` (default) |
-| **Instagram Insights** | IG linked to the Business/Meta account, read access | Same Meta Business access (IG asset) | Meta / Instagram connector | `Instagram` tab | `instagram_insights` |
-| **Facebook Insights** | Page **Analyst** role | Page → Settings → Page Access → add our account | Meta / Facebook Pages connector | `Facebook` tab | `facebook_insights` |
-| **Google Ads** | Account **Read-only** access (via customer ID) | Google Ads → Admin → Access → invite our email, Read-only | Coefficient → Google Ads connector | `Google Ads` tab | `google_ads` |
+| **Meta Ads** | Ad account **View performance** (Analyst-level read) | **Partner access:** Business settings → Partners → *Give a partner access to your assets* → our Business ID → ad account, View performance. (Fallback: Ad account → Add People → our account, Analyst) | Coefficient → Meta Ads connector → select ad account | `Meta Ads` tab | `marketing` (default) |
+| **Instagram Insights** | IG **professional** account, connected to their business assets, **Insights** permission | Same single partner grant — IG asset + Insights | Meta / Instagram connector | `Instagram` tab | `instagram_insights` |
+| **Facebook Insights** | Page view/insights (**Analyst**-level) | Same single partner grant — Page asset. (Fallback: Page → Settings → Page Access → add our account) | Meta / Facebook Pages connector | `Facebook` tab | `facebook_insights` |
+| **Google Ads** | Account **Read-only** access | **MCC link:** we send a request to their 10-digit customer ID; they accept under Admin → Access and security → Managers. (Fallback: invite our email, Read-only) | Coefficient → Google Ads connector | `Google Ads` tab | `google_ads` |
 | **Google Analytics (GA4)** | Property **Viewer** | GA4 Admin → Property Access → add our email, Viewer | Coefficient → GA4 connector | `Google Analytics` tab | `google_analytics` (custom) |
+| **Google Business Profile** | Profile **Manager** (GBP has no view-only role — tell the client up front) | business.google.com → Business Profile settings → People and access → add our reporting email, Manager | Coefficient → GBP connector | `Google Business` tab | *(custom source when wired)* |
 | **YouTube Analytics** | Channel **Viewer/Analyst** (via Brand Account) | YouTube/Google → channel permissions → add our account | Coefficient → YouTube connector | `YouTube` tab | `youtube_analytics` |
 | **Microsoft Ads** | Account **Viewer** | Microsoft Advertising → Account access → invite our email | Coefficient → Microsoft Ads connector | `Microsoft Ads` tab | `microsoft_ads` |
 
