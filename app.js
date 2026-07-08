@@ -926,6 +926,30 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- engagement timeline ----------------
+   One chronological feed per practice: team-posted updates + the system events
+   that already exist in the data (deliverables delivered, milestones completed,
+   video stage history). No new tables — it's a merge of what loadAll() fetched. */
+function buildEngagementTimeline(){
+  const ev = [];
+  (data.feed||[]).forEach(f=> ev.push({
+    t:f.created_at, kind:'update', text:f.message,
+    meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at }));
+  (data.deliv||[]).forEach(d=>{
+    if(d.status==='delivered' && d.delivered_at)
+      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'Delivered', text:d.name, meta:d.phase||'Deliverable' });
+  });
+  (data.miles||[]).forEach(m=>{
+    if(m.status==='done' && m.completed_on)
+      ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap' });
+  });
+  const vname = id => ((data.video||[]).find(v=> v.id===id)||{}).item || 'Video';
+  (data.vhist||[]).forEach(h=> ev.push({
+    t:h.moved_at, kind:'video', tag:'Video', text:`${vname(h.video_id)} → ${stageLabelOf(h.stage)}`, meta:'Video pipeline' }));
+  ev.sort((a,b)=> new Date(b.t)-new Date(a.t));
+  return ev.slice(0, 80);   // keep the DOM bounded on long engagements
+}
+
 /* ---------------- KPI insights (rule-based, no AI) ----------------
    Turn month-over-month movement into short sentences so the metrics view
    leads with "what changed" instead of asking the reader to diff charts.
@@ -1134,12 +1158,22 @@ function render(){
   // feed (team can edit/delete each posted update)
   safe('updates feed', ()=>{
     const teamFeed = isTeamView();
-    $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-      `<div class="fitem" data-fid="${f.id}">
-         <span class="fmsg">${esc(f.message)}</span>
-         ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
-         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}${f.edited_at? ' · <span class="edited">edited '+new Date(f.edited_at).toLocaleDateString()+'</span>':''}</div></div>`).join('')
-      : '<p class="note">No updates yet.</p>';
+    // Engagement timeline: posted updates merged with system events (deliverables
+    // delivered, milestones completed, video stage moves) into ONE chronological
+    // story of the engagement — the client scrolls one feed, not four tabs.
+    const events = buildEngagementTimeline();
+    $('feed').innerHTML = events.length? events.map(ev=>
+      ev.kind==='update'
+        ? `<div class="fitem" data-fid="${ev.fid}">
+             <span class="ftag ftag-update">Update</span>
+             <span class="fmsg">${esc(ev.text)}</span>
+             ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${ev.fid}" title="Edit">✎</button><button class="fdel" data-fid="${ev.fid}" title="Delete">✕</button></span>`:''}
+             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}${ev.edited? ' · <span class="edited">edited '+new Date(ev.edited).toLocaleDateString()+'</span>':''}</div></div>`
+        : `<div class="fitem fitem-sys">
+             <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
+             <span class="fmsg">${esc(ev.text)}</span>
+             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}</div></div>`
+    ).join('') : '<p class="note">No updates yet.</p>';
     if(teamFeed){
       $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
       $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{

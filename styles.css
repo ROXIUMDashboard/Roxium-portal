@@ -206,6 +206,14 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 /* feed */
 .fitem{padding:14px 0;border-bottom:1px solid rgba(201,168,76,.1);font-size:14px;line-height:1.5}
 .fitem .meta{font-size:11px;color:var(--muted);letter-spacing:.08em;margin-top:4px}
+/* engagement-timeline type tags (Update / Delivered / Milestone / Video) */
+.ftag{display:inline-block;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  padding:3px 8px;margin-right:10px;border:1px solid var(--line);color:var(--muted);vertical-align:1px}
+.ftag-update{color:var(--gold);border-color:rgba(201,168,76,.4)}
+.ftag-deliverable{color:var(--green);border-color:rgba(123,168,122,.35)}
+.ftag-milestone{color:var(--cream);border-color:rgba(242,237,227,.3)}
+.ftag-video{color:var(--muted)}
+.fitem-sys .fmsg{color:var(--cream)}
 
 /* team forms — sit flush on the near-black page (no lighter --surface panel) like the client side */
 .entry{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;margin-top:14px}
