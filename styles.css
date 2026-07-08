@@ -214,7 +214,8 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 .ftag{display:inline-block;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
   padding:3px 8px;margin-right:10px;border:1px solid var(--line);color:var(--muted);vertical-align:1px}
 .ftag-update{color:var(--gold);border-color:rgba(201,168,76,.4)}
-.ftag-deliverable{color:var(--green);border-color:rgba(123,168,122,.35)}
+.ftag-comment{color:var(--cream);border-color:rgba(242,237,227,.35)}
+.ftag-deliverable,.ftag-delivered{color:var(--green);border-color:rgba(123,168,122,.35)}
 .ftag-milestone{color:var(--cream);border-color:rgba(242,237,227,.3)}
 .ftag-video{color:var(--muted)}
 .fitem-sys .fmsg{color:var(--cream)}
@@ -863,12 +864,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .cmdk-empty{padding:16px 18px;color:var(--muted);font-size:13px}
 .cmdk-hint{padding:9px 18px;font-size:10.5px;letter-spacing:.12em;color:var(--muted);border-top:1px solid var(--line)}
 
-/* KPI insights strip — rule-based "what changed" sentences above the charts */
-.kpi-insights{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 2px}
-.insight{font-size:12px;letter-spacing:.05em;padding:6px 12px;border:1px solid var(--line);background:var(--surface);color:var(--cream)}
-.insight.good{color:var(--green);border-color:rgba(123,168,122,.35)}
-.insight.warn{color:var(--amber);border-color:rgba(212,162,78,.4)}
-.insight.info{color:var(--muted)}
+/* KPI insights strip removed — cumulative All-Months view no longer shows MoM badges */
 @media(max-width:640px){.sheetchans{grid-template-columns:1fr}}
 
 /* ---- sync observability: did the 2-hour automation run? status banner + audit table ---- */

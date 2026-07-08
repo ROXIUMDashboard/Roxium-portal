@@ -91,6 +91,11 @@ let previewMode = false;  // team viewing the client-side version
 let selByPractice = {};   // practiceId -> 'YYYY-MM-01'
 let monthSelApi = null;   // themed "Reporting month" dropdown instance (team)
 let metricsSelApi = null; // themed month dropdown instance (client dashboard)
+function resetPracticeUiState(){
+  metricsSelApi = null;
+  monthSelApi = null;
+  destroyKpiCharts();
+}
 const getSel = () => (practiceId && practiceId in selByPractice) ? selByPractice[practiceId] : null;
 const setSel = p => { if(!practiceId) return; if(p==null) delete selByPractice[practiceId]; else selByPractice[practiceId]=p; };
 // Ad channel (kpi source) selection, also scoped per-practice. 'all' = every channel
@@ -266,7 +271,7 @@ function showView(name){
   syncChrome();
   // Charts built while their tab was hidden have a zero-size canvas — resize once the
   // Metrics tab is actually visible so the live graph shows without a manual month switch.
-  if(name==='metrics') requestAnimationFrame(()=> kpiChartInstances.forEach(c=>{ try{ c.resize(); }catch(_){} }));
+  if(name==='metrics') requestAnimationFrame(()=> render());
   if(name==='operations') loadOperationsData();
   if(name==='controls'){
     activateAdminTab(lastAdminTab);
@@ -348,6 +353,7 @@ function buildSwitcher(list){
       updateSwitcherLabel();
       setOpen(false);
       btn?.focus();
+      resetPracticeUiState();
       loadAll();
     });
   };
@@ -928,16 +934,20 @@ const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
 /* ---------------- engagement timeline ----------------
    One chronological feed per practice: team-posted updates + MEANINGFUL system
-   events only (deliverables delivered, milestones completed, real video stage
-   moves). Merely existing in the pipeline is not news: 'planned' history rows
-   (creation/backlog seeds) never appear, and a video's very first history row
-   is treated as setup, not progress. No new tables — it merges what loadAll()
-   already fetched. */
+   events only (deliverables delivered, milestones completed, video stage moves).
+   Video: one Update per forward move; Delivered only on delivered/posted stages.
+   Planned / creation seeds never appear. No new tables — merges loadAll() data. */
 function buildEngagementTimeline(){
   const ev = [];
-  (data.feed||[]).forEach(f=> ev.push({
-    t:f.created_at, kind:'update', text:f.message,
-    meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at }));
+  const stageLbl = k => stageLabelOf(k);
+  (data.feed||[]).forEach(f=>{
+    const isComment = String(f.source||'').toLowerCase()==='comment';
+    ev.push({
+      t:f.created_at, kind: isComment ? 'comment' : 'update',
+      tag: isComment ? 'Comment' : 'Update', text:f.message,
+      meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at,
+    });
+  });
   (data.deliv||[]).forEach(d=>{
     if(d.status==='delivered' && d.delivered_at)
       ev.push({ t:d.delivered_at, kind:'deliverable', tag:'✓ Delivered', text:d.name, meta:d.phase||'Deliverable' });
@@ -947,75 +957,33 @@ function buildEngagementTimeline(){
       ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap' });
   });
   const vname = id => ((data.video||[]).find(v=> v.id===id)||{}).item || 'Video';
-  const firstMove = new Map();   // video_id -> earliest history row (its setup row)
+  const firstMove = new Map();
   (data.vhist||[]).forEach(h=>{
     const cur = firstMove.get(h.video_id);
     if(!cur || new Date(h.moved_at) < new Date(cur.moved_at)) firstMove.set(h.video_id, h);
   });
   (data.vhist||[]).forEach(h=>{
-    if(h.stage==='planned') return;                    // backlog/creation — not an action
-    if(firstMove.get(h.video_id)===h && h.stage!=='delivered' && h.stage!=='posted') return; // initial setup row
-    ev.push({ t:h.moved_at, kind:'video', tag:'Video', text:`${vname(h.video_id)} → ${stageLabelOf(h.stage)}`, meta:'Video pipeline' });
+    if(h.stage==='planned') return;
+    if(firstMove.get(h.video_id)===h) return;   // initial backlog seed — not progress
+    const name = vname(h.video_id);
+    if(h.stage==='delivered' || h.stage==='posted'){
+      ev.push({
+        t:h.moved_at, kind:'delivered', tag:'Delivered',
+        text: h.stage==='posted' ? `${name} is posted.` : `${name} was delivered.`,
+        meta:'Video production',
+      });
+      return;
+    }
+    ev.push({
+      t:h.moved_at, kind:'update', tag:'Update',
+      text:`${name} moved to ${stageLbl(h.stage)}.`,
+      meta:'Video production',
+    });
   });
   ev.sort((a,b)=> new Date(b.t)-new Date(a.t));
-  return ev.slice(0, 80);   // keep the DOM bounded on long engagements
+  return ev.slice(0, 80);
 }
 
-/* ---------------- KPI insights (rule-based, no AI) ----------------
-   Turn month-over-month movement into short sentences so the metrics view
-   leads with "what changed" instead of asking the reader to diff charts.
-   Deterministic rules only: ≥10% month-over-month moves (top two), a
-   best-in-range record when one exists, and a missing-channel callout. */
-function buildKpiInsights(reported){
-  if(!reported || reported.length < 2) return [];
-  const cur = reported[0], prevRow = reported[1];
-  const watch = [
-    {k:'reach', l:'Reach'}, {k:'clicks', l:'Link clicks'}, {k:'spend', l:'Spend', neutral:true},
-    {k:'ctr', l:'CTR'}, {k:'cpc', l:'CPC', lowerBetter:true}, {k:'cpm', l:'CPM', lowerBetter:true},
-  ];
-  const out = [], deltas = [];
-  watch.forEach(w=>{
-    const def = CORE_METRICS.find(c=> c.k===w.k); if(!def) return;
-    const a = metricValue(def, cur), b = metricValue(def, prevRow);
-    if(a==null || b==null || !isFinite(+a) || !isFinite(+b) || +b===0) return;
-    const pct = (a-b)/Math.abs(b)*100;
-    if(Math.abs(pct) < 10) return;
-    deltas.push({ ...w, pct, good: w.neutral ? null : (w.lowerBetter ? pct<0 : pct>0) });
-  });
-  deltas.sort((x,y)=> Math.abs(y.pct)-Math.abs(x.pct));
-  const vsLbl = monthName(prevRow.period) || periodLabel(prevRow.period);
-  deltas.slice(0,2).forEach(d=>{
-    out.push({ cls: d.good==null ? 'info' : d.good ? 'good' : 'warn',
-      text:`${d.l} ${d.pct>0?'↑':'↓'} ${Math.abs(d.pct).toFixed(0)}% vs ${vsLbl}` });
-  });
-  // A record only counts against 3+ reported months — never call two points a streak.
-  if(reported.length >= 3){
-    const cpcDef = CORE_METRICS.find(c=> c.k==='cpc');
-    const cpcs = reported.map(r=> metricValue(cpcDef, r));
-    if(cpcs[0]!=null && cpcs.slice(1).every(v=> v==null || cpcs[0] < v)){
-      out.push({ cls:'good', text:`Best CPC of all ${reported.length} reported months (${fmt$(cpcs[0])})` });
-    } else {
-      const reaches = reported.map(r=> N(r,'reach'));
-      if(reaches[0]!=null && reaches.slice(1).every(v=> v==null || reaches[0] > v))
-        out.push({ cls:'good', text:`Highest reach of all ${reported.length} reported months` });
-    }
-  }
-  return out.slice(0,3);
-}
-// A channel that reported in earlier months but is absent from the latest one is
-// either paused or quietly broken — say so instead of letting "All channels" shrink.
-function missingChannelInsight(){
-  const rows = normalizeKpiRows(data.kpiRaw||[]);
-  if(!rows.length) return null;
-  const periods = [...new Set(rows.map(r=> String(r.period)))].sort();
-  if(periods.length < 2) return null;
-  const latestP = periods[periods.length-1];
-  const inLatest = new Set(rows.filter(r=> String(r.period)===latestP).map(r=> r.source));
-  const missing = [...new Set(rows.filter(r=> String(r.period)<latestP).map(r=> r.source))]
-    .filter(s=> !inLatest.has(s));
-  if(!missing.length) return null;
-  return { cls:'warn', text:`No ${missing.map(channelLabel).join(', ')} data for ${monthName(latestP)} yet` };
-}
 
 /* ---------------- render ---------------- */
 function render(){
@@ -1048,7 +1016,7 @@ function render(){
   const rangeSummary = allMonthsView ? summarizeKpiRange(data.kpi) : null;
   $('updated').textContent = allMonthsView
     ? (rangeSummary?.monthCount
-      ? `All months · ${rangeSummary.monthCount} reported month${rangeSummary.monthCount===1?'':'s'} · cards total the full range · trends compare latest vs previous month`
+      ? `All months · ${rangeSummary.monthCount} reported month${rangeSummary.monthCount===1?'':'s'} · cumulative totals across the full range`
       : 'No KPI data yet across any month.')
     : emptySelected
       ? `No KPI data for ${periodLabel(viewPeriod)} yet — enter it in the Team tab and Save.`
@@ -1060,7 +1028,7 @@ function render(){
   // build the channel selector (only when this practice has more than one ad channel)
   buildChannelPicker();
   $('kpiSub').textContent = allMonthsView
-    ? (rangeSummary?.monthCount ? `All ${rangeSummary.monthCount} reported months — monthly trend view.` : 'No months reported yet.')
+    ? (rangeSummary?.monthCount ? `All ${rangeSummary.monthCount} reported months — cumulative totals (not month-over-month).` : 'No months reported yet.')
     : emptySelected ? `${periodLabel(viewPeriod)} — no data yet.`
     : latest ? `${periodLabel(latest.period)} against target.` : 'Latest month against target.';
 
@@ -1125,20 +1093,12 @@ function render(){
   // KPI cards + status board — driven by the real ad metric model; only metrics
   // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
-    // Insights strip — what changed, in sentences, above the charts.
-    const insights = buildKpiInsights(reported);
-    if(getChan()==='all'){ const m = missingChannelInsight(); if(m) insights.push(m); }
-    const insEl = $('kpiInsights');
-    if(insEl){
-      insEl.innerHTML = insights.map(i=> `<span class="insight ${i.cls}">${esc(i.text)}</span>`).join('');
-      insEl.style.display = insights.length ? '' : 'none';
-    }
     renderKpiCharts(viewPeriod, isLive, { allMonths: allMonthsView });
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
       clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
-    const rangeSubs = {spend:'total across all months', reach:'total unique people', impr:'total impressions',
-      clicks:'total link clicks', ctr:'avg across full range', cpm:'avg across full range', cpc:'avg across full range'};
-    const trendVs = allMonthsView ? 'previous month' : (prev ? periodLabel(prev.period) : '');
+    const rangeSubs = {spend:'cumulative total', reach:'cumulative reach', impr:'cumulative impressions',
+      clicks:'cumulative link clicks', ctr:'range average', cpm:'range average', cpc:'range average'};
+    const trendVs = prev ? periodLabel(prev.period) : '';
     const trend = (cur, before, opts={})=>{
       if(before==null || cur==null || !isFinite(+before) || !isFinite(+cur) || +before===0) return '';
       const pct = (cur-before)/Math.abs(before)*100;
@@ -1148,11 +1108,11 @@ function render(){
       return `<div class="trend ${good?'up':'down'}">${up?'▲':'▼'} ${sign}${Math.abs(pct).toFixed(1)}% vs ${esc(trendVs)}</div>`;
     };
     const cardNote = allMonthsView
-      ? (rangeSummary?.monthCount ? `across ${rangeSummary.monthCount} months` : '')
+      ? (rangeSummary?.monthCount ? `cumulative · ${rangeSummary.monthCount} months` : '')
       : (latest ? monthNote(latest.period, isLive) : '');
     const metricRow = allMonthsView ? rangeSummary?.totals : latest;
-    const trendRow = allMonthsView ? rangeSummary?.latest : latest;
-    const trendPrev = allMonthsView ? rangeSummary?.prev : prev;
+    const trendRow = allMonthsView ? null : latest;
+    const trendPrev = allMonthsView ? null : prev;
     // Spend, Link Clicks and CPC already appear in the hero stats up top, so leave
     // them out of the metric-card row to avoid duplicating the header.
     const HIDE_METRIC_CARDS = new Set(['spend','clicks','cpc']);
@@ -1165,17 +1125,14 @@ function render(){
         ? `<button class="metricinfo" type="button" data-metric="${def.k}" title="What is ${def.label}?" aria-label="What is ${def.label}?">ⓘ</button>` : '';
       const sub = allMonthsView ? (rangeSubs[def.k]||'') : (subtitles[def.k]||'');
       return `<div class="card"><div class="k">${def.label}${info}</div><div class="big">${def.fmt(v)}</div>`+
-        `<div class="tgt">${sub}</div><div class="mnote g">${cardNote}</div>${trend(metricValue(def, trendRow), bv, {lowerBetter:def.lowerBetter})}</div>`;
+        `<div class="tgt">${sub}</div><div class="mnote g">${cardNote}</div>${allMonthsView ? '' : trend(metricValue(def, trendRow), bv, {lowerBetter:def.lowerBetter})}</div>`;
     }).filter(Boolean);
     if(allMonthsView && rangeSummary?.totals){
       [['cons','Total consults',fmtNum],['proc','Total procedures',fmtNum]].forEach(([k,l,fmt])=>{
         const v = N(rangeSummary.totals,k);
         if(v==null || v===0) return;
-        const bv = rangeSummary.prev ? N(rangeSummary.prev,k) : null;
-        const cv = rangeSummary.latest ? N(rangeSummary.latest,k) : null;
         cards.push(`<div class="card"><div class="k">${l}</div><div class="big">${fmt(v)}</div>`+
-          `<div class="tgt">total across all months</div><div class="mnote g">across ${rangeSummary.monthCount} months</div>`+
-          `${trend(cv, bv)}</div>`);
+          `<div class="tgt">cumulative total</div><div class="mnote g">cumulative · ${rangeSummary.monthCount} months</div></div>`);
       });
     }
     $('kpiCards').innerHTML = cards.length ? cards.join('')
@@ -1202,11 +1159,11 @@ function render(){
     // story of the engagement — the client scrolls one feed, not four tabs.
     const events = buildEngagementTimeline();
     $('feed').innerHTML = events.length? events.map(ev=>
-      ev.kind==='update'
-        ? `<div class="fitem" data-fid="${ev.fid}">
-             <span class="ftag ftag-update">Update</span>
+      ev.kind==='update' || ev.kind==='comment'
+        ? `<div class="fitem" data-fid="${ev.fid||''}">
+             <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
              <span class="fmsg">${esc(ev.text)}</span>
-             ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${ev.fid}" title="Edit">✎</button><button class="fdel" data-fid="${ev.fid}" title="Delete">✕</button></span>`:''}
+             ${teamFeed && ev.fid ? `<span class="factions"><button class="fedit" data-fid="${ev.fid}" title="Edit">✎</button><button class="fdel" data-fid="${ev.fid}" title="Delete">✕</button></span>`:''}
              <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}${ev.edited? ' · <span class="edited">edited '+new Date(ev.edited).toLocaleDateString()+'</span>':''}</div></div>`
         : `<div class="fitem fitem-sys">
              <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
@@ -2644,6 +2601,7 @@ function openOpsDeepLink({ practiceId: pid, view = 'deliverables', delivId, vide
   if(!pid) return;
   practiceId = pid;
   updateSwitcherLabel();
+  resetPracticeUiState();
   pendingDeepLink = { delivId, videoId, phase, milestoneId, view };
   const parts = [view, `pid=${encodeURIComponent(pid)}`];
   if(delivId) parts.push(`deliv=${encodeURIComponent(delivId)}`);
@@ -3181,30 +3139,25 @@ function renderOperationsDashboard(){
   buildOpsMonthPicker(monthly, viewPeriod, latestPeriod);
   $('opsKpiPeriod').textContent = monthly.length
     ? (allMonthsView
-      ? `All months · ${rangeSummary?.monthCount||0} reported · company-wide KPIs across all channels · trends compare latest vs previous month`
+      ? `All months · ${rangeSummary?.monthCount||0} reported · company-wide cumulative KPIs across all channels`
       : `${isLive ? 'Live' : 'Archived snapshot'} · ${periodLabel(viewPeriod)} · sum of every client's KPIs across all channels for this month`)
     : 'No KPI data yet across clients.';
   const rollup = allMonthsView && rangeSummary ? rangeSummary.totals : agg;
-  const trendCur = allMonthsView && rangeSummary ? rangeSummary.latest : agg;
-  const trendPrev = allMonthsView && rangeSummary ? rangeSummary.prev : prevMonth;
-  const dec = allMonthsView ? 1 : 0;
-  // Only surface metrics the current dataset actually supports. Core ad metrics
-  // (reach/impr/spend/clicks) always show; derived ratios show when computable;
-  // consults/procedures show only when the data carries them (>0), so we never
-  // display misleading empty/zero rows for metrics the sync doesn't populate.
+  const trendCur = allMonthsView ? null : agg;
+  const trendPrev = allMonthsView ? null : prevMonth;
   const ctrV = allMonthsView ? (rollup.impr ? rollup.clicks/rollup.impr : null) : agg.ctr;
   const cpcV = allMonthsView ? (rollup.clicks ? rollup.spend/rollup.clicks : null) : agg.cpc;
   const cpmV = allMonthsView ? (rollup.impr ? rollup.spend/(rollup.impr/1000) : null) : agg.cpm;
   const kpiCards = [
-    { l:'Total reach', v: fmtNum(rollup.reach), trend: opsKpiTrend(trendCur, trendPrev, 'reach', { decimals:dec }) },
-    { l:'Total impressions', v: fmtNum(rollup.impr), trend: opsKpiTrend(trendCur, trendPrev, 'impr', { decimals:dec }) },
-    { l:'Total spend', v: fmt$(rollup.spend), trend: opsKpiTrend(trendCur, trendPrev, 'spend', { lowerBetter:true, decimals:dec }) },
-    { l:'Link clicks', v: fmtNum(rollup.clicks), trend: opsKpiTrend(trendCur, trendPrev, 'clicks', { decimals:dec }) },
-    ctrV!=null ? { l:'Avg CTR', v: fmtP(ctrV), trend: opsKpiTrend(trendCur, trendPrev, 'ctr', { decimals:dec }) } : null,
-    cpcV!=null ? { l:'Avg CPC', v: fmt$(cpcV), trend: opsKpiTrend(trendCur, trendPrev, 'cpc', { lowerBetter:true, decimals:dec }) } : null,
-    cpmV!=null ? { l:'Avg CPM', v: fmt$(cpmV), trend: opsKpiTrend(trendCur, trendPrev, 'cpm', { lowerBetter:true, decimals:dec }) } : null,
-    N(rollup,'cons') ? { l:'Total consults', v: fmtNum(rollup.cons), trend: opsKpiTrend(trendCur, trendPrev, 'cons', { decimals:dec }) } : null,
-    N(rollup,'proc') ? { l:'Total procedures', v: fmtNum(rollup.proc), trend: opsKpiTrend(trendCur, trendPrev, 'proc', { decimals:dec }) } : null,
+    { l:'Total reach', v: fmtNum(rollup.reach), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'reach') },
+    { l:'Total impressions', v: fmtNum(rollup.impr), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'impr') },
+    { l:'Total spend', v: fmt$(rollup.spend), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'spend', { lowerBetter:true }) },
+    { l:'Link clicks', v: fmtNum(rollup.clicks), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'clicks') },
+    ctrV!=null ? { l:'Avg CTR', v: fmtP(ctrV), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'ctr') } : null,
+    cpcV!=null ? { l:'Avg CPC', v: fmt$(cpcV), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'cpc', { lowerBetter:true }) } : null,
+    cpmV!=null ? { l:'Avg CPM', v: fmt$(cpmV), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'cpm', { lowerBetter:true }) } : null,
+    N(rollup,'cons') ? { l:'Total consults', v: fmtNum(rollup.cons), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'cons') } : null,
+    N(rollup,'proc') ? { l:'Total procedures', v: fmtNum(rollup.proc), trend: allMonthsView ? null : opsKpiTrend(trendCur, trendPrev, 'proc') } : null,
   ].filter(Boolean);
   $('opsKpiRollup').innerHTML = kpiCards.map(c=>`
     <div class="card ops-metric ops-metric-secondary">
@@ -3580,7 +3533,7 @@ $('btnAddClient').onclick = async ()=>{
     $('newClientName').value = '';
     await loadTeamPractices();
     renderAdminClients();
-    if(data){ practiceId = data; showOnboardChecklist(data, name); }
+    if(data){ practiceId = data; resetPracticeUiState(); showOnboardChecklist(data, name); }
     onbFlash(`Created "${name}". Looking for its workbook in the master folder…`);
     loadAll();
     if(data) autoDiscoverWorkbook(data, name);   // best-effort onboarding; safe if it can't
