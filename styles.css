@@ -819,6 +819,7 @@ select option{background:var(--surface2);color:var(--cream)}
 .clientrow2 .sheeturl{opacity:.75}
 .ssok{font-size:10.5px;color:var(--green);letter-spacing:.04em}
 .ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
+.sswarn{font-size:10.5px;color:var(--amber);letter-spacing:.04em}
 .metricpickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 @media(max-width:640px){.sheetchans{grid-template-columns:1fr}}
 

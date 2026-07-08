@@ -2820,6 +2820,8 @@ function renderOpsClientDetail(r){
     { l:'Videos active', v: String(r.openVid), compact:false },
     { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0, compact:false },
     { l:'Marketing', v: r.marketing, compact:true },
+    { l:'Last sync', v: r.sync?.lastSync ? ago(r.sync.lastSync) : '—',
+      warn: !!(r.sync?.lastSync && syncAge(r.sync.lastSync)?.stale) || r.sync?.hasError, compact:true },
   ];
   const delivRows = groups.flatMap(g=> g.items.map(d=>{
     const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
@@ -3436,6 +3438,16 @@ function ago(ts){
   const h = Math.round(m/60); if(h<24) return `${h}h ago`;
   const d = Math.round(h/24); return d===1 ? 'yesterday' : `${d}d ago`;
 }
+// Sync freshness band. The automation runs every 2 hours, so a healthy source is
+// never more than a few hours old: ok <6h · warn 6–26h (missed runs) · bad >26h
+// (a full day without data). Returns null when there's no timestamp at all.
+function syncAge(ts){
+  if(!ts) return null;
+  const then = new Date(ts).getTime(); if(!isFinite(then)) return null;
+  const h = (Date.now()-then)/3600000;
+  const cls = h < 6 ? 'ok' : h <= 26 ? 'warn' : 'bad';
+  return { cls, hours: h, label: ago(ts), stale: cls!=='ok' };
+}
 // 'YYYY-MM-01'/'YYYY-MM' month keys -> 'Mar, Apr, May' for the synced-months chip
 function monthsList(arr){
   if(!arr || !arr.length) return '';
@@ -3595,10 +3607,13 @@ function sourceTabRow(pid, s){
   if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
   const sm = monthsList(s.last_months); if(sm) detail.push(sm);
   const dtxt = detail.length ? ` ${detail.join(' · ')}` : '';
+  const age = syncAge(s.last_synced_at);
   const status = s.last_status==='error'
-      ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error</span>`
-    : s.last_synced_at
-      ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓${esc(dtxt)}</span>`
+      ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error${age?` · ${esc(age.label)}`:''}</span>`
+    : age
+      ? (age.stale
+          ? `<span class="${age.cls==='bad'?'ssbad':'sswarn'}" title="${esc(new Date(s.last_synced_at).toLocaleString())}">⚠ stale · ${esc(age.label)}${esc(dtxt)}</span>`
+          : `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ ${esc(age.label)}${esc(dtxt)}</span>`)
     : `<span class="note">not synced</span>`;
   return `<div class="srcrow">
     <span class="chanlabel srcname">${esc(channelLabel(source))}</span>
