@@ -30,6 +30,10 @@ header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba
 h1{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(34px,5vw,52px);line-height:1.05}
 h1 em,h2 em{font-style:italic;color:var(--gold)}
 .updated{margin-top:12px;font-size:12px;color:var(--muted);letter-spacing:.08em}
+/* "You are here" — phase + next milestone line under the hero headline */
+.youarehere{margin-top:14px;font-size:14px;color:var(--muted);letter-spacing:.04em}
+.youarehere b{color:var(--gold);font-weight:500}
+.yah-sep{margin:0 10px;color:var(--gold-dim)}
 
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:36px}
 .stat{padding:6px 22px;border-right:1px solid var(--gold);display:flex;flex-direction:column;align-items:flex-end;text-align:right}
@@ -39,6 +43,18 @@ h1 em,h2 em{font-style:italic;color:var(--gold)}
 .d.good{color:var(--green)}.d.warn{color:var(--amber)}.d.bad{color:var(--red)}.d.idle{color:var(--muted)}
 
 section{padding:44px 0;border-bottom:1px solid var(--line)}
+
+/* "Your part" — client next-actions block under the hero */
+.yourpart{border:1px solid var(--gold-dim);background:var(--surface);padding:16px 22px;margin:22px 0 4px}
+.yourpart-head{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
+.yourpart-sub{color:var(--muted);letter-spacing:.08em;text-transform:none;font-size:11px}
+.yourpart-item{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px dashed rgba(201,168,76,.14);font-size:14px}
+.yourpart-item:last-child{border-bottom:none}
+.yourpart-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex:0 0 auto;position:relative;top:-1px}
+.yourpart-item.urgent .yourpart-dot{background:var(--red)}
+.yourpart-text{color:var(--cream)}
+.yourpart-note{color:var(--muted);font-size:12px;margin-left:auto;white-space:nowrap}
+@media(max-width:640px){.yourpart-note{margin-left:17px;flex-basis:100%}.yourpart-item{flex-wrap:wrap}}
 h2{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:28px;margin-bottom:6px}
 h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px;margin:30px 0 4px;color:var(--gold)}
 .sub{color:var(--muted);font-size:13.5px;margin-bottom:22px;letter-spacing:.04em}
@@ -206,6 +222,14 @@ td{padding:10px 14px;border-bottom:1px solid rgba(201,168,76,.1)}
 /* feed */
 .fitem{padding:14px 0;border-bottom:1px solid rgba(201,168,76,.1);font-size:14px;line-height:1.5}
 .fitem .meta{font-size:11px;color:var(--muted);letter-spacing:.08em;margin-top:4px}
+/* engagement-timeline type tags (Update / Delivered / Milestone / Video) */
+.ftag{display:inline-block;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  padding:3px 8px;margin-right:10px;border:1px solid var(--line);color:var(--muted);vertical-align:1px}
+.ftag-update{color:var(--gold);border-color:rgba(201,168,76,.4)}
+.ftag-deliverable{color:var(--green);border-color:rgba(123,168,122,.35)}
+.ftag-milestone{color:var(--cream);border-color:rgba(242,237,227,.3)}
+.ftag-video{color:var(--muted)}
+.fitem-sys .fmsg{color:var(--cream)}
 
 /* team forms — sit flush on the near-black page (no lighter --surface panel) like the client side */
 .entry{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 18px;margin-top:14px}
@@ -835,6 +859,22 @@ select option{background:var(--surface2);color:var(--cream)}
 .ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
 .sswarn{font-size:10.5px;color:var(--amber);letter-spacing:.04em}
 .metricpickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* command palette (team ⌘K / Ctrl+K) */
+.cmdk{position:fixed;inset:0;background:rgba(13,12,16,.72);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding-top:14vh}
+.cmdk-box{width:min(560px,92vw);background:var(--surface);border:1px solid var(--gold-dim);box-shadow:0 18px 60px rgba(0,0,0,.5)}
+.cmdk-input{width:100%;background:var(--ink);border:none;border-bottom:1px solid var(--line);color:var(--cream);padding:16px 18px;font-family:'Jost';font-size:15px}
+.cmdk-input:focus{outline:none}
+.cmdk-list{max-height:46vh;overflow-y:auto}
+.cmdk-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;color:var(--cream);
+  font-family:'Jost';font-size:13.5px;padding:11px 18px;cursor:pointer;border-bottom:1px solid rgba(201,168,76,.08)}
+.cmdk-item.active,.cmdk-item:hover{background:var(--surface2);color:var(--gold)}
+.cmdk-k{font-size:9px;letter-spacing:.18em;text-transform:uppercase;border:1px solid var(--line);color:var(--muted);padding:2px 7px;flex:0 0 auto}
+.cmdk-k-client{color:var(--gold);border-color:rgba(201,168,76,.4)}
+.cmdk-k-action{color:var(--green);border-color:rgba(123,168,122,.35)}
+.cmdk-note{margin-left:auto;font-size:11px;color:var(--muted)}
+.cmdk-empty{padding:16px 18px;color:var(--muted);font-size:13px}
+.cmdk-hint{padding:9px 18px;font-size:10.5px;letter-spacing:.12em;color:var(--muted);border-top:1px solid var(--line)}
+
 /* KPI insights strip — rule-based "what changed" sentences above the charts */
 .kpi-insights{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 2px}
 .insight{font-size:12px;letter-spacing:.05em;padding:6px 12px;border:1px solid var(--line);background:var(--surface);color:var(--cream)}

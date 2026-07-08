@@ -587,6 +587,14 @@ async function loadAll(){
   ]);
   data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
+  // Pending platform-access requests visible to the CLIENT ("Your part" block).
+  // Via security-definer RPC because sheet_sources itself is team-only under RLS.
+  // Fail-soft: databases without the migration simply render no block.
+  data.pendingAccess = [];
+  try{
+    const { data: pa, error: paErr } = await sb.rpc('get_my_pending_access', { p_practice: practiceId });
+    if(!paErr && Array.isArray(pa)) data.pendingAccess = pa;
+  }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -926,6 +934,62 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- "Your part" (client-facing next actions) ----------------
+   The next-action doctrine pointed at the client: the only things ROXIUM is
+   waiting on THEM for — approvals blocking videos, and platform-access
+   requests they haven't granted yet. Hidden entirely when there's nothing. */
+function renderYourPart(){
+  const el = $('yourPart'); if(!el) return;
+  // Client-facing (including team "Preview as client"); the team has the ops queue.
+  if(isTeamView()){ el.classList.add('hidden'); el.innerHTML=''; return; }
+  const items = [];
+  (data.video||[]).forEach(v=>{
+    if(v.blocked && v.stage!=='posted' && v.stage!=='delivered'){
+      const days = daysIn(v.stage_since);
+      items.push({ text:`Approve “${v.item}”${v.blocked_reason? ` — ${v.blocked_reason}`:''}`,
+        note: days>=3 ? `waiting ${days} days` : 'waiting on you', urgent: days>=7 });
+    }
+  });
+  (data.pendingAccess||[]).filter(a=> a.access_status==='requested').forEach(a=>{
+    items.push({ text:`Grant ${channelLabel(a.source)} access`,
+      note: a.requested_days!=null ? `we sent instructions ${a.requested_days}d ago — check your inbox` : 'instructions are in your inbox',
+      urgent: (a.requested_days??0)>=7 });
+  });
+  if(!items.length){ el.classList.add('hidden'); el.innerHTML=''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="yourpart-head">Your part <span class="yourpart-sub">— only you can unblock these</span></div>
+    ${items.map(i=>`<div class="yourpart-item${i.urgent?' urgent':''}">
+       <span class="yourpart-dot" aria-hidden="true"></span>
+       <span class="yourpart-text">${esc(i.text)}</span>
+       <span class="yourpart-note">${esc(i.note)}</span>
+     </div>`).join('')}`;
+}
+
+/* ---------------- engagement timeline ----------------
+   One chronological feed per practice: team-posted updates + the system events
+   that already exist in the data (deliverables delivered, milestones completed,
+   video stage history). No new tables — it's a merge of what loadAll() fetched. */
+function buildEngagementTimeline(){
+  const ev = [];
+  (data.feed||[]).forEach(f=> ev.push({
+    t:f.created_at, kind:'update', text:f.message,
+    meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at }));
+  (data.deliv||[]).forEach(d=>{
+    if(d.status==='delivered' && d.delivered_at)
+      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'Delivered', text:d.name, meta:d.phase||'Deliverable' });
+  });
+  (data.miles||[]).forEach(m=>{
+    if(m.status==='done' && m.completed_on)
+      ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap' });
+  });
+  const vname = id => ((data.video||[]).find(v=> v.id===id)||{}).item || 'Video';
+  (data.vhist||[]).forEach(h=> ev.push({
+    t:h.moved_at, kind:'video', tag:'Video', text:`${vname(h.video_id)} → ${stageLabelOf(h.stage)}`, meta:'Video pipeline' }));
+  ev.sort((a,b)=> new Date(b.t)-new Date(a.t));
+  return ev.slice(0, 80);   // keep the DOM bounded on long engagements
+}
+
 /* ---------------- KPI insights (rule-based, no AI) ----------------
    Turn month-over-month movement into short sentences so the metrics view
    leads with "what changed" instead of asking the reader to diff charts.
@@ -1048,6 +1112,32 @@ function render(){
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
+  // "You are here" — current phase, its progress, and the next milestone, right
+  // under the headline so the journey frames the numbers (not the reverse).
+  safe('you are here', ()=>{
+    const el = $('youAreHere'); if(!el) return;
+    const parts = [];
+    if(data.practice && data.deliv.length){
+      const phase = computePracticePhaseState(data.practice, data.deliv);
+      if(phase.currentPhase){
+        const g = groupDelivsByPhase(data.deliv).find(x=> x.phase===phase.currentPhase);
+        const done = g ? g.items.filter(d=> d.status==='delivered').length : 0;
+        const total = g ? g.items.length : 0;
+        parts.push(`<b>${esc(phase.currentPhase)}</b>${total? ` · ${done} of ${total} delivered`:''}`);
+      } else {
+        parts.push('<b>All phases delivered</b>');
+      }
+    }
+    const nextMs = (data.miles||[]).filter(m=> m.status!=='done')
+      .sort((a,b)=> (a.sort||0)-(b.sort||0))[0];
+    if(nextMs) parts.push(`Next milestone: ${esc(nextMs.name)}${nextMs.target_date? ` — ${esc(prettyDate(nextMs.target_date))}`:''}`);
+    el.innerHTML = parts.join('<span class="yah-sep">·</span>');
+    el.classList.toggle('hidden', !parts.length);
+  });
+
+  // "Your part" — what ROXIUM is waiting on the client for (client view only)
+  safe('your part', ()=> renderYourPart());
+
   // timeline
   const isTeam = isTeamView();
   safe('timeline', ()=> renderTimeline(isTeam));
@@ -1134,12 +1224,22 @@ function render(){
   // feed (team can edit/delete each posted update)
   safe('updates feed', ()=>{
     const teamFeed = isTeamView();
-    $('feed').innerHTML = data.feed.length? data.feed.map(f=>
-      `<div class="fitem" data-fid="${f.id}">
-         <span class="fmsg">${esc(f.message)}</span>
-         ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${f.id}" title="Edit">✎</button><button class="fdel" data-fid="${f.id}" title="Delete">✕</button></span>`:''}
-         <div class="meta">${esc(f.author||'ROXIUM')} · ${new Date(f.created_at).toLocaleDateString()} · ${esc(f.source)}${f.edited_at? ' · <span class="edited">edited '+new Date(f.edited_at).toLocaleDateString()+'</span>':''}</div></div>`).join('')
-      : '<p class="note">No updates yet.</p>';
+    // Engagement timeline: posted updates merged with system events (deliverables
+    // delivered, milestones completed, video stage moves) into ONE chronological
+    // story of the engagement — the client scrolls one feed, not four tabs.
+    const events = buildEngagementTimeline();
+    $('feed').innerHTML = events.length? events.map(ev=>
+      ev.kind==='update'
+        ? `<div class="fitem" data-fid="${ev.fid}">
+             <span class="ftag ftag-update">Update</span>
+             <span class="fmsg">${esc(ev.text)}</span>
+             ${teamFeed? `<span class="factions"><button class="fedit" data-fid="${ev.fid}" title="Edit">✎</button><button class="fdel" data-fid="${ev.fid}" title="Delete">✕</button></span>`:''}
+             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}${ev.edited? ' · <span class="edited">edited '+new Date(ev.edited).toLocaleDateString()+'</span>':''}</div></div>`
+        : `<div class="fitem fitem-sys">
+             <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
+             <span class="fmsg">${esc(ev.text)}</span>
+             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}</div></div>`
+    ).join('') : '<p class="note">No updates yet.</p>';
     if(teamFeed){
       $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
       $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
@@ -3094,6 +3194,7 @@ function renderOperationsDashboard(){
     ? attentionList.map(a=> renderOpsAlertItem(a)).join('')
     : '<p class="note ops-empty-note">No priorities flagged — everything looks on track.</p>';
   wireOpsAttentionList(feed);
+  safe('ops accountability', ()=> renderOpsAccountability());
   // KPI rollup — selected reporting month across all clients
   const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
   const latestPeriod = monthly.length ? monthly[monthly.length-1].period : null;
@@ -3191,6 +3292,40 @@ function renderOperationsDashboard(){
   }
   const countEl = $('opsClientCount');
   if(countEl) countEl.textContent = `${overviewRows.length} client${overviewRows.length===1?'':'s'}${clientQ? ' matching search':''}`;
+}
+// Delivery accountability — quantify execution per client the way response time
+// quantifies a front office: shipped volume, on-time rate, and what's aging.
+// Uses only columns the ops loader already fetches (due / delivered_at /
+// status / status_since) — no schema change.
+function renderOpsAccountability(){
+  const el = $('opsAccountability'); if(!el || !opsData) return;
+  const now = Date.now(), d30 = now - 30*86400000;
+  const rows = (opsData.practices||[]).map(p=>{
+    const ds = (opsData.deliverables||[]).filter(d=> d.practice_id===p.id);
+    if(!ds.length) return null;
+    const delivered30 = ds.filter(d=> d.status==='delivered' && d.delivered_at && new Date(d.delivered_at).getTime()>=d30).length;
+    const judged = ds.filter(d=> d.status==='delivered' && d.delivered_at && d.due);
+    const onTime = judged.length
+      ? Math.round(100 * judged.filter(d=> new Date(d.delivered_at) <= new Date(String(d.due).slice(0,10)+'T23:59:59')).length / judged.length)
+      : null;
+    const openOverdue = ds.filter(d=> d.status!=='delivered' && d.due && new Date(d.due) < new Date()).length;
+    const inProg = ds.filter(d=> d.status==='in_progress').map(d=> daysIn(d.status_since));
+    const oldestInProg = inProg.length ? Math.max(...inProg) : null;
+    return { name: p.name, delivered30, onTime, judgedCount: judged.length, openOverdue, oldestInProg };
+  }).filter(Boolean);
+  if(!rows.length){ el.innerHTML = '<p class="note">No deliverables tracked yet.</p>'; return; }
+  rows.sort((a,b)=> b.openOverdue - a.openOverdue || (a.onTime??101) - (b.onTime??101) || b.delivered30 - a.delivered30);
+  const otCell = r => r.onTime==null ? '<span class="note">—</span>'
+    : `<span class="${r.onTime>=80?'ssok':r.onTime>=50?'sswarn':'ssbad'}" title="${r.judgedCount} delivered item(s) had a due date">${r.onTime}%</span>`;
+  el.innerHTML = `<table class="ops-table ops-table-compact"><thead><tr>
+      <th>Client</th><th>Delivered 30d</th><th>On-time rate</th><th>Open overdue</th><th>Longest in progress</th>
+    </tr></thead><tbody>${rows.map(r=>`<tr class="${r.openOverdue? 'ops-row-warn':''}">
+      <td>${esc(r.name)}</td>
+      <td>${r.delivered30 || '—'}</td>
+      <td>${otCell(r)}</td>
+      <td>${r.openOverdue ? `<span class="ssbad">${r.openOverdue}</span>` : '0'}</td>
+      <td>${r.oldestInProg!=null ? `${r.oldestInProg}d${r.oldestInProg>=14?' <span class="ssbad">⚠</span>':r.oldestInProg>=7?' <span class="sswarn">⚠</span>':''}` : '—'}</td>
+    </tr>`).join('')}</tbody></table>`;
 }
 async function loadOperationsData(force){
   if(!isTeamView()) return;
@@ -4264,6 +4399,86 @@ $('btnResetData').onclick = async ()=>{
     </ul>
     <p>Where you see an <b>ⓘ</b> next to a deliverable, click it for a plain-English explanation of what that item is and why it matters.</p>`;
   btn.onclick = ()=> guide.classList.toggle('hidden');
+})();
+
+/* ---------------- command palette (team, ⌘K / Ctrl+K) ----------------
+   One keystroke to anywhere: jump to a client, jump to a view, or run the
+   reporting sync — without hunting through menus. Team-only (clients have a
+   single practice and five tabs; a palette would be noise for them). */
+(function(){
+  let el = null, input = null, list = null, activeIdx = 0, open = false;
+  function buildDom(){
+    el = document.createElement('div');
+    el.id = 'cmdk';
+    el.className = 'cmdk hidden';
+    el.innerHTML = `<div class="cmdk-box" role="dialog" aria-label="Command palette">
+      <input class="cmdk-input" type="text" placeholder="Jump to a client, view, or action…" autocomplete="off" spellcheck="false">
+      <div class="cmdk-list" role="listbox"></div>
+      <div class="cmdk-hint">↑↓ navigate · Enter run · Esc close</div>
+    </div>`;
+    document.body.appendChild(el);
+    input = el.querySelector('.cmdk-input');
+    list = el.querySelector('.cmdk-list');
+    el.addEventListener('click', e=>{ if(e.target===el) close(); });
+    input.addEventListener('input', ()=> draw(input.value));
+    input.addEventListener('keydown', e=>{
+      const items = [...list.querySelectorAll('.cmdk-item')];
+      if(e.key==='Escape'){ close(); }
+      else if(e.key==='ArrowDown'){ activeIdx = Math.min(items.length-1, activeIdx+1); paint(items); e.preventDefault(); }
+      else if(e.key==='ArrowUp'){ activeIdx = Math.max(0, activeIdx-1); paint(items); e.preventDefault(); }
+      else if(e.key==='Enter'){ items[activeIdx]?.click(); e.preventDefault(); }
+    });
+  }
+  function paint(items){
+    items.forEach((b,i)=> b.classList.toggle('active', i===activeIdx));
+    items[activeIdx]?.scrollIntoView({ block:'nearest' });
+  }
+  function commands(){
+    const cmds = [];
+    // views (global team surfaces + the open practice's tabs)
+    cmds.push({ k:'view', label:'Operations Dashboard', run:()=>{ location.hash='#operations'; } });
+    cmds.push({ k:'view', label:'Team Controls', run:()=>{ location.hash='#controls'; } });
+    [['roadmap','Roadmap'],['deliverables','Progress / deliverables'],['video','Video pipeline'],['metrics','Metrics'],['updates','Timeline / updates'],['team','Team panel']]
+      .forEach(([v,l])=> cmds.push({ k:'view', label:l, run:()=>{ location.hash='#'+v; } }));
+    // actions
+    cmds.push({ k:'action', label:'Sync now — pull all reporting sources', run:async ()=>{
+      try{ await invokeSyncFn({ action:'sync', trigger:'manual' }); await loadSheetSources(); if(currentView()==='operations') loadOperationsData(true); if(practiceId) loadAll(); }
+      catch(e){ uiAlert('Sync failed', esc(e?.message||String(e))); }
+    }});
+    // clients
+    (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
+      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#roadmap'; loadAll(); } }));
+    return cmds;
+  }
+  function draw(q){
+    const ql = (q||'').trim().toLowerCase();
+    const matches = commands().filter(c=> !ql || c.label.toLowerCase().includes(ql)).slice(0, 14);
+    activeIdx = 0;
+    list.innerHTML = matches.length ? matches.map(c=>
+      `<button type="button" class="cmdk-item" role="option">
+         <span class="cmdk-k cmdk-k-${c.k}">${c.k}</span>${esc(c.label)}${c.note? `<span class="cmdk-note">${esc(c.note)}</span>`:''}
+       </button>`).join('')
+      : '<div class="cmdk-empty">No matches</div>';
+    const items = [...list.querySelectorAll('.cmdk-item')];
+    items.forEach((b,i)=> b.onclick = ()=>{ close(); matches[i].run(); });
+    paint(items);
+  }
+  function openPal(){
+    if(!me || me.role!=='team') return;
+    if(!el) buildDom();
+    open = true;
+    el.classList.remove('hidden');
+    input.value = '';
+    draw('');
+    setTimeout(()=> input.focus(), 0);
+  }
+  function close(){ if(!el) return; open = false; el.classList.add('hidden'); }
+  window.addEventListener('keydown', e=>{
+    if((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase()==='k'){
+      e.preventDefault();
+      open ? close() : openPal();
+    }
+  });
 })();
 
 init();

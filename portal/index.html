@@ -68,9 +68,13 @@
     <div class="hero">
       <div class="eyebrow">Live Performance & Delivery</div>
       <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
+      <div id="youAreHere" class="youarehere hidden"></div>
       <div class="updated" id="updated"></div>
       <div class="stats" id="heroStats"></div>
     </div>
+
+    <!-- "Your part" — client-facing next actions (hidden when empty / team view) -->
+    <div id="yourPart" class="yourpart hidden"></div>
 
     <!-- Tabbed navigation (hash-routed) -->
     <nav class="tabs" id="tabnav">
@@ -133,8 +137,8 @@
 
     <!-- Activity feed -->
     <section class="view" data-view="updates">
-      <h2>Latest <em>updates</em></h2>
-      <div class="sub">Posted by your ROXIUM team as work ships.</div>
+      <h2>Your engagement <em>timeline</em></h2>
+      <div class="sub">Everything as it happens — team updates, delivered work, completed milestones, and video progress in one chronological feed.</div>
       <div id="feed"></div>
     </section>
 
@@ -183,6 +187,11 @@
         <p class="note ops-client-count" id="opsClientCount"></p>
         <div id="opsUrgentStrip" class="ops-urgent-strip"></div>
         <div id="opsClientOverview" class="ops-client-list"></div>
+      </div>
+      <div class="ops-panel">
+        <h3>Delivery accountability</h3>
+        <p class="note ops-panel-note">Execution measured per client: what shipped in the last 30 days, whether it shipped on time, and what's aging right now. Sorted worst-first.</p>
+        <div id="opsAccountability"></div>
       </div>
     </section>
 
