@@ -2424,9 +2424,36 @@ function buildOpsAlerts(){
       }
     });
     const sync = kpiSyncMeta(p.id);
+    const pSources = (opsData?.sources||[]).filter(s=> s.practice_id===p.id);
     if(sync.hasError){
-      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics' });
+      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics', action:'sync' });
+    } else {
+      // Data stopped flowing without an outright error (>26h since a 2-hourly job)
+      const staleSrcs = pSources.filter(s=> s.last_status!=='error' && syncAge(s.last_synced_at)?.cls==='bad');
+      if(staleSrcs.length){
+        alerts.push({ severity:'yellow', practice:pname, practiceId:p.id, title:'KPI sync stale',
+          detail:`${staleSrcs.map(s=> channelLabel(s.source)).join(', ')} · no data for over a day`,
+          sort: OPS_HEALTH_RANK.yellow, linkView:'metrics', action:'sync' });
+      }
     }
+    // The pre-pipeline chase: access asked for but never granted (SOP: escalate ~5
+    // business days), and access granted but never wired into a syncing tab.
+    pSources.forEach(s=>{
+      if(s.access_status==='requested'){
+        const days = accessAgeDays(s);
+        if(days==null || days < 3) return;
+        const sev = days>=7 ? 'red' : 'yellow';
+        alerts.push({ severity:sev, practice:pname, practiceId:p.id,
+          title: days>=7 ? 'Access request aging — escalate' : 'Access request pending',
+          detail:`${channelLabel(s.source)} · requested ${days}d ago`,
+          sort: OPS_HEALTH_RANK[sev], days, linkView:'metrics', srcKey:s.source });
+      } else if(s.access_status==='granted' && !s.last_synced_at){
+        alerts.push({ severity:'yellow', practice:pname, practiceId:p.id,
+          title:'Access granted — finish wiring',
+          detail:`${channelLabel(s.source)} · connect the workbook tab, then sync`,
+          sort: OPS_HEALTH_RANK.yellow, linkView:'metrics', srcKey:s.source });
+      }
+    });
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
       if(!m.target_date || m.status==='done') return;
       const days = Math.ceil((new Date(m.target_date+'T12:00:00')-Date.now())/86400000);
@@ -2441,7 +2468,7 @@ function buildOpsAlerts(){
   return alerts;
 }
 function opsAlertId(a){
-  return [a.practiceId, a.linkView||'', a.title, a.delivId||'', a.videoId||'', a.milestoneId||'', a.phase||''].join('|');
+  return [a.practiceId, a.linkView||'', a.title, a.delivId||'', a.videoId||'', a.milestoneId||'', a.phase||'', a.srcKey||''].join('|');
 }
 function defaultAlertSort(a, b){
   return a.sort - b.sort || (a.days??999) - (b.days??999) || a.practice.localeCompare(b.practice);
@@ -2643,6 +2670,7 @@ function renderOpsAlertItem(a){
     </div>
     <div class="ops-alert-actions">
       ${a.uiState==='active' ? `
+      ${a.action==='sync' ? `<button type="button" class="ops-alert-verb" data-sync-alert="${esc(a.id)}" title="Run the reporting sync now">Sync now</button>` : ''}
       <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}">📌</button>
       <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow">⏸</button>
       <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss">✕</button>` : `${resumeBtn}${restoreBtn}`}
@@ -2677,6 +2705,23 @@ function wireOpsAttentionList(root){
       opsAttentionState.dismissed.delete(id);
       saveOpsAttentionState(opsAttentionState);
       renderOperationsDashboard();
+    };
+  });
+  // One-click verb on sync alerts: run the reporting sync right from the queue,
+  // then reload ops data so the alert clears itself if the sync fixed it.
+  scope.querySelectorAll('[data-sync-alert]').forEach(btn=>{
+    btn.onclick = async e=>{
+      e.stopPropagation();
+      btn.disabled = true; btn.textContent = 'Syncing…';
+      try{
+        await invokeSyncFn({ action:'sync', trigger:'manual' });
+        await loadSheetSources();
+        await loadOperationsData(true);
+      }catch(err){
+        console.error('[ops] sync-now failed:', err);
+        btn.textContent = 'Failed';
+        setTimeout(()=>{ btn.disabled = false; btn.textContent = 'Sync now'; }, 2000);
+      }
     };
   });
   scope.querySelectorAll('[data-resume-alert]').forEach(btn=>{
@@ -2952,6 +2997,16 @@ function renderOperationsDashboard(){
   const activeAttention = attentionList.filter(a=> a.uiState==='active');
   const needAttentionCount = activeAttention.length;
   const needAttentionClients = new Set(activeAttention.map(a=> a.practiceId)).size;
+  // Data-connection digest: everything between "we asked" and "data is flowing".
+  const allSources = opsData.sources || [];
+  const connPending = allSources.filter(s=> s.access_status==='requested' || (s.access_status==='granted' && !s.last_synced_at)).length;
+  const connErrors  = allSources.filter(s=> s.last_status==='error').length;
+  const connStale   = allSources.filter(s=> s.last_status!=='error' && syncAge(s.last_synced_at)?.cls==='bad').length;
+  const connIssues  = connPending + connErrors + connStale;
+  const connNoteParts = [];
+  if(connPending) connNoteParts.push(`${connPending} awaiting access/wiring`);
+  if(connErrors)  connNoteParts.push(`${connErrors} sync error${connErrors===1?'':'s'}`);
+  if(connStale)   connNoteParts.push(`${connStale} stale`);
   const cards = [
     { v: practices.length, l:'Active clients', note:'on the roster', tier:'primary' },
     { v: needAttentionCount, l:'Need attention', note: needAttentionCount ? `${needAttentionClients} client${needAttentionClients===1?'':'s'} · ${needAttentionCount} flag${needAttentionCount===1?'':'s'}` : 'nothing flagged', cls: needAttentionCount? 'a':'', tier:'primary' },
@@ -2961,6 +3016,7 @@ function renderOperationsDashboard(){
     { v: videosProd, l:'Videos in production', note:'not yet delivered', tier:'secondary' },
     { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
     { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
+    { v: connIssues, l:'Data connections', note: connIssues ? connNoteParts.join(' · ') : 'all sources flowing', cls: connErrors? 'r' : connIssues? 'a':'g', tier:'secondary' },
     { v: avgHealth, l:'Avg health score', note:'across filtered clients', tier:'secondary' },
   ];
   $('opsExecCards').innerHTML = cards.map(c=>`
