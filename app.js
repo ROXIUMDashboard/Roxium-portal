@@ -133,6 +133,222 @@ const CHANNELS = [
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
   : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
+
+/* ---------------- Marketing Connections (product layer) ---------------- */
+// Platforms are DATA SOURCES — Roxium is the OS. UI abstracts sheet_sources/sync.
+const MARKETING_PLATFORMS = [
+  { id:'marketing', label:'Meta Business Suite', sourceKeys:['marketing','meta','coefficient','instagram_insights','facebook_insights','page_engagement'],
+    permission:'Partial access · Read-only', ask:'Instagram Professional, Facebook Page, Ad Account, Insights',
+    tier:'required', icon:'◆' },
+  { id:'google_ads', label:'Google Ads', sourceKeys:['google_ads'], permission:'Viewer or Standard',
+    ask:'Invite ROXIUM reporting email or link to our manager account', tier:'required', icon:'◆' },
+  { id:'google_analytics', label:'Google Analytics', sourceKeys:['google_analytics'], permission:'Viewer',
+    ask:'Property-level access for our reporting email', tier:'recommended', icon:'◇' },
+  { id:'google_business', label:'Google Business Profile', sourceKeys:['google_business','google_business_profile'],
+    permission:'Manager (no view-only role)', ask:'Profile manager for our reporting email', tier:'recommended', icon:'◇' },
+  { id:'youtube_analytics', label:'YouTube Analytics', sourceKeys:['youtube_analytics'], permission:'Analytics Viewer',
+    ask:'Channel permissions for our reporting email', tier:'recommended', icon:'◇' },
+  { id:'microsoft_ads', label:'Microsoft Ads', sourceKeys:['microsoft_ads'], permission:'Viewer',
+    ask:'Invite our reporting email', tier:'optional', icon:'○' },
+];
+const MKT_STATUS = {
+  connected:   { label:'Connected',   dot:'🟢', cls:'mkt-connected' },
+  waiting:     { label:'Waiting',     dot:'🟡', cls:'mkt-waiting' },
+  requested:   { label:'Requested',   dot:'🟡', cls:'mkt-requested' },
+  not_connected:{ label:'Not Connected', dot:'⚪', cls:'mkt-off' },
+  not_used:    { label:'Not Used',    dot:'⚪', cls:'mkt-unused' },
+  error:       { label:'Error',       dot:'🔴', cls:'mkt-error' },
+};
+function practiceMktMeta(p){
+  const raw = p?.marketing_connections;
+  return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+}
+function sheetRowForPlatform(pid, platform){
+  const keys = new Set(platform.sourceKeys || [platform.id]);
+  return Object.values(sheetSources).find(s=>
+    s.practice_id===pid && keys.has(s.source||'marketing'));
+}
+function resolvePlatformConnection(p, platform){
+  const pid = p.id;
+  const stored = practiceMktMeta(p)[platform.id] || {};
+  if(stored.status==='not_used') return { ...stored, status:'not_used', statusMeta:MKT_STATUS.not_used };
+  const row = sheetRowForPlatform(pid, platform);
+  if(row){
+    if(row.last_status==='error') return {
+      status:'error', statusMeta:MKT_STATUS.error, lastSync:row.last_synced_at,
+      account:row.tab_name ? `Tab: ${row.tab_name}` : null, error:row.last_error,
+      connectedBy:stored.connected_by||null,
+    };
+    if(row.last_synced_at) return {
+      status:'connected', statusMeta:MKT_STATUS.connected, lastSync:row.last_synced_at,
+      account:row.tab_name ? `Live data · ${row.tab_name}` : 'Live data active',
+      connectedBy:stored.connected_by||null,
+    };
+    if((row.tab_name||'').trim()) return {
+      status:'waiting', statusMeta:MKT_STATUS.waiting, lastSync:null,
+      account:'Access granted — awaiting first data refresh',
+      connectedBy:stored.connected_by||null,
+    };
+  }
+  const manual = stored.status;
+  if(manual && MKT_STATUS[manual]) return { ...stored, status:manual, statusMeta:MKT_STATUS[manual] };
+  return { status:'not_connected', statusMeta:MKT_STATUS.not_connected, ...stored };
+}
+function practiceConnectionSummary(p){
+  const platforms = MARKETING_PLATFORMS.map(pl=> ({ platform:pl, conn:resolvePlatformConnection(p, pl) }));
+  const active = platforms.filter(x=> x.conn.status!=='not_used');
+  const connected = active.filter(x=> x.conn.status==='connected').length;
+  const missing = active.filter(x=> x.conn.status==='not_connected' || x.conn.status==='requested').map(x=> x.platform.label);
+  const waiting = active.filter(x=> x.conn.status==='waiting').map(x=> x.platform.label);
+  const errors = active.filter(x=> x.conn.status==='error').map(x=> x.platform.label);
+  const lastSync = platforms.map(x=> x.conn.lastSync).filter(Boolean).sort().pop() || null;
+  return { platforms, activeCount:active.length, connected, missing, waiting, errors, lastSync };
+}
+function renderPlatformConnectionCard(p, platform){
+  const c = resolvePlatformConnection(p, platform);
+  const st = c.statusMeta || MKT_STATUS.not_connected;
+  const last = c.lastSync ? `Last synced ${ago(c.lastSync)}` : (c.status==='waiting' ? 'Awaiting data refresh' : '');
+  return `<div class="mkt-platform-card ${st.cls}" data-mkt-pid="${p.id}" data-mkt-platform="${platform.id}">
+    <div class="mkt-platform-head">
+      <span class="mkt-platform-dot" aria-hidden="true">${st.dot}</span>
+      <span class="mkt-platform-name">${esc(platform.label)}</span>
+      <span class="mkt-platform-status">${esc(st.label)}</span>
+    </div>
+    <div class="mkt-platform-detail note">${esc(c.account || platform.permission)}</div>
+    ${last ? `<div class="mkt-platform-sync note">${esc(last)}</div>` : ''}
+    ${c.connectedBy ? `<div class="mkt-platform-by note">Connected by ${esc(c.connectedBy)}</div>` : ''}
+    <div class="mkt-platform-actions">
+      <select class="picker mkt-status-sel" data-mkt-status="${p.id}::${platform.id}" aria-label="Update ${esc(platform.label)} status">
+        <option value="">Update status…</option>
+        <option value="requested"${c.status==='requested'?' selected':''}>Requested</option>
+        <option value="waiting"${c.status==='waiting'?' selected':''}>Waiting</option>
+        <option value="not_connected"${c.status==='not_connected'?' selected':''}>Not connected</option>
+        <option value="not_used"${c.status==='not_used'?' selected':''}>Not used</option>
+      </select>
+      <button type="button" class="btn ghost xs mkt-reconnect" data-mkt-reconnect="${p.id}::${platform.id}" title="Mark for reconnect">Reconnect</button>
+    </div>
+  </div>`;
+}
+function clientMarketingConnectionsBlock(p){
+  const sum = practiceConnectionSummary(p);
+  const setupLbl = p.marketing_setup_type==='agency' ? 'Marketing agency'
+    : p.marketing_setup_type==='internal' ? 'Internal marketing team'
+    : p.marketing_setup_type==='none' ? 'No marketing team' : 'Setup not chosen';
+  return `<div class="mkt-connections-block">
+    <div class="mkt-client-summary">
+      <span class="mkt-setup-type">${esc(setupLbl)}</span>
+      <span class="mkt-conn-count">${sum.connected} / ${sum.activeCount} connected</span>
+    </div>
+    <div class="mkt-platform-grid">${MARKETING_PLATFORMS.map(pl=> renderPlatformConnectionCard(p, pl)).join('')}</div>
+    <details class="mkt-tech-setup">
+      <summary>Connection setup <span class="note">(team only)</span></summary>
+      ${clientWorkbookBlock(p)}
+      ${clientSourcesHTML(p.id)}
+    </details>
+  </div>`;
+}
+function renderOpsMarketingHealth(){
+  const el = $('opsMarketingHealth'); if(!el || !opsData) return;
+  const practices = opsData.practices || [];
+  if(!practices.length){ el.innerHTML = '<p class="note">No clients on the roster yet.</p>'; return; }
+  let totalActive = 0, totalConnected = 0;
+  const missingSet = new Set();
+  let rosterLastSync = null;
+  practices.forEach(p=>{
+    const sum = practiceConnectionSummary(p);
+    totalActive += sum.activeCount;
+    totalConnected += sum.connected;
+    sum.missing.forEach(m=> missingSet.add(m));
+    if(sum.lastSync && (!rosterLastSync || sum.lastSync > rosterLastSync)) rosterLastSync = sum.lastSync;
+  });
+  const missing = [...missingSet].slice(0, 6);
+  el.innerHTML = `
+    <div class="ops-mkt-summary cards">
+      <div class="card ops-metric ops-metric-primary">
+        <div class="k">Overall connection status</div>
+        <div class="big">${totalConnected} / ${totalActive}</div>
+        <div class="tgt">marketing sources connected</div>
+      </div>
+      <div class="card ops-metric ops-metric-secondary">
+        <div class="k">Last data refresh</div>
+        <div class="big">${rosterLastSync ? ago(rosterLastSync) : '—'}</div>
+        <div class="tgt">${rosterLastSync ? new Date(rosterLastSync).toLocaleString() : 'No live data yet'}</div>
+      </div>
+      <div class="card ops-metric ops-metric-secondary${missing.length?' ops-metric-a':''}">
+        <div class="k">Missing connections</div>
+        <div class="big">${missing.length || '—'}</div>
+        <div class="tgt">${missing.length ? esc(missing.join(' · ')) : 'All required sources connected'}</div>
+      </div>
+    </div>
+    <p class="note ops-mkt-tagline">Roxium unifies Meta, Google, YouTube, deliverables, milestones, video production, and cross-platform KPIs — platforms are inputs, not the product.</p>`;
+}
+function renderMktChecklistPlatforms(){
+  const el = $('mktChecklistPlatforms'); if(!el) return;
+  el.innerHTML = MARKETING_PLATFORMS.map(pl=>`
+    <div class="mkt-checklist-row">
+      <div class="mkt-checklist-name"><strong>${esc(pl.label)}</strong> <span class="note">· ${esc(pl.tier)}</span></div>
+      <div class="note">${esc(pl.ask)}</div>
+      <div class="note">Permission: <em>${esc(pl.permission)}</em></div>
+    </div>`).join('');
+}
+const MKT_INVITE_EMAIL = `Subject: Welcome to your ROXIUM Practice Growth Portal
+
+Hi [Name],
+
+Your ROXIUM portal is ready — one place to see deliverables, milestones, video production, and live marketing performance across every channel.
+
+We need read-only access to your marketing platforms (Meta, Google, etc.) so performance data flows into Roxium automatically. You never need to log into Meta Business Suite or Google Ads for our reporting — Roxium is your operating system.
+
+Please use the attached Data Access Checklist to grant read-only access to our reporting identity. If you work with a marketing agency, forward this to them directly.
+
+We're here if you have questions.
+
+— The ROXIUM Team`;
+async function setPlatformConnectionStatus(pid, platformId, status){
+  const { error } = await sb.rpc('set_practice_marketing_connection', {
+    p_practice: pid, p_platform: platformId, p_patch: { status },
+  });
+  if(error && !/does not exist|not find/i.test(error.message)){
+    adminDelFlash('Could not save — run migrations/2026-07-08_marketing_connections.sql');
+    return false;
+  }
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  if(p){
+    const cur = practiceMktMeta(p);
+    cur[platformId] = { ...(cur[platformId]||{}), status, updated_at:new Date().toISOString() };
+    p.marketing_connections = cur;
+  }
+  if(opsData?.practices){
+    const op = opsData.practices.find(x=> x.id===pid);
+    if(op) op.marketing_connections = p?.marketing_connections;
+  }
+  return true;
+}
+function wireMarketingConnectionControls(root){
+  const scope = root || document;
+  scope.querySelectorAll('.mkt-status-sel').forEach(sel=>{
+    sel.onchange = async ()=>{
+      const v = sel.value; if(!v) return;
+      const [pid, platformId] = sel.dataset.mktStatus.split('::');
+      if(await setPlatformConnectionStatus(pid, platformId, v)){
+        renderAdminClients();
+        if(opsData) renderOperationsDashboard();
+      }
+      sel.value = '';
+    };
+  });
+  scope.querySelectorAll('.mkt-reconnect').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const [pid, platformId] = btn.dataset.mktReconnect.split('::');
+      if(await setPlatformConnectionStatus(pid, platformId, 'requested')){
+        adminDelFlash('Marked for reconnect.');
+        renderAdminClients();
+      }
+    };
+  });
+  enhanceSelectsIn(scope);
+}
+
 // Human, correctly-capitalized role labels for access/account messaging.
 const roleLabel = r => ({ owner:'Owner', member:'Member', team:'ROXIUM Team', client:'Client', admin:'Admin' }[String(r||'').toLowerCase()]
   || (r ? String(r).replace(/\b\w/g, c=>c.toUpperCase()) : '—'));
@@ -171,8 +387,10 @@ const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
 let lastClientView = 'roadmap';
 let lastAdminTab = localStorage.getItem('lastAdminTab') || 'clients';
+if(lastAdminTab === 'reporting'){ lastAdminTab = 'connections'; localStorage.setItem('lastAdminTab', lastAdminTab); }
 function activateAdminTab(name){
   name = name || 'clients';
+  if(name === 'reporting') name = 'connections';
   if(!document.querySelector(`#adminTabs .atab[data-atab="${name}"]`)) name = 'clients';
   document.querySelectorAll('#adminTabs .atab').forEach(t=> t.classList.toggle('active', t.dataset.atab===name));
   document.querySelectorAll('.admin-tab').forEach(p=> p.classList.toggle('hidden', p.dataset.atab!==name));
@@ -258,6 +476,7 @@ function showView(name){
   if(name==='controls'){
     activateAdminTab(lastAdminTab);
     renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
+    renderMktChecklistPlatforms();
     enhanceSelectsIn($('adminPanel'));
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
@@ -851,7 +1070,7 @@ function renderInvestChartPanel({ wrap, canvasId, series, viewPeriod, isLive, he
     : (isLive ? ' · live daily sync' : ' · archived month-end snapshot');
   const noDataNote = mode==='monthly'
     ? ' · No monthly KPI data yet.'
-    : ' · No daily rows yet — run Sync after applying the kpi_daily migration.';
+    : ' · No daily rows yet — refresh marketing data after applying the kpi_daily migration.';
   wrap.innerHTML = `
     <div class="kpi-charts-head">
       ${headTitle ? `<span class="chanlabel">${esc(headTitle)}</span>` : ''}
@@ -1037,7 +1256,7 @@ function render(){
       });
     }
     $('kpiCards').innerHTML = cards.length ? cards.join('')
-      : `<div class="note">${allMonthsView ? 'No ad performance data across any month yet.' : 'No ad performance data for this month yet — it syncs automatically from the reporting sheet.'}</div>`;
+      : `<div class="note">${allMonthsView ? 'No ad performance data across any month yet.' : 'No ad performance data for this month yet — live marketing data refreshes automatically.'}</div>`;
     // wire the ⓘ info buttons (client-facing metric explanations, themed popover)
     $('kpiCards').querySelectorAll('.metricinfo').forEach(b=>
       b.onclick = (e)=>{ e.stopPropagation(); openMetricInfo(b.dataset.metric); });
@@ -2410,7 +2629,7 @@ function buildOpsAlerts(){
     });
     const sync = kpiSyncMeta(p.id);
     if(sync.hasError){
-      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics' });
+      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'Marketing data error', detail:'Live marketing data connection needs attention', sort:0, linkView:'metrics' });
     }
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
       if(!m.target_date || m.status==='done') return;
@@ -2817,7 +3036,7 @@ function renderOpsClientDetail(r){
     { l:'Due ≤14d', v: String(upcomingDeliv), compact:false },
     { l:'Videos active', v: String(r.openVid), compact:false },
     { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0, compact:false },
-    { l:'Marketing', v: r.marketing, compact:true },
+    { l:'Marketing', v: `${r.mktSum.connected}/${r.mktSum.activeCount} connected`, compact:true, title: r.mktSum.missing.length ? `Missing: ${r.mktSum.missing.join(', ')}` : (r.mktSum.lastSync ? `Last refresh ${ago(r.mktSum.lastSync)}` : '') },
   ];
   const delivRows = groups.flatMap(g=> g.items.map(d=>{
     const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
@@ -2866,6 +3085,10 @@ function renderOpsClientDetail(r){
       </tr></thead><tbody>${vidRows.join('')}</tbody></table>` : '<p class="note">No active videos.</p>'}
     </div>
     <button type="button" class="btn sm ghost ops-open-client" data-ops-pid="${r.p.id}">Open full client workspace →</button>
+    ${r.mktSum?.platforms?.length ? `<div class="ops-mkt-conn-strip">${r.mktSum.platforms.filter(x=> x.conn.status!=='not_used').map(x=>{
+      const cls = x.conn.status==='connected' ? 'connected' : (x.conn.status==='waiting'||x.conn.status==='requested') ? 'waiting' : 'missing';
+      return `<span class="ops-mkt-chip ${cls}" title="${esc(x.platform.label)}">${esc(x.platform.label.split(' ')[0])}</span>`;
+    }).join('')}</div>` : ''}
   </div>`;
 }
 function renderOperationsDashboard(){
@@ -2883,9 +3106,10 @@ function renderOperationsDashboard(){
     const sync = h.sync;
     const nextDue = delivs.filter(d=> d.status!=='delivered' && d.due).map(d=> d.due).sort()[0] || null;
     const kpi = latestKpiByPractice(opsData.kpiRaw).get(p.id);
-    let marketing = kpi ? 'Synced' : (sync.mapped ? 'Awaiting data' : 'Not configured');
-    if(sync.hasError) marketing = 'Sync error';
-    return { p, h, phase, openDeliv, openVid, waitingVid, sync, nextDue, marketing, kpi, milestones: opsData.milestones.filter(m=> m.practice_id===p.id) };
+    let marketing = kpi ? 'Connected' : (sync.mapped ? 'Awaiting data' : 'Not configured');
+    if(sync.hasError) marketing = 'Connection error';
+    const mktSum = practiceConnectionSummary(p);
+    return { p, h, phase, openDeliv, openVid, waitingVid, sync, nextDue, marketing, mktSum, kpi, milestones: opsData.milestones.filter(m=> m.practice_id===p.id) };
   });
   const flaggedClients = new Set(alerts.map(a=> a.practiceId));
   const onTrack = healthRows.filter(r=> r.h.band==='green' && !flaggedClients.has(r.p.id)).length;
@@ -2931,6 +3155,7 @@ function renderOperationsDashboard(){
     ? attentionList.map(a=> renderOpsAlertItem(a)).join('')
     : '<p class="note ops-empty-note">No priorities flagged — everything looks on track.</p>';
   wireOpsAttentionList(feed);
+  renderOpsMarketingHealth();
   // KPI rollup — selected reporting month across all clients
   const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
   const latestPeriod = monthly.length ? monthly[monthly.length-1].period : null;
@@ -3037,7 +3262,7 @@ async function loadOperationsData(force){
       const monthStart = new Date(); monthStart.setDate(1); monthStart.setMonth(monthStart.getMonth()-24);
       const dayCutoff = monthStart.toISOString().slice(0,10);
       const [practices, deliverables, milestones, videos, kpiRaw, kpiDaily, sources] = await Promise.all([
-        sb.from('practices').select('id,name,go_live,workbook_sheet_id,created_at').order('name'),
+        sb.from('practices').select('id,name,go_live,workbook_sheet_id,created_at,marketing_setup_type,marketing_connections').order('name'),
         sb.from('deliverables').select('id,practice_id,phase,phase_order,name,owner_seat,status,due,delivered_at,status_since,sort'),
         sb.from('milestones').select('id,practice_id,name,status,target_date,completed_on,sort,phase'),
         sb.from('video_pipeline').select('id,practice_id,item,stage,blocked,blocked_reason,stage_since,planned_shoot_date,sort'),
@@ -3107,18 +3332,99 @@ function showOnboardChecklist(pid, name){
   el.dataset.practiceId = pid;
   el.innerHTML = `<div class="onboard-title">Onboarding · <b>${esc(name)}</b></div>
     <ol class="onboard-steps" id="onboardSteps">
-      <li data-step="access" class="onboard-pending">Invite the doctor / owner (Access &amp; Invites tab)</li>
-      <li data-step="sheet" class="onboard-pending">Link workbook &amp; map source tabs (Reporting &amp; KPI tab)</li>
-      <li data-step="coefficient" class="onboard-pending">Connect Coefficient to those tabs</li>
-      <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
+      <li data-step="access" class="onboard-pending">Invite the doctor / owner</li>
+      <li data-step="setup" class="onboard-pending">Choose marketing setup type</li>
+      <li data-step="connections" class="onboard-pending">Connect marketing platforms</li>
+      <li data-step="sync" class="onboard-pending">Confirm live marketing data</li>
     </ol>
-    <p class="note onboard-hint">Status updates automatically. This panel hides itself after a minute.</p>`;
+    <p class="note onboard-hint">Status updates automatically. Platforms are data sources — Roxium is the operating system.</p>`;
   const ap = $('accessPractice'); if(ap){ ap.value = pid; enhanceNativeSelect(ap); }
   loadAccessRoster(pid);
   refreshOnboardChecklist(pid);
-  // transient helper — auto-dismiss after ~1 min so the admin page stays uncluttered
+  showOnboardWizard(pid, name);
+  updateOnboardWizardSteps(pid);
   clearTimeout(el._dismissTimer);
-  el._dismissTimer = setTimeout(()=>{ el.classList.add('hidden'); }, 60000);
+  el._dismissTimer = setTimeout(()=>{ el.classList.add('hidden'); }, 90000);
+}
+function showOnboardWizard(pid, name){
+  const wiz = $('onboardWizard'); if(!wiz) return;
+  wiz.classList.remove('hidden');
+  wiz.dataset.practiceId = pid;
+  renderOnboardWizardBody(pid, name);
+}
+function renderOnboardWizardBody(pid, name){
+  const body = $('onboardWizardBody'); if(!body) return;
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  const setup = p?.marketing_setup_type || '';
+  body.innerHTML = `
+    <div class="onboard-wizard-section" id="owInvite">
+      <h4>Step 2 · Invite doctor</h4>
+      <p class="note">Send a portal invite from <b>Access &amp; Invites</b> — the surgeon gets one login for deliverables, video, milestones, and live marketing performance.</p>
+      <button type="button" class="btn ghost sm" id="btnOwGoAccess">Open Access &amp; Invites</button>
+    </div>
+    <div class="onboard-wizard-section" id="owSetup">
+      <h4>Step 3 · Marketing setup</h4>
+      <p class="note">How does <b>${esc(name)}</b> handle marketing today?</p>
+      <div class="mkt-setup-choices">
+        <label class="mkt-setup-choice"><input type="radio" name="mktSetup" value="agency"${setup==='agency'?' checked':''}> Marketing agency manages platforms</label>
+        <label class="mkt-setup-choice"><input type="radio" name="mktSetup" value="internal"${setup==='internal'?' checked':''}> Internal marketing team</label>
+        <label class="mkt-setup-choice"><input type="radio" name="mktSetup" value="none"${setup==='none'?' checked':''}> No existing marketing team</label>
+      </div>
+      <div id="owSetupInstructions" class="mkt-setup-instructions note"></div>
+    </div>
+    <div class="onboard-wizard-section" id="owConnect">
+      <h4>Step 4 · Connect platforms</h4>
+      <p class="note">Open <b>Marketing Connections</b> to track Meta, Google, YouTube, and more. Use the Data Access Checklist under <b>Marketing Resources</b>.</p>
+      <button type="button" class="btn ghost sm" id="btnOwGoConnections">Open Marketing Connections</button>
+    </div>`;
+  $('btnOwGoAccess')?.addEventListener('click', ()=> activateAdminTab('access'));
+  $('btnOwGoConnections')?.addEventListener('click', ()=> activateAdminTab('connections'));
+  const updateSetupInstructions = ()=>{
+    const val = body.querySelector('input[name="mktSetup"]:checked')?.value || '';
+    const inst = $('owSetupInstructions');
+    if(!inst) return;
+    if(val==='agency') inst.innerHTML = '<strong>Agency path:</strong> Send the Roxium Data Access Checklist to their agency. Request read-only partner access to Meta, Google Ads, GA4, and other platforms — never passwords.';
+    else if(val==='internal') inst.innerHTML = '<strong>Internal team path:</strong> Share platform-specific setup guides (Meta partner grant, Google Ads viewer invite, GA4 viewer, etc.) from Marketing Resources.';
+    else if(val==='none') inst.innerHTML = '<strong>No team path:</strong> Recommend scheduling an onboarding call. Use the tier-3 call script in Marketing Resources.';
+    else inst.innerHTML = 'Select a setup type above.';
+  };
+  body.querySelectorAll('input[name="mktSetup"]').forEach(r=>{
+    r.onchange = async ()=>{
+      updateSetupInstructions();
+      const val = r.value;
+      const { error } = await sb.rpc('set_practice_marketing_setup_type', { p_practice: pid, p_type: val });
+      if(!error && p) p.marketing_setup_type = val;
+      else if(error && !/does not exist|not find/i.test(error.message)) onbFlash('Save setup type — run marketing_connections migration.');
+      updateOnboardWizardSteps(pid);
+    };
+  });
+  updateSetupInstructions();
+}
+async function updateOnboardWizardSteps(pid){
+  const wiz = $('onboardWizard'); if(!wiz || wiz.dataset.practiceId !== pid) return;
+  let data = null;
+  try{
+    const r = await sb.rpc('get_practice_onboarding_status', { p_practice: pid });
+    data = r.data;
+  }catch(_){}
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  const hasSetup = !!(p?.marketing_setup_type);
+  const hasConn = !!data?.has_sheet;
+  const hasSync = !!data?.has_sync;
+  const hasAccess = !!data?.has_access;
+  const steps = [
+    { key:'create', done:true },
+    { key:'invite', done:hasAccess },
+    { key:'setup', done:hasSetup },
+    { key:'connect', done:hasConn || hasSync },
+  ];
+  let current = steps.find(s=> !s.done)?.key || 'connect';
+  wiz.querySelectorAll('.onboard-wizard-step').forEach(li=>{
+    const k = li.dataset.owStep;
+    const st = steps.find(s=> s.key===k);
+    li.classList.toggle('done', !!st?.done);
+    li.classList.toggle('current', k===current && !st?.done);
+  });
 }
 
 async function refreshOnboardChecklist(pid){
@@ -3133,9 +3439,11 @@ async function refreshOnboardChecklist(pid){
     li.classList.toggle('onboard-pending', !done);
   };
   mark('access', !!data?.has_access);
-  mark('sheet', !!data?.has_sheet);
-  mark('coefficient', !!data?.has_sheet); // manual step — sheet config is the gate
+  const p = (practicesList||[]).find(x=> x.id===pid);
+  mark('setup', !!(p?.marketing_setup_type));
+  mark('connections', !!data?.has_sheet);
   mark('sync', !!data?.has_sync);
+  updateOnboardWizardSteps(pid);
 }
 
 async function sendPracticeInvite(practice_id, email, full_name, role, { sendEmail = true } = {}){
@@ -3308,7 +3616,7 @@ $('btnAddClient').onclick = async ()=>{
     await loadTeamPractices();
     renderAdminClients();
     if(data){ practiceId = data; showOnboardChecklist(data, name); }
-    onbFlash(`Created "${name}". Looking for its workbook in the master folder…`);
+    onbFlash(`Created "${name}". Looking for marketing data container in the master folder…`);
     loadAll();
     if(data) autoDiscoverWorkbook(data, name);   // best-effort onboarding; safe if it can't
   }catch(e){ onbFlash('Could not add client: '+e.message); }
@@ -3316,7 +3624,7 @@ $('btnAddClient').onclick = async ()=>{
 };
 // Best-effort onboarding: find the new client's workbook in the global folder, link it,
 // detect its tabs, and map the confidently-recognized ones. Anything ambiguous is left
-// for manual confirmation under Reporting & KPI (never a silent wrong guess).
+// for manual confirmation under Marketing Connections (never a silent wrong guess).
 async function autoDiscoverWorkbook(pid, name){
   if(!isTeamView()) return;
   const folder = (appSettings.master_reporting_drive_folder||'').trim();
@@ -3325,8 +3633,8 @@ async function autoDiscoverWorkbook(pid, name){
     const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
     if(!r.match){                                  // none or multiple candidates → don't guess
       onbFlash(r.candidates && r.candidates.length
-        ? `Created "${name}". Found ${r.candidates.length} possible workbooks — confirm under Reporting & KPI.`
-        : `Created "${name}". No workbook matched yet — link it under Reporting & KPI.`);
+        ? `Created "${name}". Found ${r.candidates.length} possible data containers — confirm under Marketing Connections.`
+        : `Created "${name}". No data container matched yet — link it under Marketing Connections.`);
       return;
     }
     await sb.from('practices').update({ workbook_sheet_id: r.match.id }).eq('id', pid);
@@ -3342,7 +3650,7 @@ async function autoDiscoverWorkbook(pid, name){
       }
     }
     await loadSheetSources(); refreshOnboardChecklist(pid);
-    onbFlash(`Created "${name}" — linked workbook “${r.match.name}”${mapped?` and mapped ${mapped} source tab(s)`:''}. Review under Reporting & KPI.`);
+    onbFlash(`Created "${name}" — linked data container “${r.match.name}”${mapped?` and mapped ${mapped} channel(s)`:''}. Review under Marketing Connections.`);
   }catch(_){ /* best-effort; the manual Find/Detect flow remains available */ }
 }
 
@@ -3468,16 +3776,16 @@ function renderSyncStatus(){
     const lastSheet = srcVals.map(s=>s.last_synced_at).filter(Boolean).sort().pop();
     const cls = anyError ? 'err' : (lastSheet ? 'ok' : 'warn');
     const txt = lastSheet
-      ? `Last sync ${ago(lastSheet)} (${new Date(lastSheet).toLocaleString()}).${anyError?' Some clients reported errors — see below.':''}`
-      : 'No sync has been recorded yet. The automation runs every 2 hours; use “Sync now” to test it.';
+      ? `Last data refresh ${ago(lastSheet)} (${new Date(lastSheet).toLocaleString()}).${anyError?' Some clients reported connection errors — see below.':''}`
+      : 'No data refresh recorded yet. Performance data refreshes every 2 hours; use “Refresh all marketing data” in Data Pipeline to test.';
     el.innerHTML = `<div class="syncbanner ${cls}">
-      <div class="sbtitle">Auto-sync ${lastSheet?'is configured':'not yet observed'}</div>
+      <div class="sbtitle">Live marketing data ${lastSheet?'is active':'not yet observed'}</div>
       <div class="sbtext">${esc(txt)}</div></div>`;
     return;
   }
   const cls = last.ok===false ? 'err' : (last.skipped_count? 'warn':'ok');
   const when = `${ago(last.ran_at)} · ${new Date(last.ran_at).toLocaleString()}`;
-  const trig = last.trigger==='manual' ? 'manual (Sync now)' : (last.trigger || 'scheduled');
+  const trig = last.trigger==='manual' ? 'manual refresh' : (last.trigger || 'scheduled');
   const months = monthsList(last.months_seen);
   const rows = syncRuns.slice(0,5).map(r=>`<tr>
       <td>${esc(ago(r.ran_at))}</td>
@@ -3488,8 +3796,8 @@ function renderSyncStatus(){
       <td>${esc(monthsList(r.months_seen)||'—')}</td>
     </tr>`).join('');
   el.innerHTML = `<div class="syncbanner ${cls}">
-      <div class="sbtitle">${last.ok===false?'Last auto-sync FAILED':'Auto-sync is running'}</div>
-      <div class="sbtext">Last run <b>${esc(when)}</b> · trigger: ${esc(trig)} · wrote <b>${last.upserted ?? 0}</b> KPI row(s)${last.skipped_count?` · skipped ${last.skipped_count}`:''}${months?` · months: ${esc(months)}`:''}.${last.error?` Error: ${esc(last.error)}`:''}</div>
+      <div class="sbtitle">${last.ok===false?'Last data refresh FAILED':'Live marketing data is active'}</div>
+      <div class="sbtext">Last refresh <b>${esc(when)}</b> · ${esc(trig)} · wrote <b>${last.upserted ?? 0}</b> KPI row(s)${last.skipped_count?` · skipped ${last.skipped_count}`:''}${months?` · months: ${esc(months)}`:''}.${last.error?` Error: ${esc(last.error)}`:''}</div>
     </div>
     <table class="synctable"><thead><tr><th>When</th><th>Status</th><th>Trigger</th><th>Rows</th><th>Skipped</th><th>Months</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -3503,7 +3811,7 @@ $('btnSyncNow').onclick = async ()=>{
   row?.classList.remove('ok','err');
   row?.classList.add('syncing');
   btn.disabled = true;
-  msg.textContent = 'Syncing…';
+  msg.textContent = 'Refreshing marketing data…';
   try{
     const { data, error } = await sb.functions.invoke('sync-coefficient', { body:{ trigger:'manual' } });
     // invoke() throws on any non-2xx but the function still returns a JSON body with the
@@ -3516,7 +3824,7 @@ $('btnSyncNow').onclick = async ()=>{
     }
     if(!body?.ok) throw new Error(body?.error || (error && error.message) || 'Sync failed');
     const data2 = body;
-    const parts = [`Synced ${data2.upserted ?? 0} row(s)`];
+    const parts = [`Refreshed ${data2.upserted ?? 0} KPI row(s)`];
     const months = monthsList(data2.months_seen);
     if(months) parts.push(`months: ${months}`);
     // surface WHY rows were missed: per-source skipped daily-row counts + sample reasons
@@ -3543,8 +3851,8 @@ $('btnSyncNow').onclick = async ()=>{
   }catch(e){
     const m = e?.message || String(e);
     msg.textContent = m.includes('401') || /unauthorized/i.test(m)
-      ? 'Sync unauthorized — redeploy sync-coefficient with team-login support, or check SYNC_SECRET for cron.'
-      : 'Sync failed: '+m;
+      ? 'Refresh unauthorized — redeploy sync-coefficient with team-login support, or check SYNC_SECRET for cron.'
+      : 'Refresh failed: '+m;
     row?.classList.add('err');
   }finally{
     row?.classList.remove('syncing');
@@ -3556,16 +3864,16 @@ $('btnSyncNow').onclick = async ()=>{
 function clientWorkbookBlock(p){
   const has = !!(p.workbook_sheet_id && p.workbook_sheet_id.trim());
   const status = has
-    ? `<span class="ssok">workbook linked</span>`
-    : `<span class="note">no workbook yet — use “Find in master folder”</span>`;
+    ? `<span class="ssok">data container linked</span>`
+    : `<span class="note">no data container yet — use “Find in master folder”</span>`;
   return `<div class="workbookcfg">
-    <span class="chanlabel">Reporting workbook ${status}</span>
+    <span class="chanlabel">Practice data container ${status}</span>
     <div class="wbbtns">
       <button class="btn ghost sm" data-findwb="${p.id}" data-name="${esc(p.name)}">Find in master folder</button>
-      <button class="btn ghost sm" data-detecttabs="${p.id}">Detect tabs</button>
+      <button class="btn ghost sm" data-detecttabs="${p.id}">Detect channels</button>
     </div>
     <details class="wboverride">
-      <summary>Manual workbook override</summary>
+      <summary>Manual container override</summary>
       <input class="cellinput workbookid" data-pid="${p.id}" value="${esc(p.workbook_sheet_id||'')}"
         placeholder="Paste a Google Sheet link or ID to override auto-discovery">
       <button class="btn ghost sm" data-saveworkbook="${p.id}">Save override</button>
@@ -3583,7 +3891,7 @@ function tabOptions(pid, current){
   const opts = ['<option value="">— select tab —</option>'];
   tabs.forEach(t=>{ seen.add(t); opts.push(`<option value="${esc(t)}"${t===cur?' selected':''}>${esc(t)}</option>`); });
   if(cur && !seen.has(cur)) opts.push(`<option value="${esc(cur)}" selected>${esc(cur)} (saved)</option>`);
-  if(!tabs.length) opts.push('<option value="" disabled>↻ run “Detect tabs” to list tabs</option>');
+  if(!tabs.length) opts.push('<option value="" disabled>↻ run “Detect channels” to list tabs</option>');
   return opts.join('');
 }
 // Compact one-line source row: channel · tab dropdown · status · remove.
@@ -3597,7 +3905,7 @@ function sourceTabRow(pid, s){
       ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error</span>`
     : s.last_synced_at
       ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓${esc(dtxt)}</span>`
-    : `<span class="note">not synced</span>`;
+    : `<span class="note">awaiting refresh</span>`;
   return `<div class="srcrow">
     <span class="chanlabel srcname">${esc(channelLabel(source))}</span>
     <select class="cellinput sheettab" data-pid="${pid}" data-source="${esc(source)}" title="Pick this source's tab">${tabOptions(pid, s.tab_name)}</select>
@@ -3612,11 +3920,11 @@ function addSourceRow(pid){
     + CHANNELS.filter(c=> !taken.has(c.source)).map(c=> `<option value="${esc(c.source)}">${esc(c.label)}</option>`).join('')
     + '<option value="__custom">Custom source…</option>';
   return `<div class="addsource">
-    <span class="addsrc-label">Add another reporting source</span>
+    <span class="addsrc-label">Add marketing channel</span>
     <div class="addsource-row">
-      <select class="cellinput addsourcesel" data-pid="${pid}" title="Pick a channel / insight to add">${srcOpts}</select>
-      <select class="cellinput addsourcetab" data-pid="${pid}" title="Pick its tab inside the workbook">${tabOptions(pid, '')}</select>
-      <button class="btn ghost sm" data-addsource="${pid}">+ Add source</button>
+      <select class="cellinput addsourcesel" data-pid="${pid}" title="Pick a platform channel to add">${srcOpts}</select>
+      <select class="cellinput addsourcetab" data-pid="${pid}" title="Pick its data tab">${tabOptions(pid, '')}</select>
+      <button class="btn ghost sm" data-addsource="${pid}">+ Add channel</button>
     </div>
     <input class="cellinput addsourcekey" data-pid="${pid}" placeholder="custom source key (e.g. tiktok_ads)" style="display:none">
   </div>`;
@@ -3628,14 +3936,14 @@ function clientSourcesHTML(pid){
   const present = Object.values(sheetSources).filter(s=> s.practice_id===pid)
     .sort((a,b)=> ((order.indexOf(a.source)+1)||99) - ((order.indexOf(b.source)+1)||99));
   const rows = present.length ? present.map(s=> sourceTabRow(pid, s)).join('')
-                              : '<div class="note">No sources yet — add one below, or use “Detect tabs”.</div>';
+                              : '<div class="note">No channels mapped yet — add one below, or use “Detect channels”.</div>';
   return `<div class="sheetchans" id="sources-${pid}">
     <div class="srclist">${rows}</div>
     ${addSourceRow(pid)}
     <div class="deployrow">
-      <button class="btn sm" data-deploy="${pid}">Deploy setup</button>
+      <button class="btn sm" data-deploy="${pid}">Activate connections</button>
       <span class="deploy-msg${deployFlashByPractice[pid]?.kind ? ' '+deployFlashByPractice[pid].kind : ''}" id="deploy-msg-${pid}">${deployFlashByPractice[pid]?.text ? esc(deployFlashByPractice[pid].text) : ''}</span>
-      <span class="note deploy-hint">Saves tab mappings &amp; runs sync to confirm.</span>
+      <span class="note deploy-hint">Saves channel mappings &amp; refreshes live marketing data.</span>
     </div>
   </div>`;
 }
@@ -3712,12 +4020,12 @@ function renderAdminClients(){
   }
   wrap.innerHTML = (list.length ? list.map(p=> `<div class="clientrow2">
       <div class="ccol"><span class="cname">${esc(p.name)}</span></div>
-      ${clientWorkbookBlock(p)}
-      ${clientSourcesHTML(p.id)}
+      ${clientMarketingConnectionsBlock(p)}
     </div>`).join('') : (query
       ? '<div class="note">No clients match your search — try a different name.</div>'
       : '<div class="note">No practices yet — add one above.</div>'));
   wireAdminClients();
+  wireMarketingConnectionControls(wrap);
 }
 // (Re)bind all client-card handlers — called after a full render or a sources refresh.
 function wireAdminClients(){
@@ -3741,22 +4049,23 @@ function refreshClientSources(pid){
   if(!c){ renderAdminClients(); return; }
   c.outerHTML = clientSourcesHTML(pid);
   wireAdminClients();
+  wireMarketingConnectionControls(document);
 }
 // Deploy: mappings are already saved on dropdown change — this confirms and runs a sync.
 async function deployClient(pid){
   if(!isTeamView()) return;
   const btn = document.querySelector(`[data-deploy="${pid}"]`);
   if(btn) btn.disabled = true;
-  setDeployMsg(pid, 'Deploying — running sync…', 'pending');
+  setDeployMsg(pid, 'Activating — refreshing marketing data…', 'pending');
   try{
     const r = await invokeSyncFn({ action:'sync', trigger:'manual' });
     await loadSheetSources();
     const months = r.months_seen && r.months_seen.length ? ` · ${r.months_seen.join(', ')}` : '';
-    setDeployMsg(pid, `✓ Sync successful · ${r.upserted ?? 0} row(s)${months}`, 'ok');
+    setDeployMsg(pid, `✓ Connections active · ${r.upserted ?? 0} row(s)${months}`, 'ok');
     refreshOnboardChecklist(pid);
     if(practiceId===pid) loadAll();
   }catch(e){
-    setDeployMsg(pid, 'Sync failed: '+(e.message||String(e)), 'err');
+    setDeployMsg(pid, 'Connection refresh failed: '+(e.message||String(e)), 'err');
   }finally{
     if(btn) btn.disabled = false;
   }
@@ -3771,8 +4080,8 @@ async function saveWorkbook(pid){
   const v = m ? m[1] : raw;
   if(inp && v!==raw) inp.value = v;   // reflect the cleaned id back to the field
   const { error } = await sb.from('practices').update({ workbook_sheet_id: v||null }).eq('id', pid);
-  adminDelFlash(error ? 'Workbook save failed: '+error.message
-    : (v ? 'Master workbook saved — its source tabs will sync on the next run.' : 'Master workbook cleared.'));
+  adminDelFlash(error ? 'Data container save failed: '+error.message
+    : (v ? 'Practice data container saved — channels refresh on the next data run.' : 'Data container cleared.'));
   if(!error){ const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = v||null; }
 }
 // Call sync-coefficient and return the parsed JSON body even on non-2xx (invoke()
@@ -3789,10 +4098,10 @@ async function invokeSyncFn(body){
 async function detectTabs(pid){
   if(!isTeamView()) return;
   const out = document.getElementById('detect-'+pid); if(!out) return;
-  out.innerHTML = '<div class="note">Inspecting workbook…</div>';
+  out.innerHTML = '<div class="note">Inspecting data container…</div>';
   try{
     const r = await invokeSyncFn({ action:'detect', practice_id: pid });
-    if(!r.tabs || !r.tabs.length){ out.innerHTML = '<div class="note">No tabs found — is the workbook saved and shared with the service account?</div>'; return; }
+    if(!r.tabs || !r.tabs.length){ out.innerHTML = '<div class="note">No channels found — is the container saved and shared with the service account?</div>'; return; }
     // cache the tab titles so every source dropdown for this client can offer them
     detectedTabs[pid] = r.tabs.map(t=> t.title).filter(Boolean);
     refreshClientSources(pid);
@@ -3849,10 +4158,23 @@ async function saveMasterFolder(){
 }
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
 
-// Team Controls sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
+// Team Controls sub-tab switcher
 $('adminTabs')?.addEventListener('click', e=>{
   const b = e.target.closest('.atab'); if(!b) return;
   activateAdminTab(b.dataset.atab);
+  if(b.dataset.atab==='resources') renderMktChecklistPlatforms();
+});
+$('btnScrollChecklist')?.addEventListener('click', ()=>{
+  activateAdminTab('resources');
+  $('mktDataAccessChecklist')?.scrollIntoView({ behavior:'smooth', block:'start' });
+});
+$('btnCopyInviteEmail')?.addEventListener('click', async ()=>{
+  try{
+    await navigator.clipboard.writeText(MKT_INVITE_EMAIL);
+    adminDelFlash('Invite email copied to clipboard.');
+  }catch(_){
+    uiAlert('Copy invite email', `<textarea class="dlg-input" readonly style="min-height:200px;width:100%">${esc(MKT_INVITE_EMAIL)}</textarea>`);
+  }
 });
 
 // System tab · "Test & list workbooks" — proves the folder is reachable + shared.
@@ -3863,7 +4185,7 @@ $('btnListWorkbooks')?.addEventListener('click', async ()=>{
     const folder = (appSettings.master_reporting_drive_folder||'').trim();
     const r = await invokeSyncFn({ action:'list_workbooks', folder_id: folder||undefined, refresh: true });
     if(!r.files || !r.files.length){ if(out) out.innerHTML = '<div class="note">No spreadsheets found — is the folder shared with the service account?</div>'; return; }
-    if(out) out.innerHTML = `<div class="note">${r.file_count} workbook(s) in the master folder:</div>` +
+    if(out) out.innerHTML = `<div class="note">${r.file_count} data container(s) in the master folder:</div>` +
       r.files.map(f=> `<div class="dtab"><b>${esc(f.name)}</b></div>`).join('');
   }catch(e){ if(out) out.innerHTML = `<div class="ssbad">List failed: ${esc(e.message||String(e))}</div>`; }
 });
@@ -3883,11 +4205,11 @@ async function findWorkbook(pid, name){
       return;
     }
     const files = (r.files && r.files.length) ? r.files : (r.match ? [r.match] : (r.candidates||[]));
-    if(!files.length){ out.innerHTML = `<div class="note">No Google Sheets found in the master folder. Make sure the new workbook is a Google Sheet (not an uploaded .xlsx) and the folder is shared with the service account.</div>`; return; }
+    if(!files.length){ out.innerHTML = `<div class="note">No Google Sheets found in the master folder. Make sure the practice data container is a Google Sheet (not an uploaded .xlsx) and the folder is shared with the service account.</div>`; return; }
     const matchId = r.match?.id;
     const ordered = [...files].sort((a,b)=> (b.id===matchId?1:0) - (a.id===matchId?1:0));
-    out.innerHTML = `<div class="note">${files.length} workbook(s) in the master folder${matchId?' — best name match first':''}:</div>` + ordered.map(c=>
-      `<div class="dtab"><b>${esc(c.name)}</b>${c.id===matchId?' <span class="ssok">best match</span>':''} <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this workbook</button></div>`).join('');
+    out.innerHTML = `<div class="note">${files.length} data container(s) in the master folder${matchId?' — best name match first':''}:</div>` + ordered.map(c=>
+      `<div class="dtab"><b>${esc(c.name)}</b>${c.id===matchId?' <span class="ssok">best match</span>':''} <button class="btn ghost xs" data-usewb="${pid}" data-id="${esc(c.id)}">Use this container</button></div>`).join('');
     out.querySelectorAll('[data-usewb]').forEach(b=>
       b.onclick = ()=> useWorkbook(b.dataset.usewb, b.dataset.id, out));
   }catch(e){ out.innerHTML = `<div class="ssbad">Find failed: ${esc(e.message||String(e))}</div>`; }
@@ -3899,7 +4221,7 @@ async function useWorkbook(pid, sheetId, out){
   if(error){ if(out) out.innerHTML = `<div class="ssbad">Save failed: ${esc(error.message)}</div>`; return; }
   const p = (practicesList||[]).find(x=> x.id===pid); if(p) p.workbook_sheet_id = sheetId;
   const inp = document.querySelector(`.workbookid[data-pid="${pid}"]`); if(inp) inp.value = sheetId;
-  adminDelFlash('Workbook linked — detecting its tabs…');
+  adminDelFlash('Data container linked — detecting channels…');
   detectTabs(pid);
 }
 // Save a source's tab mapping (picked from the detected-tabs dropdown). The sheet id

@@ -31,7 +31,10 @@ Data feeds (optional)  →  Coefficient  (ad platforms → spreadsheet → Supab
      `migrations/2026-07-07_ops_attention_state.sql` once on live DBs. Without it, the dashboard
      still works using browser localStorage only.
    - **Daily KPI charts (reporting month zoom)?** Run `migrations/2026-07-07_kpi_daily.sql` once,
-     redeploy `sync-coefficient`, then run **Sync now** so daily rows populate from Coefficient sheets.
+     redeploy `sync-coefficient`, then run **Refresh all marketing data** so daily rows populate.
+   - **Marketing Connections (onboarding + platform status)?** Run
+     `migrations/2026-07-08_marketing_connections.sql` once on live DBs. Without it, connection
+     status UI still renders but RPC updates for setup type and manual connection state fail gracefully.
 3. **Authentication → Providers → Email**: leave Email enabled (magic links work out of the box).
 4. **Authentication → URL Configuration**: set **Site URL** to your Cloudflare Pages URL
    (`https://<project>.pages.dev`, or your custom domain once attached) and add it to
@@ -73,6 +76,7 @@ Pages does **not** serve `index.html` for unknown paths on its own, so that rule
 
 ## Operations Dashboard (team)
 
+- **Marketing Health** — roster-wide connection status across Meta, Google, YouTube, and more; missing sources and last data refresh at a glance.
 - **Needs attention** — dismiss (permanent), snooze until tomorrow (⏸), pin, drag-reorder; syncs to your profile when `migrations/2026-07-07_ops_attention_state.sql` is applied (localStorage fallback otherwise).
 - **Company KPI** — monthly spend, reach, impressions, and link-clicks charts; month selector for live vs archived reporting periods.
 
