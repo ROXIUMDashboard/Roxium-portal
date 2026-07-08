@@ -275,7 +275,7 @@ function showView(name){
   if(name==='operations') loadOperationsData();
   if(name==='controls'){
     activateAdminTab(lastAdminTab);
-    renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
+    renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings(); loadAccountApprovals();
     enhanceSelectsIn($('adminPanel'));
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
@@ -438,32 +438,28 @@ try{ const _jc = new URL(location.href).searchParams.get('join'); if(_jc) localS
 $('btnLogin').onclick = async ()=>{
   const email = $('loginEmail').value.trim();
   if(!email) return;
-  // Allowlisted emails, existing users, a registered domain, OR a valid practice
-  // invite link (?join=CODE) may sign in / sign up.
-  let { data: allowed } = await sb.rpc('email_is_invited', { p_email: email });
+  // Self-service accounts, invite-only ACCESS: anyone may create a ROXIUM
+  // account here, but nobody reaches client data until they're approved.
+  // Invited emails auto-approve the moment they sign in (the invitation IS the
+  // approval); everyone else lands in a Pending state with zero data access
+  // until the team approves them in Team Controls → Account approvals.
   const joinCode = (localStorage.getItem('roxium_join') || '').trim();
-  if(!allowed && joinCode){
-    const { data: jpid } = await sb.rpc('join_code_practice', { p_code: joinCode });
-    allowed = !!jpid;
-  }
   // The app lives at /portal/ (the root is the public marketing page, which
   // forwards stray auth callbacks here). Send magic links straight to the portal.
   const redirectTo = location.origin + '/portal/' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
   const { error } = await sb.auth.signInWithOtp({
-    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: !!allowed }
+    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: true }
   });
-  if(!error && allowed){
+  if(!error){
     // Reveal the typed-code path: Outlook's link scanner can consume or delay the
     // one-time magic link, so a code the user types is the reliable fallback.
     pendingLoginEmail = email;
     $('loginCodeRow')?.classList.remove('hidden');
     $('loginMsg').textContent = 'Check your email for the sign-in link — or type the 6-digit code from that email below.';
   } else {
-    $('loginMsg').textContent = error
-      ? (!allowed
-          ? "That email isn't set up for access yet. Ask your ROXIUM lead for an invite link, or to add you."
-          : error.message)
-      : "If this email was invited, you'll receive a link shortly.";
+    $('loginMsg').textContent = /signups? not allowed|disabled/i.test(error.message)
+      ? 'New sign-ups are momentarily unavailable — ask your ROXIUM lead for an invitation instead.'
+      : error.message;
   }
 };
 
@@ -510,6 +506,23 @@ async function editMyName(){
   me.full_name = name || null; renderWhoami();
 }
 
+// Waiting room for self-service signups that haven't been approved yet (and
+// for rejected accounts). No practice data is reachable in this state — RLS
+// denies everything without a membership; this pane is the honest UX for it.
+function showPendingPane(status, email){
+  $('login').classList.add('hidden');
+  $('app').classList.add('hidden');
+  const pane = $('pendingPane'); if(!pane) return;
+  const rejected = status === 'rejected';
+  $('pendingTitle').textContent = rejected ? 'Access not approved' : 'Almost there';
+  $('pendingBody').innerHTML = rejected
+    ? `This account (<b>${esc(email||'')}</b>) hasn't been approved for portal access. If you believe this is a mistake, contact your ROXIUM lead.`
+    : `Your account (<b>${esc(email||'')}</b>) is created and <b>awaiting approval</b> by the ROXIUM team — we verify every practice before granting access. You'll be able to sign straight in once you're approved.<br><br>
+       <span class="note">Were you invited by your practice? Sign out and use the <b>same email address</b> your invitation was sent to — invited emails are approved automatically.</span>`;
+  pane.classList.remove('hidden');
+  $('btnPendingSignout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
+}
+
 async function afterLogin(){
   const _user = (await sb.auth.getUser()).data.user;
   const uid = _user?.id;
@@ -526,11 +539,10 @@ async function afterLogin(){
 
   let { data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single();
   if(error || !prof){
-    if(!claim?.claimed){
-      $('login').classList.remove('hidden');
-      $('loginMsg').textContent = 'Signed in, but no invite was found for this email. Ask your ROXIUM lead to add you.';
-      return;
-    }
+    // Self-service signup: no invite matched, so bootstrap a PENDING profile.
+    // The account exists but can see nothing until the team approves it —
+    // RLS denies every practice table without a membership regardless.
+    try{ await sb.rpc('ensure_my_profile'); }catch(_){ /* pre-migration DB */ }
     ({ data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single());
     if(error || !prof){
       $('login').classList.remove('hidden');
@@ -541,6 +553,14 @@ async function afterLogin(){
     ({ data: prof } = await sb.from('profiles').select('*').eq('id', uid).single());
   }
   me = prof;
+  // Approval gate — a client account with no approval and no practice link
+  // waits at the door. (approval_status is absent on pre-migration databases;
+  // treat that as legacy-approved so nothing changes until the migration runs.)
+  if(me.role !== 'team' && ('approval_status' in me)
+     && me.approval_status !== 'approved' && !me.practice_id){
+    showPendingPane(me.approval_status, authEmail);
+    return;
+  }
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   renderWhoami();
@@ -593,6 +613,15 @@ async function loadAll(){
   ]);
   data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
+  // Marketing Setup Wizard state: this practice's OAuth connections (members may
+  // read their own connection METADATA — tokens live in a service-role-only
+  // table). Fails soft on databases without the platform-connections migration.
+  data.connections = [];
+  try{
+    const { data: pc, error: pcErr } = await sb.from('platform_connections')
+      .select('provider,status,external_account_name,connected_at').eq('practice_id', practiceId);
+    if(!pcErr && Array.isArray(pc)) data.connections = pc;
+  }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -932,6 +961,95 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- Marketing Setup Wizard (first-run, client) ----------------
+   Stripe-style onboarding for a freshly approved practice: connect Facebook &
+   Instagram and Google with their own logins — no spreadsheets, no IDs, no
+   technical language. Shown until the practice completes or skips it; the
+   team never sees it in their own view (Preview-as-client does).
+   Each Connect button asks the oauth-start function for an authorize URL;
+   when a provider isn't configured yet (no developer app), the card degrades
+   to "our team will connect this with you" so the flow never dead-ends. */
+const WIZARD_PROVIDERS = [
+  { key:'meta',   title:'Facebook & Instagram',
+    body:'Your ads, reach, and engagement across Facebook and Instagram — connected in one click with your Facebook login.' },
+  { key:'google', title:'Google',
+    body:'Your Google Ads performance and website analytics — connected with your Google login.' },
+];
+function renderSetupWizard(){
+  const el = $('setupWizard'); if(!el) return;
+  const show = !isTeamView() && data.practice && !data.practice.wizard_completed_at;
+  el.classList.toggle('hidden', !show);
+  if(!show){ el.innerHTML=''; return; }
+  // Landing back from an OAuth round-trip: ?connected=meta / ?connect_error=…
+  let flash = '';
+  try{
+    const q = new URL(location.href).searchParams;
+    if(q.get('connected')){
+      const t = WIZARD_PROVIDERS.find(p=> p.key===q.get('connected'))?.title || 'Account';
+      flash = `<div class="wizard-flash ok">✓ ${esc(t)} connected — your numbers start appearing within a couple of hours.</div>`;
+    } else if(q.get('connect_error')){
+      flash = `<div class="wizard-flash err">That connection didn't complete (${esc(q.get('connect_error'))}). Nothing was changed — try again, or we'll help on a quick call.</div>`;
+    }
+  }catch(_){}
+  const conn = k => (data.connections||[]).find(c=> c.provider===k);
+  const cards = WIZARD_PROVIDERS.map(p=>{
+    const c = conn(p.key);
+    const state = c && c.status==='connected'
+      ? `<span class="ssok">✓ Connected${c.external_account_name? ` — ${esc(c.external_account_name)}`:''}</span>`
+      : c && c.status==='error'
+        ? `<button class="btn sm wizard-connect" data-provider="${p.key}">Reconnect</button>`
+        : `<button class="btn sm wizard-connect" data-provider="${p.key}">Connect</button>`;
+    return `<div class="wizard-card">
+      <div class="wizard-card-title">${esc(p.title)}</div>
+      <p class="note">${esc(p.body)}</p>
+      <div class="wizard-card-state" data-state-for="${p.key}">${state}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="wizard-head">
+      <div class="eyebrow">Welcome — let's connect your marketing</div>
+      <p class="note">Connect your accounts below with your own logins — you never share a password, we only ever <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.</p>
+    </div>
+    ${flash}
+    <div class="wizard-cards">${cards}
+      <div class="wizard-card wizard-card-rest">
+        <div class="wizard-card-title">Everything else</div>
+        <p class="note">YouTube, Microsoft Ads, call tracking and the rest — our team wires these up for you. Nothing for you to do.</p>
+        <div class="wizard-card-state"><span class="note">Handled by ROXIUM ✓</span></div>
+      </div>
+    </div>
+    <div class="wizard-foot">
+      <button class="btn ghost sm" id="wizardSkip">Skip for now</button>
+      <button class="btn sm" id="wizardDone">Done — take me to my dashboard</button>
+    </div>`;
+  el.querySelectorAll('.wizard-connect').forEach(b=> b.onclick = async ()=>{
+    b.disabled = true; b.textContent = 'Opening…';
+    try{
+      const { data: res, error } = await sb.functions.invoke('oauth-start', {
+        body: { provider: b.dataset.provider, practice_id: practiceId }
+      });
+      if(error) throw error;
+      if(res?.url){ location.href = res.url; return; }
+      // Provider app not configured yet — degrade gracefully, never dead-end.
+      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+    }catch(e){
+      console.warn('[wizard] oauth-start failed:', e);
+      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+    }
+  });
+  const finish = async ()=>{
+    try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
+    if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
+    // Drop the one-time OAuth params so the flash doesn't resurrect on refresh.
+    try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
+    renderSetupWizard();
+  };
+  $('wizardSkip').onclick = finish;
+  $('wizardDone').onclick = finish;
+}
+
 /* ---------------- engagement timeline ----------------
    One chronological feed per practice: team-posted updates + MEANINGFUL system
    events only (deliverables delivered, milestones completed, video stage moves).
@@ -1056,6 +1174,9 @@ function render(){
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
+
+  // Marketing Setup Wizard — first-run onboarding for approved clients
+  safe('setup wizard', ()=> renderSetupWizard());
 
   // "You are here" journey line — feature 9, currently REVERTED from the UI at
   // the owner's request. The renderer stays; it no-ops while the #youAreHere
@@ -3120,6 +3241,7 @@ function renderOperationsDashboard(){
     { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
     { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
     { v: connIssues, l:'Data connections', note: connIssues ? connNoteParts.join(' · ') : 'all sources flowing', cls: connErrors? 'r' : connIssues? 'a':'g', tier:'secondary' },
+    { v: (opsData.pendingAccounts||[]).length, l:'Account requests', note: (opsData.pendingAccounts||[]).length ? 'review in Team Controls → Access' : 'none waiting', cls: (opsData.pendingAccounts||[]).length? 'a':'', tier:'secondary' },
     { v: avgHealth, l:'Avg health score', note:'across filtered clients', tier:'secondary' },
   ];
   $('opsExecCards').innerHTML = cards.map(c=>`
@@ -3279,6 +3401,12 @@ async function loadOperationsData(force){
         // along when present without breaking on databases that predate them.
         sb.from('sheet_sources').select('*'),
       ]);
+      // Pending self-service account requests (fail-soft on pre-migration DBs).
+      let pendingAccounts = [];
+      try{
+        const { data: pa, error: paErr } = await sb.rpc('get_pending_accounts');
+        if(!paErr && Array.isArray(pa)) pendingAccounts = pa.filter(a=> a.status==='pending');
+      }catch(_){ /* migration not applied yet */ }
       opsData = {
         practices: practices.data||[],
         deliverables: deliverables.data||[],
@@ -3287,6 +3415,7 @@ async function loadOperationsData(force){
         kpiRaw: kpiRaw.data||[],
         kpiDailyRaw: kpiDaily.error ? [] : (kpiDaily.data||[]),
         sources: sources.data||[],
+        pendingAccounts,
       };
       renderOperationsDashboard();
     }catch(e){
@@ -3466,6 +3595,72 @@ function renderPlatformAdmins(data){
     const { error } = await sb.rpc('demote_platform_admin', { p_user: b.dataset.demote });
     if(error) uiAlert('Cannot remove admin', esc(error.message));
     else { onbFlash('Administrator access removed.'); loadPlatformAdmins(); }
+  });
+}
+
+// Account approvals — self-service sign-ups waiting for review. Approving
+// assigns a practice (creating the membership auto-approves the profile via
+// the DB trigger); "send welcome email" routes through the invite-user
+// function so the doctor also gets the branded sign-in email.
+async function loadAccountApprovals(){
+  const wrap = $('accountApprovals'); if(!wrap || !isTeamView()) return;
+  const { data, error } = await sb.rpc('get_pending_accounts');
+  if(error){
+    wrap.innerHTML = '<div class="note">Run migration 2026-07-09_account_approvals.sql to enable account approvals.</div>';
+    return;
+  }
+  if(!data || !data.length){
+    wrap.innerHTML = '<div class="note">No pending account requests — invited users are approved automatically.</div>';
+    return;
+  }
+  const praxOpts = '<option value="">— Assign practice —</option>'
+    + (practicesList||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  wrap.innerHTML = `
+    <label class="checklabel" style="display:block;margin-bottom:10px"><input type="checkbox" id="apprSendEmail" checked> Send welcome email on approval</label>
+    ${data.map(r=>`<div class="apprrow" data-uid="${esc(r.id)}">
+      <div class="apprwho">
+        <div class="apprname">${esc(r.full_name || r.email)}</div>
+        <div class="note">${esc(r.email)} · signed up ${esc(prettyDate(r.requested_at))} · <span class="${r.status==='rejected'?'ssbad':'sswarn'}">${esc(r.status)}</span></div>
+      </div>
+      <select class="picker apprpractice" title="Practice to assign (create it in the Clients tab first if it's new)">${praxOpts}</select>
+      <select class="picker apprrole"><option value="member">Member</option><option value="owner">Owner</option></select>
+      <button class="btn sm apprapprove">Approve</button>
+      <button class="btn ghost sm danger apprreject">Reject</button>
+    </div>`).join('')}`;
+  wrap.querySelectorAll('.apprrow').forEach(row=>{
+    const uid = row.dataset.uid;
+    const rec = (data||[]).find(x=> x.id===uid);
+    row.querySelector('.apprapprove').onclick = async ()=>{
+      const pid = row.querySelector('.apprpractice').value;
+      const role = row.querySelector('.apprrole').value || 'member';
+      if(!pid){ uiAlert('Assign a practice first', 'Pick which practice this account belongs to. If the practice doesn\'t exist yet, create it in the <b>Clients</b> tab, then approve.'); return; }
+      const btn = row.querySelector('.apprapprove');
+      btn.disabled = true; btn.textContent = 'Approving…';
+      try{
+        if($('apprSendEmail')?.checked){
+          await sendPracticeInvite(pid, rec.email, rec.full_name || null, role, { sendEmail:true });
+          // invite-user creates the membership; the DB trigger flips the profile
+          // to approved. Belt-and-braces in case of older function deploys:
+          await sb.rpc('approve_account', { p_user: uid, p_practice: pid, p_role: role });
+        } else {
+          const { data: res, error: aerr } = await sb.rpc('approve_account', { p_user: uid, p_practice: pid, p_role: role });
+          if(aerr || res?.ok === false) throw new Error(aerr?.message || res?.error || 'approve failed');
+        }
+        loadAccountApprovals();
+        loadAccessRoster($('accessPractice')?.value);
+      }catch(e){
+        uiAlert('Approve failed', esc(e.message||String(e)));
+        btn.disabled = false; btn.textContent = 'Approve';
+      }
+    };
+    row.querySelector('.apprreject').onclick = async ()=>{
+      const ok = await uiConfirm('Reject this account?',
+        `<b>${esc(rec.email)}</b> will see "access not approved" when they sign in. You can still approve them later.`,
+        { danger:true, confirmLabel:'Reject' });
+      if(!ok) return;
+      const { error: rerr } = await sb.rpc('reject_account', { p_user: uid });
+      if(rerr) uiAlert('Reject failed', esc(rerr.message)); else loadAccountApprovals();
+    };
   });
 }
 
