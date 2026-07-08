@@ -849,7 +849,10 @@ select option{background:var(--surface2);color:var(--cream)}
 .sswarn{font-size:10.5px;color:var(--amber);letter-spacing:.04em}
 .metricpickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* Marketing Setup Wizard — first-run client onboarding */
-.wizard{border:1px solid var(--gold-dim);background:var(--surface);padding:24px 26px;margin:24px 0 6px}
+.wizard{border:1px solid var(--gold-dim);background:var(--surface);padding:24px 26px;margin:0}
+.wizard-modal .wizard{max-width:min(920px,94vw);max-height:90vh;overflow:auto}
+.wizard-head{position:relative;padding-right:36px}
+.wizard-head .wizard-close{position:absolute;top:0;right:0}
 .wizard-head .note{max-width:720px;line-height:1.6}
 .wizard-flash{margin:14px 0 2px;padding:10px 14px;font-size:13px;border:1px solid var(--line)}
 .wizard-flash.ok{color:var(--green);border-color:rgba(123,168,122,.4)}
@@ -862,6 +865,19 @@ select option{background:var(--surface2);color:var(--cream)}
 .wizard-card-rest{opacity:.85}
 .wizard-foot{display:flex;justify-content:flex-end;gap:12px;margin-top:20px}
 @media(max-width:640px){.wizard-foot{flex-direction:column}.wizard-foot .btn{width:100%}}
+
+.mkt-connect-banner{border-bottom:1px solid rgba(201,168,76,.28);background:rgba(201,168,76,.08);padding:12px 0}
+.mkt-connect-banner-inner{max-width:1180px;margin:0 auto;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.mkt-connect-banner p{margin:0;font-size:13px;line-height:1.5;flex:1;min-width:200px}
+.mkt-connect-banner-actions{display:flex;gap:10px;flex-wrap:wrap}
+.mkt-metrics-cta{margin:18px 0 8px}
+.mkt-cta-card{border:1px solid var(--gold-dim);background:var(--surface);padding:22px 24px}
+.mkt-cta-card h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:22px;margin:0 0 8px;color:var(--gold)}
+.mkt-cta-list{list-style:none;margin:12px 0;padding:0;font-size:13.5px;line-height:1.7;color:var(--cream)}
+.mkt-cta-time{margin:10px 0 14px;font-size:12px}
+.settings-mkt-rows{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.settings-mkt-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:8px 0;border-bottom:1px solid rgba(201,168,76,.1)}
+.settings-mkt-row:last-child{border-bottom:none}
 
 /* account approvals (Team Controls → Access & Invites) */
 .apprrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(150px,1fr) 110px auto auto;gap:10px;align-items:center;
