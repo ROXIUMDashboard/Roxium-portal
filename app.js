@@ -4401,4 +4401,84 @@ $('btnResetData').onclick = async ()=>{
   btn.onclick = ()=> guide.classList.toggle('hidden');
 })();
 
+/* ---------------- command palette (team, ⌘K / Ctrl+K) ----------------
+   One keystroke to anywhere: jump to a client, jump to a view, or run the
+   reporting sync — without hunting through menus. Team-only (clients have a
+   single practice and five tabs; a palette would be noise for them). */
+(function(){
+  let el = null, input = null, list = null, activeIdx = 0, open = false;
+  function buildDom(){
+    el = document.createElement('div');
+    el.id = 'cmdk';
+    el.className = 'cmdk hidden';
+    el.innerHTML = `<div class="cmdk-box" role="dialog" aria-label="Command palette">
+      <input class="cmdk-input" type="text" placeholder="Jump to a client, view, or action…" autocomplete="off" spellcheck="false">
+      <div class="cmdk-list" role="listbox"></div>
+      <div class="cmdk-hint">↑↓ navigate · Enter run · Esc close</div>
+    </div>`;
+    document.body.appendChild(el);
+    input = el.querySelector('.cmdk-input');
+    list = el.querySelector('.cmdk-list');
+    el.addEventListener('click', e=>{ if(e.target===el) close(); });
+    input.addEventListener('input', ()=> draw(input.value));
+    input.addEventListener('keydown', e=>{
+      const items = [...list.querySelectorAll('.cmdk-item')];
+      if(e.key==='Escape'){ close(); }
+      else if(e.key==='ArrowDown'){ activeIdx = Math.min(items.length-1, activeIdx+1); paint(items); e.preventDefault(); }
+      else if(e.key==='ArrowUp'){ activeIdx = Math.max(0, activeIdx-1); paint(items); e.preventDefault(); }
+      else if(e.key==='Enter'){ items[activeIdx]?.click(); e.preventDefault(); }
+    });
+  }
+  function paint(items){
+    items.forEach((b,i)=> b.classList.toggle('active', i===activeIdx));
+    items[activeIdx]?.scrollIntoView({ block:'nearest' });
+  }
+  function commands(){
+    const cmds = [];
+    // views (global team surfaces + the open practice's tabs)
+    cmds.push({ k:'view', label:'Operations Dashboard', run:()=>{ location.hash='#operations'; } });
+    cmds.push({ k:'view', label:'Team Controls', run:()=>{ location.hash='#controls'; } });
+    [['roadmap','Roadmap'],['deliverables','Progress / deliverables'],['video','Video pipeline'],['metrics','Metrics'],['updates','Timeline / updates'],['team','Team panel']]
+      .forEach(([v,l])=> cmds.push({ k:'view', label:l, run:()=>{ location.hash='#'+v; } }));
+    // actions
+    cmds.push({ k:'action', label:'Sync now — pull all reporting sources', run:async ()=>{
+      try{ await invokeSyncFn({ action:'sync', trigger:'manual' }); await loadSheetSources(); if(currentView()==='operations') loadOperationsData(true); if(practiceId) loadAll(); }
+      catch(e){ uiAlert('Sync failed', esc(e?.message||String(e))); }
+    }});
+    // clients
+    (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
+      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#roadmap'; loadAll(); } }));
+    return cmds;
+  }
+  function draw(q){
+    const ql = (q||'').trim().toLowerCase();
+    const matches = commands().filter(c=> !ql || c.label.toLowerCase().includes(ql)).slice(0, 14);
+    activeIdx = 0;
+    list.innerHTML = matches.length ? matches.map(c=>
+      `<button type="button" class="cmdk-item" role="option">
+         <span class="cmdk-k cmdk-k-${c.k}">${c.k}</span>${esc(c.label)}${c.note? `<span class="cmdk-note">${esc(c.note)}</span>`:''}
+       </button>`).join('')
+      : '<div class="cmdk-empty">No matches</div>';
+    const items = [...list.querySelectorAll('.cmdk-item')];
+    items.forEach((b,i)=> b.onclick = ()=>{ close(); matches[i].run(); });
+    paint(items);
+  }
+  function openPal(){
+    if(!me || me.role!=='team') return;
+    if(!el) buildDom();
+    open = true;
+    el.classList.remove('hidden');
+    input.value = '';
+    draw('');
+    setTimeout(()=> input.focus(), 0);
+  }
+  function close(){ if(!el) return; open = false; el.classList.add('hidden'); }
+  window.addEventListener('keydown', e=>{
+    if((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase()==='k'){
+      e.preventDefault();
+      open ? close() : openPal();
+    }
+  });
+})();
+
 init();
