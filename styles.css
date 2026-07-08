@@ -30,6 +30,10 @@ header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba
 h1{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(34px,5vw,52px);line-height:1.05}
 h1 em,h2 em{font-style:italic;color:var(--gold)}
 .updated{margin-top:12px;font-size:12px;color:var(--muted);letter-spacing:.08em}
+/* "You are here" — phase + next milestone line under the hero headline */
+.youarehere{margin-top:14px;font-size:14px;color:var(--muted);letter-spacing:.04em}
+.youarehere b{color:var(--gold);font-weight:500}
+.yah-sep{margin:0 10px;color:var(--gold-dim)}
 
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:36px}
 .stat{padding:6px 22px;border-right:1px solid var(--gold);display:flex;flex-direction:column;align-items:flex-end;text-align:right}

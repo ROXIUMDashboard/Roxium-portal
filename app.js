@@ -1112,6 +1112,29 @@ function render(){
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
+  // "You are here" — current phase, its progress, and the next milestone, right
+  // under the headline so the journey frames the numbers (not the reverse).
+  safe('you are here', ()=>{
+    const el = $('youAreHere'); if(!el) return;
+    const parts = [];
+    if(data.practice && data.deliv.length){
+      const phase = computePracticePhaseState(data.practice, data.deliv);
+      if(phase.currentPhase){
+        const g = groupDelivsByPhase(data.deliv).find(x=> x.phase===phase.currentPhase);
+        const done = g ? g.items.filter(d=> d.status==='delivered').length : 0;
+        const total = g ? g.items.length : 0;
+        parts.push(`<b>${esc(phase.currentPhase)}</b>${total? ` · ${done} of ${total} delivered`:''}`);
+      } else {
+        parts.push('<b>All phases delivered</b>');
+      }
+    }
+    const nextMs = (data.miles||[]).filter(m=> m.status!=='done')
+      .sort((a,b)=> (a.sort||0)-(b.sort||0))[0];
+    if(nextMs) parts.push(`Next milestone: ${esc(nextMs.name)}${nextMs.target_date? ` — ${esc(prettyDate(nextMs.target_date))}`:''}`);
+    el.innerHTML = parts.join('<span class="yah-sep">·</span>');
+    el.classList.toggle('hidden', !parts.length);
+  });
+
   // "Your part" — what ROXIUM is waiting on the client for (client view only)
   safe('your part', ()=> renderYourPart());
 
