@@ -13,15 +13,19 @@
 | 2 | Marketing Connections (access states) | frontend ✅ | **⚠ run migration** `2026-07-08_marketing_connections.sql` |
 | 3 | Action-plan queue (verbs + new alerts) | ✅ | none (access alerts need #2's migration) |
 | 4 | KPI insights strip | ✅ | none |
-| 5 | Engagement timeline | ✅ | none |
-| 6 | "Your part" client block | frontend ✅ | **⚠ run migration** `2026-07-08_client_your_part.sql` (after #2's) |
-| 7 | Weekly digest email | function deploys ✅ | **⚠ schedule the weekly cron** (+ optional `DIGEST_TO` secret) |
-| 8 | Delivery accountability panel | ✅ | none |
-| 9 | "You are here" hero line | ✅ | none |
+| 5 | Engagement timeline (meaningful events only) | ✅ | none |
+| 6 | ~~"Your part" client block~~ | — | **removed** at the owner's request (clients never see connection/setup state) |
+| 7 | Weekly digest email | deploys ✅ but **dormant** | staged — activate later with `DIGEST_ENABLED=true` + cron |
+| 8 | Delivery accountability panel | code ships, **UI reverted** | re-enable by restoring the commented panel in `portal/index.html` |
+| 9 | "You are here" hero line | code ships, **UI reverted** | re-enable by restoring the `#youAreHere` div in `portal/index.html` |
 | 10 | Command palette (⌘K) | ✅ | none |
 
-**Order of manual steps:** migration #2 → migration #6 → digest cron. Nothing
-else. Both migrations are idempotent (safe to re-run).
+**Order of manual steps:** migration #2 only. It's idempotent (safe to re-run).
+
+**Client-visibility rule (owner decision):** clients only ever see performance,
+deliverables, milestones, roadmap, videos, and reports. Access/connection
+states (Requested / Granted / Connected), sync plumbing, and onboarding
+progress live exclusively in Team Controls and the Operations Dashboard.
 
 ---
 
@@ -86,43 +90,34 @@ Metrics tab → chips render above the chart and change with the channel picker.
 
 ## Feature 5 — Engagement timeline
 
-**What it does:** the Updates tab is now one chronological story per practice:
-team-posted updates merged with deliverables delivered, milestones completed,
-and video stage moves, each with a type tag. No new tables — it merges data the
-dashboard already loads (capped at 80 events).
+**What it does:** the Updates tab merges team-posted updates with MEANINGFUL
+system events — deliverables delivered (green ✓ tag), milestones completed,
+and real video stage moves. Merely existing in the pipeline is not news:
+'planned'/backlog rows and a video's initial setup row never appear.
 
 **Deploy:** nothing. **Verify:** open a practice with history → Updates tab →
-system events (tagged Delivered / Milestone / Video) interleave with posted
-updates in date order. Team ✎/✕ still work on posted updates only.
+delivered work and milestones interleave with posted updates; freshly created
+videos generate no entries until they actually move stages.
 
-## Feature 6 — "Your part" client block
+## Feature 6 — REMOVED
 
-**What it does:** a gold block under the client's hero listing the only things
-ROXIUM is waiting on *them* for: video approvals (days-waiting, red at 7d) and
-platform-access requests they haven't granted (request age). Hidden when empty;
-never shown in the team's own view (use Preview-as-client to see it).
+The "Your part" client block was removed at the owner's request: clients must
+never see connection/access/onboarding state. Its migration file was deleted
+before ever shipping; there is nothing to run or clean up.
 
-**⚠ MANUAL — run once in Supabase → SQL Editor, AFTER feature 2's migration:**
-`migrations/2026-07-08_client_your_part.sql`
-- Creates `get_my_pending_access()` — a security-definer RPC exposing only
-  safe fields (source, label, state, request age) to the practice's own
-  members. `sheet_sources` itself stays team-only under RLS.
-
-**Verify:** mark a source `requested` on a test practice, set a video to
-blocked → Preview as client → the block lists both with ages. Databases without
-the migration just never show the block (the app fails soft).
-
-## Feature 7 — Weekly digest email
+## Feature 7 — Weekly digest email (STAGED, dormant)
 
 **What it does:** one Monday email to the team summarizing every client:
 delivered/posted in the last 7 days, open overdue, stuck videos, sync + access
 health, and latest-month spend/reach with deltas — with a deep link to the
 Operations Dashboard.
 
-**Deploys itself:** `supabase/functions/weekly-digest` goes live on merge (the
-deploy-functions workflow iterates every function directory).
+**Deploys itself but stays dormant:** the function goes live on merge, but
+every invocation is a safe no-op until the `DIGEST_ENABLED` secret is set to
+`true` — the kill-switch that keeps this feature staged for later.
 
-**⚠ MANUAL — two steps:**
+**⚠ MANUAL — when you decide to activate it (not required now):**
+0. Supabase → Edge Functions → Secrets: set `DIGEST_ENABLED` = `true`.
 1. *(optional)* Supabase → Edge Functions → Secrets: set `DIGEST_TO` to a
    comma-separated recipient list. Without it, the digest emails every
    `role='team'` profile's auth email. (Uses the existing `RESEND_API_KEY`,
@@ -144,27 +139,20 @@ browser console: `sb.functions.invoke('weekly-digest', { body: {} })` — the
 response returns `{ok, emailed, clients, flags}`. Without `RESEND_API_KEY` it's
 a safe no-op that returns what it *would* have sent.
 
-## Feature 8 — Delivery accountability panel
+## Feature 8 — Delivery accountability panel (UI reverted, code dormant)
 
-**What it does:** a per-client execution scoreboard at the bottom of the
-Operations Dashboard, worst-first: delivered last 30d, on-time rate (delivered
-vs due, only for items that had a due date; green ≥80% / amber ≥50% / red),
-open overdue, longest in-progress item (amber 7d, red 14d).
+The per-client execution scoreboard (delivered 30d, on-time rate, open
+overdue, longest in-progress) is fully implemented in `renderOpsAccountability`
+but reverted from the UI at the owner's request. The renderer no-ops while its
+panel is absent. **Re-enable later:** uncomment the "Delivery accountability"
+`ops-panel` block in `portal/index.html` — nothing else needed.
 
-**Deploy:** nothing. **Verify:** Operations Dashboard → "Delivery
-accountability" panel below the client overview. On-time rate shows an em-dash
-until a client has delivered items that carried due dates — expected, not
-missing data.
+## Feature 9 — "You are here" hero line (UI reverted, code dormant)
 
-## Feature 9 — "You are here" hero line
-
-**What it does:** one line under the dashboard headline: current phase with
-delivered/total progress and the next milestone with its target date — the
-journey frames the numbers instead of the reverse.
-
-**Deploy:** nothing. **Verify:** any practice with deliverables → the line
-renders under the headline for both audiences; practices with everything
-delivered read "All phases delivered".
+The phase + next-milestone line under the dashboard headline is implemented
+but reverted from the UI. **Re-enable later:** restore
+`<div id="youAreHere" class="youarehere hidden"></div>` under `#heroTitle` in
+`portal/index.html` — the renderer picks it up automatically.
 
 ## Feature 10 — Command palette (⌘K / Ctrl+K)
 
@@ -182,13 +170,11 @@ see it.
 
 1. ☐ Merge → confirm both GitHub Actions are green (Pages deploy + functions deploy).
 2. ☐ Supabase SQL Editor: run `2026-07-08_marketing_connections.sql`.
-3. ☐ Supabase SQL Editor: run `2026-07-08_client_your_part.sql`.
-4. ☐ *(optional)* set `DIGEST_TO`; schedule the weekly digest cron (SQL above).
-5. ☐ Hard-refresh the portal (or wait for the cache-bust) and spot-check:
-   source rows show sync ages · access dropdowns present · queue shows a
-   `Sync now` verb on any sync alert · Metrics shows insight chips ·
-   Updates tab shows tagged system events · Preview-as-client shows
-   "Your part" + "You are here" · ops shows the accountability panel ·
-   ⌘K opens the palette.
-6. ☐ Trigger the digest once manually (console invoke above) and confirm the
-   email arrives.
+3. ☐ Hard-refresh the portal (or wait for the cache-bust) and spot-check:
+   source rows show sync ages · access dropdowns present (Team Controls only) ·
+   queue shows a `Sync now` verb on any sync alert · Metrics shows insight
+   chips · Updates tab shows tagged meaningful events only ·
+   Preview-as-client shows NO connection/onboarding state anywhere ·
+   ⌘K opens the palette (team only).
+4. ☐ Later, when wanted: activate the weekly digest (`DIGEST_ENABLED=true` +
+   cron) and/or re-enable features 8/9 by restoring their markup.

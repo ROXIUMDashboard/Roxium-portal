@@ -60,6 +60,14 @@ Deno.serve(async (req) => {
     const denied = await authorize(req);
     if (denied) return denied;
 
+    // STAGED FEATURE — the digest is deployed but intentionally dormant until
+    // the team opts in. Flip on by setting the DIGEST_ENABLED secret to "true"
+    // (then schedule the weekly cron per docs/feature-rollout.md). Until then
+    // every invocation — cron or manual — is a safe no-op.
+    if ((Deno.env.get("DIGEST_ENABLED") || "").toLowerCase() !== "true") {
+      return respond({ ok: true, skipped: "weekly digest is disabled — set DIGEST_ENABLED=true to activate" });
+    }
+
     const sb = serviceClient();
     const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
     const staleCut = new Date(Date.now() - 26 * 3600000).toISOString();
