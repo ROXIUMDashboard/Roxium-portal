@@ -613,6 +613,15 @@ async function loadAll(){
   ]);
   data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
+  // Marketing Setup Wizard state: this practice's OAuth connections (members may
+  // read their own connection METADATA — tokens live in a service-role-only
+  // table). Fails soft on databases without the platform-connections migration.
+  data.connections = [];
+  try{
+    const { data: pc, error: pcErr } = await sb.from('platform_connections')
+      .select('provider,status,external_account_name,connected_at').eq('practice_id', practiceId);
+    if(!pcErr && Array.isArray(pc)) data.connections = pc;
+  }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -952,6 +961,95 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- Marketing Setup Wizard (first-run, client) ----------------
+   Stripe-style onboarding for a freshly approved practice: connect Facebook &
+   Instagram and Google with their own logins — no spreadsheets, no IDs, no
+   technical language. Shown until the practice completes or skips it; the
+   team never sees it in their own view (Preview-as-client does).
+   Each Connect button asks the oauth-start function for an authorize URL;
+   when a provider isn't configured yet (no developer app), the card degrades
+   to "our team will connect this with you" so the flow never dead-ends. */
+const WIZARD_PROVIDERS = [
+  { key:'meta',   title:'Facebook & Instagram',
+    body:'Your ads, reach, and engagement across Facebook and Instagram — connected in one click with your Facebook login.' },
+  { key:'google', title:'Google',
+    body:'Your Google Ads performance and website analytics — connected with your Google login.' },
+];
+function renderSetupWizard(){
+  const el = $('setupWizard'); if(!el) return;
+  const show = !isTeamView() && data.practice && !data.practice.wizard_completed_at;
+  el.classList.toggle('hidden', !show);
+  if(!show){ el.innerHTML=''; return; }
+  // Landing back from an OAuth round-trip: ?connected=meta / ?connect_error=…
+  let flash = '';
+  try{
+    const q = new URL(location.href).searchParams;
+    if(q.get('connected')){
+      const t = WIZARD_PROVIDERS.find(p=> p.key===q.get('connected'))?.title || 'Account';
+      flash = `<div class="wizard-flash ok">✓ ${esc(t)} connected — your numbers start appearing within a couple of hours.</div>`;
+    } else if(q.get('connect_error')){
+      flash = `<div class="wizard-flash err">That connection didn't complete (${esc(q.get('connect_error'))}). Nothing was changed — try again, or we'll help on a quick call.</div>`;
+    }
+  }catch(_){}
+  const conn = k => (data.connections||[]).find(c=> c.provider===k);
+  const cards = WIZARD_PROVIDERS.map(p=>{
+    const c = conn(p.key);
+    const state = c && c.status==='connected'
+      ? `<span class="ssok">✓ Connected${c.external_account_name? ` — ${esc(c.external_account_name)}`:''}</span>`
+      : c && c.status==='error'
+        ? `<button class="btn sm wizard-connect" data-provider="${p.key}">Reconnect</button>`
+        : `<button class="btn sm wizard-connect" data-provider="${p.key}">Connect</button>`;
+    return `<div class="wizard-card">
+      <div class="wizard-card-title">${esc(p.title)}</div>
+      <p class="note">${esc(p.body)}</p>
+      <div class="wizard-card-state" data-state-for="${p.key}">${state}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="wizard-head">
+      <div class="eyebrow">Welcome — let's connect your marketing</div>
+      <p class="note">Connect your accounts below with your own logins — you never share a password, we only ever <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.</p>
+    </div>
+    ${flash}
+    <div class="wizard-cards">${cards}
+      <div class="wizard-card wizard-card-rest">
+        <div class="wizard-card-title">Everything else</div>
+        <p class="note">YouTube, Microsoft Ads, call tracking and the rest — our team wires these up for you. Nothing for you to do.</p>
+        <div class="wizard-card-state"><span class="note">Handled by ROXIUM ✓</span></div>
+      </div>
+    </div>
+    <div class="wizard-foot">
+      <button class="btn ghost sm" id="wizardSkip">Skip for now</button>
+      <button class="btn sm" id="wizardDone">Done — take me to my dashboard</button>
+    </div>`;
+  el.querySelectorAll('.wizard-connect').forEach(b=> b.onclick = async ()=>{
+    b.disabled = true; b.textContent = 'Opening…';
+    try{
+      const { data: res, error } = await sb.functions.invoke('oauth-start', {
+        body: { provider: b.dataset.provider, practice_id: practiceId }
+      });
+      if(error) throw error;
+      if(res?.url){ location.href = res.url; return; }
+      // Provider app not configured yet — degrade gracefully, never dead-end.
+      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+    }catch(e){
+      console.warn('[wizard] oauth-start failed:', e);
+      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+    }
+  });
+  const finish = async ()=>{
+    try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
+    if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
+    // Drop the one-time OAuth params so the flash doesn't resurrect on refresh.
+    try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
+    renderSetupWizard();
+  };
+  $('wizardSkip').onclick = finish;
+  $('wizardDone').onclick = finish;
+}
+
 /* ---------------- engagement timeline ----------------
    One chronological feed per practice: team-posted updates + MEANINGFUL system
    events only (deliverables delivered, milestones completed, video stage moves).
@@ -1076,6 +1174,9 @@ function render(){
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
+
+  // Marketing Setup Wizard — first-run onboarding for approved clients
+  safe('setup wizard', ()=> renderSetupWizard());
 
   // "You are here" journey line — feature 9, currently REVERTED from the UI at
   // the owner's request. The renderer stays; it no-ops while the #youAreHere
