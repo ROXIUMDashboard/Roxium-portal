@@ -5,13 +5,13 @@
 <script>
 // Auth-callback guard — MUST run before anything renders. Supabase magic links,
 // invite links, and OTP redirects may land on the site root (Site URL fallback).
-// Those belong to the portal app at /portal.html: forward them immediately,
+// Those belong to the portal app at /portal/: forward them immediately,
 // preserving the token hash and query string so sign-in completes untouched.
 (function(){
   var h = location.hash || '', s = location.search || '';
   if (/access_token=|refresh_token=|error_code=|error=|type=(invite|magiclink|recovery|signup)/.test(h)
       || /[?&](code|token_hash|join)=/.test(s)) {
-    location.replace('/portal.html' + s + h);
+    location.replace('/portal/' + s + h);
   }
 })();
 </script>
@@ -145,7 +145,7 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
     <a class="navlink" href="#platform">Platform</a>
     <a class="navlink" href="#tour">Tour</a>
     <a class="navlink" href="#onboarding">Onboarding</a>
-    <a class="btn ghost sm" href="/portal.html">Client sign in</a>
+    <a class="btn ghost sm" href="/portal/">Client sign in</a>
     <a class="btn sm" href="#demo">Book a demo</a>
   </nav>
 </div></header>
@@ -377,14 +377,14 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
   <p class="lede" style="margin-left:auto;margin-right:auto">A 20-minute walkthrough with your own channels in mind — what gets connected, what you'll see, and when.</p>
   <div class="ctarow" style="margin-top:30px">
     <a class="btn" href="mailto:hello@roxium.com?subject=ROXIUM%20demo">Book a demo</a>
-    <a class="btn ghost" href="/portal.html">Already a client? Sign in</a>
+    <a class="btn ghost" href="/portal/">Already a client? Sign in</a>
   </div>
 </div></section>
 
 <footer><div class="wrap foot">
   <span class="mark">ROX<b>I</b>UM</span>
   <span>One operating view for marketing performance, deliverables, and client accountability.</span>
-  <span><a href="/portal.html" style="color:var(--gold)">Client portal sign-in</a></span>
+  <span><a href="/portal/" style="color:var(--gold)">Client portal sign-in</a></span>
 </div></footer>
 
 <script>

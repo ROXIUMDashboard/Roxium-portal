@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
     data: { full_name, role, role_label },
     // Invite links land on the portal app page — the site root is the public
     // marketing page (its auth-forwarder would catch this, but go direct).
-    redirectTo: SITE_URL ? SITE_URL.replace(/\/+$/, "") + "/portal.html" : undefined,
+    redirectTo: SITE_URL ? SITE_URL.replace(/\/+$/, "") + "/portal/" : undefined,
   });
   if (invited?.user) {
     userId = invited.user.id;

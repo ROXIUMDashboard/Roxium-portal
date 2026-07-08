@@ -409,7 +409,7 @@ async function showBuildVersion(){
   const el = $('portalBuild');
   if(!el) return;
   try{
-    const r = await fetch(`version.json?t=${Date.now()}`, {cache:'no-store'});
+    const r = await fetch(`/version.json?t=${Date.now()}`, {cache:'no-store'});
     if(!r.ok) return;
     const v = await r.json();
     if(!v.sha) return;
@@ -440,9 +440,9 @@ $('btnLogin').onclick = async ()=>{
     const { data: jpid } = await sb.rpc('join_code_practice', { p_code: joinCode });
     allowed = !!jpid;
   }
-  // The app lives at /portal.html (the root is the public marketing page, which
+  // The app lives at /portal/ (the root is the public marketing page, which
   // forwards stray auth callbacks here). Send magic links straight to the portal.
-  const redirectTo = location.origin + '/portal.html' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
+  const redirectTo = location.origin + '/portal/' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
   const { error } = await sb.auth.signInWithOtp({
     email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: !!allowed }
   });
