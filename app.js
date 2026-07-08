@@ -587,14 +587,6 @@ async function loadAll(){
   ]);
   data = { practice:p.data, kpiRaw:(k.data||[]), kpiDailyRaw: kd.error ? [] : (kd.data||[]), kpi:[], deliv:d.data||[], miles:m.data||[], video:v.data||[], feed:f.data||[], vhist:vh.data||[], notif:nt.data||[] };
   data.kpi = computeKpi();   // fold the raw source rows down per the selected channel
-  // Pending platform-access requests visible to the CLIENT ("Your part" block).
-  // Via security-definer RPC because sheet_sources itself is team-only under RLS.
-  // Fail-soft: databases without the migration simply render no block.
-  data.pendingAccess = [];
-  try{
-    const { data: pa, error: paErr } = await sb.rpc('get_my_pending_access', { p_practice: practiceId });
-    if(!paErr && Array.isArray(pa)) data.pendingAccess = pa;
-  }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -934,42 +926,13 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
-/* ---------------- "Your part" (client-facing next actions) ----------------
-   The next-action doctrine pointed at the client: the only things ROXIUM is
-   waiting on THEM for — approvals blocking videos, and platform-access
-   requests they haven't granted yet. Hidden entirely when there's nothing. */
-function renderYourPart(){
-  const el = $('yourPart'); if(!el) return;
-  // Client-facing (including team "Preview as client"); the team has the ops queue.
-  if(isTeamView()){ el.classList.add('hidden'); el.innerHTML=''; return; }
-  const items = [];
-  (data.video||[]).forEach(v=>{
-    if(v.blocked && v.stage!=='posted' && v.stage!=='delivered'){
-      const days = daysIn(v.stage_since);
-      items.push({ text:`Approve “${v.item}”${v.blocked_reason? ` — ${v.blocked_reason}`:''}`,
-        note: days>=3 ? `waiting ${days} days` : 'waiting on you', urgent: days>=7 });
-    }
-  });
-  (data.pendingAccess||[]).filter(a=> a.access_status==='requested').forEach(a=>{
-    items.push({ text:`Grant ${channelLabel(a.source)} access`,
-      note: a.requested_days!=null ? `we sent instructions ${a.requested_days}d ago — check your inbox` : 'instructions are in your inbox',
-      urgent: (a.requested_days??0)>=7 });
-  });
-  if(!items.length){ el.classList.add('hidden'); el.innerHTML=''; return; }
-  el.classList.remove('hidden');
-  el.innerHTML = `
-    <div class="yourpart-head">Your part <span class="yourpart-sub">— only you can unblock these</span></div>
-    ${items.map(i=>`<div class="yourpart-item${i.urgent?' urgent':''}">
-       <span class="yourpart-dot" aria-hidden="true"></span>
-       <span class="yourpart-text">${esc(i.text)}</span>
-       <span class="yourpart-note">${esc(i.note)}</span>
-     </div>`).join('')}`;
-}
-
 /* ---------------- engagement timeline ----------------
-   One chronological feed per practice: team-posted updates + the system events
-   that already exist in the data (deliverables delivered, milestones completed,
-   video stage history). No new tables — it's a merge of what loadAll() fetched. */
+   One chronological feed per practice: team-posted updates + MEANINGFUL system
+   events only (deliverables delivered, milestones completed, real video stage
+   moves). Merely existing in the pipeline is not news: 'planned' history rows
+   (creation/backlog seeds) never appear, and a video's very first history row
+   is treated as setup, not progress. No new tables — it merges what loadAll()
+   already fetched. */
 function buildEngagementTimeline(){
   const ev = [];
   (data.feed||[]).forEach(f=> ev.push({
@@ -977,15 +940,23 @@ function buildEngagementTimeline(){
     meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at }));
   (data.deliv||[]).forEach(d=>{
     if(d.status==='delivered' && d.delivered_at)
-      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'Delivered', text:d.name, meta:d.phase||'Deliverable' });
+      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'✓ Delivered', text:d.name, meta:d.phase||'Deliverable' });
   });
   (data.miles||[]).forEach(m=>{
     if(m.status==='done' && m.completed_on)
       ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap' });
   });
   const vname = id => ((data.video||[]).find(v=> v.id===id)||{}).item || 'Video';
-  (data.vhist||[]).forEach(h=> ev.push({
-    t:h.moved_at, kind:'video', tag:'Video', text:`${vname(h.video_id)} → ${stageLabelOf(h.stage)}`, meta:'Video pipeline' }));
+  const firstMove = new Map();   // video_id -> earliest history row (its setup row)
+  (data.vhist||[]).forEach(h=>{
+    const cur = firstMove.get(h.video_id);
+    if(!cur || new Date(h.moved_at) < new Date(cur.moved_at)) firstMove.set(h.video_id, h);
+  });
+  (data.vhist||[]).forEach(h=>{
+    if(h.stage==='planned') return;                    // backlog/creation — not an action
+    if(firstMove.get(h.video_id)===h && h.stage!=='delivered' && h.stage!=='posted') return; // initial setup row
+    ev.push({ t:h.moved_at, kind:'video', tag:'Video', text:`${vname(h.video_id)} → ${stageLabelOf(h.stage)}`, meta:'Video pipeline' });
+  });
   ev.sort((a,b)=> new Date(b.t)-new Date(a.t));
   return ev.slice(0, 80);   // keep the DOM bounded on long engagements
 }
@@ -1112,8 +1083,9 @@ function render(){
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
-  // "You are here" — current phase, its progress, and the next milestone, right
-  // under the headline so the journey frames the numbers (not the reverse).
+  // "You are here" journey line — feature 9, currently REVERTED from the UI at
+  // the owner's request. The renderer stays; it no-ops while the #youAreHere
+  // node is absent from portal/index.html. Re-enable by restoring that div.
   safe('you are here', ()=>{
     const el = $('youAreHere'); if(!el) return;
     const parts = [];
@@ -1134,9 +1106,6 @@ function render(){
     el.innerHTML = parts.join('<span class="yah-sep">·</span>');
     el.classList.toggle('hidden', !parts.length);
   });
-
-  // "Your part" — what ROXIUM is waiting on the client for (client view only)
-  safe('your part', ()=> renderYourPart());
 
   // timeline
   const isTeam = isTeamView();
