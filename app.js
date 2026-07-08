@@ -940,7 +940,13 @@ const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 function buildEngagementTimeline(){
   const ev = [];
   const stageLbl = k => stageLabelOf(k);
+  const deliveredDelivNames = new Set(
+    (data.deliv||[]).filter(d=> d.status==='delivered').map(d=> (d.name||'').trim().toLowerCase())
+  );
   (data.feed||[]).forEach(f=>{
+    // Legacy rows: skip activity copies when the timeline already shows ✓ Delivered from data.
+    const m = String(f.message||'').match(/^Deliverable completed:\s*(.+?)\.?\s*$/i);
+    if(m && deliveredDelivNames.has(m[1].trim().toLowerCase())) return;
     const isComment = String(f.source||'').toLowerCase()==='comment';
     ev.push({
       t:f.created_at, kind: isComment ? 'comment' : 'update',
@@ -968,7 +974,7 @@ function buildEngagementTimeline(){
     const name = vname(h.video_id);
     if(h.stage==='delivered' || h.stage==='posted'){
       ev.push({
-        t:h.moved_at, kind:'delivered', tag:'Delivered',
+        t:h.moved_at, kind:'deliverable', tag:'✓ Delivered',
         text: h.stage==='posted' ? `${name} is posted.` : `${name} was delivered.`,
         meta:'Video production',
       });
@@ -2204,17 +2210,19 @@ async function deleteRow(table, id, confirmMsg){
 }
 
 /* ---- NOTIFICATIONS: write a banner row for the client + fire an email ---- */
-// Notify a practice. Always writes an in-app notification + activity entry.
-// opts.email (default true) controls whether an email is ALSO sent — we notify
-// in-app for every completion but only email on the "big" events (phase complete,
-// video posted, milestone). opts.practiceId targets a practice other than the
-// currently-viewed one (needed from the ops dashboard, which spans all practices).
+// Notify a practice. Writes an in-app notification; activity feed only when the event
+// isn't already represented in buildEngagementTimeline() (deliverable rows, video
+// history, milestones). opts.email (default true) controls whether an email is ALSO sent.
 async function notifyClient(kind, message, opts={}){
   const pid = opts.practiceId || practiceId;
   if(!pid) return;
+  const skipFeed = opts.feed === false
+    || (kind === 'deliverable' && /^Deliverable completed:/i.test(message));
   try{
     await sb.from('notifications').insert({ practice_id: pid, kind, message });
-    await sb.from('activity').insert({ practice_id: pid, message, author:'ROXIUM', source:'portal' });
+    if(!skipFeed){
+      await sb.from('activity').insert({ practice_id: pid, message, author:'ROXIUM', source:'portal' });
+    }
     if(opts.email !== false){
       const { data: sess } = await sb.auth.getSession();
       fetch(`${CONFIG.SUPABASE_URL}/functions/v1/notify-client`, {
