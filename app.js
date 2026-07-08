@@ -1153,7 +1153,11 @@ function render(){
     const metricRow = allMonthsView ? rangeSummary?.totals : latest;
     const trendRow = allMonthsView ? rangeSummary?.latest : latest;
     const trendPrev = allMonthsView ? rangeSummary?.prev : prev;
+    // Spend, Link Clicks and CPC already appear in the hero stats up top, so leave
+    // them out of the metric-card row to avoid duplicating the header.
+    const HIDE_METRIC_CARDS = new Set(['spend','clicks','cpc']);
     const cards = CORE_METRICS.map(def=>{
+      if(HIDE_METRIC_CARDS.has(def.k)) return null;
       const v = metricRow ? metricValue(def, metricRow) : null;
       if(v==null || (def.hideIfZero && !v)) return null;
       const bv = trendRow && trendPrev ? metricValue(def, trendPrev) : null;
@@ -3876,16 +3880,10 @@ function sourceTabRow(pid, s){
   // Access state machine (present only once the marketing-connections migration ran).
   const hasAccessCol = ('access_status' in s);
   const acc = s.access_status || 'connected';
-  const accSel = hasAccessCol
-    ? `<select class="cellinput accesssel" data-pid="${pid}" data-source="${esc(source)}" title="Client access state (requested → granted → connected)">${
-        ACCESS_STATES.map(([v,l])=>`<option value="${v}" ${v===acc?'selected':''}>${l}</option>`).join('')}</select>`
-    : '';
-  const reqDays = accessAgeDays(s);
-  const notSynced = hasAccessCol && acc!=='connected'
-    ? (acc==='requested'
-        ? `<span class="${accessAgeCls(reqDays)}">access requested${reqDays!=null?` ${reqDays}d ago`:''}${(reqDays??0)>=7?' — escalate':''}</span>`
-        : `<span class="sswarn">access granted — wire the tab &amp; sync</span>`)
-    : `<span class="note">not synced</span>`;
+  // Access-state control (Requested/Granted/Connected) removed from the reporting
+  // workbook — sources just show their sync status.
+  const accSel = '';
+  const notSynced = `<span class="note">not synced</span>`;
   const status = s.last_status==='error'
       ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error${age?` · ${esc(age.label)}`:''}</span>`
     : age
