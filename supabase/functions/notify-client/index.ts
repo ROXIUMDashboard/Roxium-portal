@@ -72,7 +72,9 @@ Deno.serve(async (req) => {
 
     const RESEND = Deno.env.get("RESEND_API_KEY");
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
-    const SITE = Deno.env.get("SITE_URL") || "https://roxium.com";
+    // Link recipients straight into the portal app page (the site root is the
+    // public marketing page).
+    const SITE = (Deno.env.get("SITE_URL") || "https://roxium.com").replace(/\/+$/, "") + "/portal.html";
     const when = new Date().toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",
       month: "long", day: "numeric", year: "numeric",

@@ -1,9 +1,12 @@
-# Cloudflare Pages SPA fallback.
-# Serve index.html (HTTP 200, no redirect) for any path that is not a real static
-# file, so client-side routes and magic-link callbacks resolve instead of 404ing
+# Cloudflare Pages routing.
+# / (index.html)  = public marketing page. It forwards any auth-callback hash/query
+#                   (magic links, invites, ?join=) to /portal.html.
+# /portal.html    = the portal app (login + client/team dashboards).
+# Any path that is not a real static file falls back to the PORTAL (HTTP 200, no
+# redirect) so client-side routes and magic-link callbacks resolve instead of 404ing
 # with Cloudflare's "nothing here yet" page.
 #
 # NOTE: this is the correct rule for Cloudflare *Pages* (`wrangler pages deploy`).
 # It is safe now because the Workers deploy path (`wrangler deploy` / wrangler.jsonc)
 # was removed — that path rejected this rule as an infinite loop (error 100324).
-/*    /index.html    200
+/*    /portal.html    200

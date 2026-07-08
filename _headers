@@ -6,6 +6,9 @@
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
 
+/portal.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
 /*.js
   Cache-Control: no-cache, must-revalidate
 

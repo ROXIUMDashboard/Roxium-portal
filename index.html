@@ -2,375 +2,415 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// Auth-callback guard — MUST run before anything renders. Supabase magic links,
+// invite links, and OTP redirects may land on the site root (Site URL fallback).
+// Those belong to the portal app at /portal.html: forward them immediately,
+// preserving the token hash and query string so sign-in completes untouched.
+(function(){
+  var h = location.hash || '', s = location.search || '';
+  if (/access_token=|refresh_token=|error_code=|error=|type=(invite|magiclink|recovery|signup)/.test(h)
+      || /[?&](code|token_hash|join)=/.test(s)) {
+    location.replace('/portal.html' + s + h);
+  }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ROXIUM · Client Portal</title>
+<title>ROXIUM — One operating view for your practice's marketing</title>
+<meta name="description" content="ROXIUM gives practices one live view of marketing performance, deliverables, video production, and what needs action next — across Meta, Google, and every channel.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=BUILD_SHA">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --ink:#0D0C10; --surface:#15141A; --surface2:#1B1A21; --line:rgba(201,168,76,.22);
+  --gold:#C9A84C; --gold-dim:#8A7440; --cream:#F2EDE3; --muted:#9A948A;
+  --green:#7BA87A; --amber:#D4A24E; --red:#C66A58;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--ink);color:var(--cream);font-family:'Jost',sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
+::selection{background:var(--gold);color:var(--ink)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+a{color:inherit;text-decoration:none}
+
+.eyebrow{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}
+h1{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(36px,5.4vw,58px);line-height:1.05}
+h2{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(26px,3.4vw,38px);line-height:1.1}
+h1 em,h2 em{font-style:italic;color:var(--gold)}
+.lede{margin-top:18px;font-size:17px;line-height:1.65;color:var(--muted);max-width:640px}
+.mark{font-weight:500;letter-spacing:.42em;font-size:15px}
+.mark b{color:var(--gold);font-weight:500}
+
+.btn{display:inline-block;background:var(--gold);color:var(--ink);border:1px solid var(--gold);padding:13px 26px;font-family:'Jost';font-size:13px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;transition:background .18s ease,color .18s ease}
+.btn:hover{background:transparent;color:var(--gold)}
+.btn.ghost{background:transparent;color:var(--cream);border-color:var(--line)}
+.btn.ghost:hover{border-color:var(--gold);color:var(--gold)}
+.btn.sm{padding:9px 16px;font-size:11px}
+
+header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(13,12,16,.92);backdrop-filter:blur(8px);z-index:10}
+.bar{display:flex;align-items:center;justify-content:space-between;height:64px}
+.nav{display:flex;align-items:center;gap:26px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.nav a:hover{color:var(--gold)}
+@media(max-width:820px){.nav .navlink{display:none}}
+
+section{padding:76px 0;border-bottom:1px solid var(--line)}
+.sectionhead{max-width:720px;margin-bottom:44px}
+
+.hero-grid{display:grid;grid-template-columns:1fr;gap:44px}
+.hero-copy{max-width:760px}
+.ctarow{display:flex;gap:14px;margin-top:30px;flex-wrap:wrap}
+.trustline{margin-top:22px;font-size:12px;letter-spacing:.12em;color:var(--muted)}
+.trustline b{color:var(--cream);font-weight:400}
+
+.panel{background:var(--surface);border:1px solid var(--line);overflow:hidden}
+.panel-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.panel-title{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+.panel-title b{color:var(--cream);font-weight:400}
+.chiprow{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:11px;letter-spacing:.1em;padding:5px 11px;border:1px solid var(--line);color:var(--muted);background:var(--ink)}
+.chip .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.dot.ok{background:var(--green)} .dot.warn{background:var(--amber)} .dot.bad{background:var(--red)} .dot.idle{background:var(--muted)}
+.chip.ok{color:var(--cream)}
+.ribbon{display:flex;gap:20px;padding:11px 22px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);flex-wrap:wrap}
+.ribbon .done{color:var(--green)}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));border-bottom:1px solid var(--line)}
+.stat{padding:22px;border-right:1px solid var(--line)}
+.stat:last-child{border-right:none}
+.stat .l{font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font-family:'Cormorant Garamond',serif;font-size:38px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:6px}
+.stat .d{font-size:11px;margin-top:4px}
+.d.good{color:var(--green)} .d.warn{color:var(--amber)} .d.bad{color:var(--red)} .d.idle{color:var(--muted)}
+.spark{margin-top:12px;display:block;width:100%;height:36px}
+.panel-body{display:grid;grid-template-columns:1.2fr 1fr}
+.panel-cell{padding:20px 22px}
+.panel-cell + .panel-cell{border-left:1px solid var(--line)}
+.cell-label{font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+.phasebar{height:6px;background:var(--surface2);position:relative;margin:10px 0 8px}
+.phasebar i{position:absolute;inset:0 34% 0 0;background:var(--gold)}
+.rowline{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-bottom:1px dashed rgba(201,168,76,.14)}
+.rowline:last-child{border-bottom:none}
+.rowline .st{font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.st.ok{color:var(--green)} .st.warn{color:var(--amber)} .st.mut{color:var(--muted)} .st.bad{color:var(--red)}
+.mockcaption{margin-top:14px;font-size:12px;color:var(--muted);letter-spacing:.06em;text-align:center}
+
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+@media(max-width:920px){.grid3,.grid4{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.grid3,.grid4{grid-template-columns:1fr}.panel-body{grid-template-columns:1fr}.panel-cell + .panel-cell{border-left:none;border-top:1px solid var(--line)}}
+.card{background:var(--surface);border:1px solid var(--line);padding:26px}
+.card h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:21px;margin-bottom:10px}
+.card p{font-size:14px;line-height:1.6;color:var(--muted)}
+.card .tag{font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:12px}
+.keyhole{opacity:.85}
+.keyhole h3{color:var(--muted);font-style:italic}
+.vsline{display:flex;align-items:center;gap:18px;margin:34px 0}
+.vsline .rule{flex:1;height:1px;background:var(--line)}
+.vsline .word{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--gold)}
+.unify{background:var(--surface);border:1px solid var(--gold-dim);padding:30px}
+.unify h3{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:600;margin-bottom:8px}
+.unify p{color:var(--muted);font-size:14px;line-height:1.65;max-width:820px}
+.unify ul{margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px 26px;list-style:none}
+.unify li{font-size:13px;color:var(--cream);padding-left:16px;position:relative}
+.unify li::before{content:"—";color:var(--gold);position:absolute;left:0}
+
+.toggle{display:inline-flex;border:1px solid var(--line);margin-bottom:26px}
+.toggle button{background:transparent;border:none;color:var(--muted);font-family:'Jost';font-size:12px;letter-spacing:.2em;text-transform:uppercase;padding:11px 22px;cursor:pointer}
+.toggle button.on{background:var(--gold);color:var(--ink)}
+.tourview{display:none}
+.tourview.on{display:block}
+
+.tier{position:relative}
+.tier .time{position:absolute;top:26px;right:26px;font-size:11px;letter-spacing:.14em;color:var(--gold)}
+.tier ol{margin-top:14px;padding-left:18px;font-size:13px;color:var(--muted);line-height:1.7}
+.notepanel{margin-top:26px;border:1px solid var(--line);background:var(--surface);padding:20px 26px;font-size:14px;color:var(--muted);line-height:1.65}
+.notepanel b{color:var(--cream);font-weight:400}
+
+.prooflist{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.expect{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:34px}
+.expect .x .n{font-family:'Cormorant Garamond',serif;font-size:34px;font-weight:600;color:var(--cream)}
+.expect .x .t{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+
+footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08em}
+.foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+.cta-final{text-align:center;padding:96px 0}
+.cta-final .ctarow{justify-content:center}
+</style>
 </head>
 <body>
 
-<!-- ============ LOGIN ============ -->
-<div id="login" class="login hidden">
-  <div class="login-card">
-    <div class="mark big">ROX<b>I</b>UM</div>
-    <div class="eyebrow">Practice Growth Portal</div>
-    <p class="note">Enter your email — we'll send a secure sign-in link. If your practice invited you (or you're on the roster), signing up is automatic — no manual approval needed.</p>
-    <input id="loginEmail" type="email" placeholder="you@practice.com">
-    <button class="btn" id="btnLogin">Send sign-in link</button>
-    <div id="loginCodeRow" class="hidden" style="margin-top:10px">
-      <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code from your email">
-      <button class="btn" id="btnVerifyCode">Enter code</button>
-      <p class="note" style="margin-top:6px">Outlook can be slow or block the button — the code above always works.</p>
-    </div>
-    <p class="note login-persist">After you sign in once, this browser keeps you signed in until you choose Sign out.</p>
-    <p class="note" id="loginMsg"></p>
-  </div>
-</div>
-
-<!-- ============ APP ============ -->
-<div id="app" class="hidden">
-  <header><div class="wrap bar">
-    <div class="mark">ROX<b>I</b>UM</div>
-    <div class="right">
-      <div id="practiceSwitcher" class="switcher hidden">
-        <button type="button" id="practiceSwitcherBtn" class="switcher-btn picker" aria-haspopup="listbox" aria-expanded="false">
-          <span class="switcher-btn-label" id="practiceCurrentName">Select client…</span>
-          <span class="switcher-caret" aria-hidden="true">▾</span>
-        </button>
-        <div id="practiceSwitcherPop" class="switcher-pop hidden">
-          <input id="practiceSearch" class="switcher-search" type="search" placeholder="Search clients…" autocomplete="off" spellcheck="false" aria-label="Search clients">
-          <div id="practiceResults" class="switcher-results"></div>
-        </div>
-      </div>
-      <button class="btn ghost sm teamonly hidden" id="btnPreview">Preview as client</button>
-      <span class="practice" id="whoami"></span>
-      <button class="btn ghost sm" id="btnLogout">Sign out</button>
-    </div>
-  </div></header>
-
-  <!-- Team workspace · primary navigation (internal Roxium employees) -->
-  <nav id="teamTopNav" class="teamtopnav teamonly hidden" aria-label="Team workspace">
-    <div class="wrap teamtopnav-inner">
-      <a href="#operations" class="teamtop" data-teamnav="operations">Operations Dashboard</a>
-      <a href="#roadmap" class="teamtop" data-teamnav="clients">Clients</a>
-      <a href="#controls" class="teamtop" data-teamnav="controls">Team Controls</a>
-    </div>
+<header><div class="wrap bar">
+  <a class="mark" href="#top">ROX<b>I</b>UM</a>
+  <nav class="nav">
+    <a class="navlink" href="#why">Why ROXIUM</a>
+    <a class="navlink" href="#platform">Platform</a>
+    <a class="navlink" href="#tour">Tour</a>
+    <a class="navlink" href="#onboarding">Onboarding</a>
+    <a class="btn ghost sm" href="/portal.html">Client sign in</a>
+    <a class="btn sm" href="#demo">Book a demo</a>
   </nav>
+</div></header>
 
-  <div id="notifyBar" class="notifybar hidden"></div>
-
-  <div class="wrap">
-    <div class="hero">
-      <div class="eyebrow">Live Performance & Delivery</div>
-      <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
-      <div class="updated" id="updated"></div>
-      <div class="stats" id="heroStats"></div>
+<!-- ============ HERO ============ -->
+<section id="top"><div class="wrap hero-grid">
+  <div class="hero-copy">
+    <div class="eyebrow">The Practice Growth Portal</div>
+    <h1>See what's live, what's late, and <em>what needs action next.</em></h1>
+    <p class="lede">ROXIUM gives your practice one operating view of marketing performance,
+    deliverables, video production, and reporting health — Meta, Google, and every channel,
+    next to the work being done on your behalf.</p>
+    <div class="ctarow">
+      <a class="btn" href="#demo">Book a demo</a>
+      <a class="btn ghost" href="#tour">See the client view</a>
     </div>
-
-    <!-- Tabbed navigation (hash-routed) -->
-    <nav class="tabs" id="tabnav">
-      <a href="#roadmap"      class="tab" data-view="roadmap">Roadmap</a>
-      <a href="#deliverables" class="tab" data-view="deliverables">Progress</a>
-      <a href="#video"        class="tab" data-view="video">Video</a>
-      <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
-      <a href="#updates"      class="tab" data-view="updates">Updates</a>
-      <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
-      <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
-    </nav>
-
-    <!-- Milestone timeline -->
-    <section class="view" data-view="roadmap">
-      <div class="sechead">
-        <div>
-          <h2>Your <em>roadmap</em></h2>
-          <div class="sub">Every milestone, where you stand today, and what happens next.</div>
-        </div>
-      </div>
-      <div class="timeline" id="timeline"></div>
-    </section>
-
-    <!-- Project progress: phase-by-phase delivery -->
-    <section class="view" data-view="deliverables">
-      <div class="sechead">
-        <div>
-          <h2>Project <em>Progress</em></h2>
-          <div class="sub" id="delivSub"></div>
-        </div>
-        <button class="btn ghost sm" id="delivGuideBtn" type="button">What do these mean?</button>
-      </div>
-      <div id="delivGuide" class="guide hidden"></div>
-      <div class="progressbar"><div id="delivBar"></div></div>
-      <div id="delivTable"></div>
-    </section>
-
-    <!-- Video pipeline -->
-    <section class="view" data-view="video">
-      <h2>Video production <em>pipeline</em></h2>
-      <div class="sub">Every asset and its exact stage. Items waiting on the practice are flagged gold. Click any card for details, history and the finished video.</div>
-      <div class="pipeline" id="pipeline"></div>
-    </section>
-
-    <!-- KPI dashboard -->
-    <section class="view" data-view="metrics">
-      <h2>Performance <em>metrics</em></h2>
-      <div class="metricshead">
-        <div class="sub" id="kpiSub">Latest month against target.</div>
-        <div class="metricpickers">
-          <div class="mp-field hidden" id="channelField"><span class="mp-label">Channel</span><select id="channelPicker" class="picker"></select></div>
-          <div class="mp-field"><span class="mp-label">Month</span><div id="metricsPicker" class="monthsel"></div></div>
-        </div>
-      </div>
-      <div id="kpiCharts" class="kpi-charts hidden"></div>
-      <div class="cards" id="kpiCards"></div>
-      <div class="status" id="statusBoard" style="margin-top:16px"></div>
-    </section>
-
-    <!-- Activity feed -->
-    <section class="view" data-view="updates">
-      <h2>Latest <em>updates</em></h2>
-      <div class="sub">Posted by your ROXIUM team as work ships.</div>
-      <div id="feed"></div>
-    </section>
-
-    <!-- OPERATIONS DASHBOARD · team command center -->
-    <section id="operationsPanel" class="view teamonly hidden" data-view="operations">
-      <div class="ops-head">
-        <h2>Roxium <em>Operations Dashboard</em></h2>
-        <div class="sub">What needs our attention today?</div>
-      </div>
-      <div id="opsExecCards" class="ops-cards cards"></div>
-      <div class="ops-panel ops-panel-attention">
-        <div class="ops-attention-head">
-          <div>
-            <h3>Needs attention</h3>
-            <p class="note ops-panel-note">Drag to reorder active items, pin, snooze (⏸), or dismiss (✕). Paused and dismissed items stay at the bottom — resume or restore anytime.</p>
-          </div>
-          <button type="button" class="btn sm ghost" id="opsAttentionReset" hidden>Reset sort</button>
-        </div>
-        <div id="opsAttentionFeed" class="ops-attention-list"></div>
-      </div>
-      <div class="ops-panel">
-        <div class="ops-kpi-head">
-          <h3>Company KPI overview</h3>
-          <div class="ops-kpi-toolbar">
-            <div class="f ops-kpi-month-field">
-              <label for="opsKpiMonthPicker">Reporting month</label>
-              <div id="opsKpiMonthPicker"></div>
-            </div>
-          </div>
-        </div>
-        <p class="note ops-panel-note" id="opsKpiPeriod"></p>
-        <div id="opsKpiRollup" class="ops-kpi-rollup cards"></div>
-        <div id="opsKpiCharts" class="ops-kpi-charts hidden"></div>
-      </div>
-      <div class="ops-panel ops-panel-overview">
-        <div class="ops-overview-head">
-          <div>
-            <h3>Client overview</h3>
-            <p class="note ops-panel-note">Search by client, deliverable, video, or milestone — then expand a row for inline edits.</p>
-          </div>
-          <div class="ops-overview-tools">
-            <input id="opsClientSearch" type="search" class="picker ops-client-search" placeholder="Search clients, deliverables, videos, milestones…" autocomplete="off" spellcheck="false" aria-label="Search client overview">
-            <button type="button" class="btn sm ghost" id="opsClientSort" aria-pressed="true">A → Z</button>
-          </div>
-        </div>
-        <p class="note ops-client-count" id="opsClientCount"></p>
-        <div id="opsUrgentStrip" class="ops-urgent-strip"></div>
-        <div id="opsClientOverview" class="ops-client-list"></div>
-      </div>
-    </section>
-
-    <!-- TEAM CONTROLS · global configuration (formerly Admin) -->
-    <section id="adminPanel" class="view teamonly hidden" data-view="controls">
-      <a href="#operations" class="adminback" id="btnAdminBack">← Back to Operations Dashboard</a>
-      <h2>Team Controls · <em>configuration</em></h2>
-      <div class="sub">Management and platform configuration — create clients, manage access, configure KPI sources, and monitor sync. Not for day-to-day operations.</div>
-
-      <nav class="admintabs" id="adminTabs">
-        <button class="atab active" data-atab="clients">Clients</button>
-        <button class="atab" data-atab="access">Access &amp; Invites</button>
-        <button class="atab" data-atab="reporting">Reporting &amp; KPI</button>
-        <button class="atab" data-atab="system">System</button>
-      </nav>
-
-      <!-- A · CLIENTS / ONBOARDING -->
-      <div class="admin-tab" data-atab="clients">
-        <h3>New client onboarding</h3>
-        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Reporting &amp; KPI</b>.</p>
-        <div class="entry">
-          <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
-          <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
-          <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
-        </div>
-        <div id="onboardChecklist" class="onboard-check hidden"></div>
-        <p class="note" id="onbMsg" style="margin-top:6px"></p>
-      </div>
-
-      <!-- B · ACCESS / INVITES -->
-      <div class="admin-tab hidden" data-atab="access">
-        <h3>Platform administrators</h3>
-        <p class="note" style="margin-top:-2px">Who can open Team Controls. <b>Make admin</b> grants full platform configuration access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
-        <div class="entry">
-          <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
-          <div class="f" style="align-self:end"><button class="btn sm" id="btnPromoteAdmin">Make admin</button></div>
-        </div>
-        <p class="note" id="promoteMsg" style="margin-top:6px"></p>
-        <div id="platformAdminRoster" class="roster roster-compact"></div>
-
-        <h3 style="margin-top:22px">Practice access &amp; invites</h3>
-        <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
-        <div class="entry invite-entry">
-          <div class="f"><label>Practice</label><select id="accessPractice" class="picker"></select></div>
-          <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
-          <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
-          <div class="f"><label>Role</label><select id="accessRole" class="picker"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
-          <div class="f">
-            <label class="checklabel invite-check"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
-          </div>
-          <div class="f invite-send">
-            <label class="invite-send-spacer" aria-hidden="true">&nbsp;</label>
-            <button class="btn ghost sm" id="btnInvite">Send invite</button>
-          </div>
-        </div>
-        <div id="accessRoster" class="roster"></div>
-        <div class="access-delete-row">
-          <button class="btn ghost sm danger" id="btnDeleteAccessClient">Delete selected client</button>
-          <p class="note" id="accessDelMsg">Permanently removes the practice selected above and all of its data.</p>
-        </div>
-      </div>
-
-      <!-- C · REPORTING / KPI SOURCES -->
-      <div class="admin-tab hidden" data-atab="reporting">
-        <h3>Reporting workbooks &amp; KPI sources</h3>
-        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
-        <h4 class="syncstatus-h">Auto-sync status</h4>
-        <div id="syncStatus" class="syncstatus"></div>
-        <div class="reporting-toolbar" id="reportingToolbar">
-          <div class="f reporting-search">
-            <label for="reportingClientSearch">Find client</label>
-            <input id="reportingClientSearch" class="picker" type="search" placeholder="Search by surgeon / practice name…" autocomplete="off" spellcheck="false">
-          </div>
-          <div class="f reporting-sort">
-            <label for="reportingClientSort">Sort</label>
-            <select id="reportingClientSort" class="picker">
-              <option value="name-asc">Name (A → Z)</option>
-              <option value="name-desc">Name (Z → A)</option>
-              <option value="setup-first">Needs setup first</option>
-              <option value="errors-first">Sync errors first</option>
-            </select>
-          </div>
-          <p class="note reporting-count" id="reportingClientCount"></p>
-        </div>
-        <div id="adminClientList" class="clientlist"></div>
-        <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
-      </div>
-
-      <!-- D · SYSTEM / REPORTING SETTINGS -->
-      <div class="admin-tab hidden" data-atab="system">
-        <h3>System &amp; reporting settings</h3>
-        <p class="note" style="margin-top:-2px">Global settings for the whole portal.</p>
-        <div class="masterfolder">
-          <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
-          <div class="mfrow">
-            <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
-            <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
-            <button class="btn ghost sm" id="btnListWorkbooks">Test &amp; list workbooks</button>
-          </div>
-          <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
-          <div class="detectout" id="folderWorkbooks"></div>
-        </div>
-        <h4 class="syncstatus-h" style="margin-top:18px">Manual sync &amp; debugging</h4>
-        <div class="syncnowrow">
-          <button class="btn ghost sm" id="btnSyncNow">↻ Run sync now</button>
-          <span class="note" id="syncNowMsg">Manual/debug — “Deploy setup” on a client also runs this. Sync runs automatically every 2 hours.</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- CLIENT OWNER · invite their own team (not global admin) -->
-    <section id="accessPanel" class="view accessonly hidden" data-view="access">
-      <h2>Invite <em>team members</em></h2>
-      <div class="sub">Add as many colleagues as you need — each gets their own login scoped to this practice only. Send invite also adds them to the allowlist automatically.</div>
-      <div class="entry">
-        <div class="f"><label>Email</label><input id="clientInviteEmail" type="email" placeholder="colleague@practice.com"></div>
-        <div class="f"><label>Name (optional)</label><input id="clientInviteName" placeholder="Office manager"></div>
-        <div class="f" style="align-self:end"><button class="btn" id="btnClientInvite">Send invite</button></div>
-      </div>
-      <p class="note" id="clientAccessMsg" style="margin-top:6px"></p>
-      <div id="clientRoster" class="roster"></div>
-    </section>
-
-    <!-- TEAM-ONLY · controls for the practice currently open -->
-    <section id="teamPanel" class="view teamonly hidden" data-view="team">
-      <h2>Team · <em>controls</em></h2>
-      <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in <b>Team Controls</b>.)</div>
-
-      <h3>Deliverables, roadmap & video pipeline</h3>
-      <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. <b>Roadmap milestones:</b> click any milestone on the Roadmap tab to edit all fields, drag to reorder, or use <b>+ Add milestone</b>. Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
-
-      <h3>Post an update</h3>
-      <div class="entry">
-        <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
-        <div class="f"><button class="btn" id="btnPost">Post update</button></div>
-      </div>
-
-      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
-      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (<b>Team Controls → Reporting &amp; KPI</b>). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
-      <div class="entry" id="kpiMeta">
-        <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
-      </div>
-      <div class="entry" id="entryFields"></div>
-      <div class="actions">
-        <button class="btn" id="btnSaveKpi">Save month</button>
-        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI CSV</button>
-        <span id="saveMsg"></span>
-      </div>
-
-      <h3 class="danger-title">Danger zone</h3>
-      <div class="dangerzone">
-        <p class="note">Reset returns <b id="resetTarget">this practice</b> to a clean slate: it permanently deletes every KPI month, the activity feed, all notifications and stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.</p>
-        <div class="actions">
-          <button class="btn danger" id="btnResetData">Reset all data for this practice</button>
-          <span id="resetMsg" class="note"></span>
-        </div>
-      </div>
-    </section>
-
-    <footer>
-      <span>ROXIUM · Practice Growth Systems</span>
-      <span id="portalBuild">build BUILD_SHA</span><span> · Live KPI Data</span>
-    </footer>
+    <p class="trustline">Built for surgeons &amp; practices · <b>No password sharing — ever.</b> Read-only access you can revoke anytime.</p>
   </div>
-</div>
 
-<div id="modal" class="modal"></div>
+  <div>
+    <div class="panel" aria-label="Example ROXIUM client dashboard">
+      <div class="panel-bar">
+        <span class="panel-title"><b>Dr. Avery — Aesthetics</b> · Client Dashboard</span>
+        <div class="chiprow" role="group" aria-label="Reporting period">
+          <button class="chip mchip ok" data-m="all" style="cursor:pointer">All months</button>
+          <button class="chip mchip" data-m="sep" style="cursor:pointer">September</button>
+        </div>
+      </div>
+      <div class="ribbon" aria-label="Onboarding status">
+        <span class="done">✓ Access</span><span class="done">✓ Sheet</span><span class="done">✓ Sync</span><span class="done">✓ Owner invited</span><span>Live month: September</span>
+      </div>
+      <div class="statgrid">
+        <div class="stat">
+          <span class="l">Amount spent</span>
+          <div class="v" id="vSpend">$41.8K</div>
+          <div class="d idle" id="dSpend">6 months · all channels</div>
+          <svg class="spark" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,30 33,26 66,27 100,20 133,16 166,12 200,8" fill="none" stroke="#C9A84C" stroke-width="2"/>
+          </svg>
+        </div>
+        <div class="stat">
+          <span class="l">Reach</span>
+          <div class="v" id="vReach">612K</div>
+          <div class="d good" id="dReach">↑ 27% vs prior period</div>
+          <svg class="spark" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,28 33,24 66,26 100,18 133,20 166,10 200,6" fill="none" stroke="#C9A84C" stroke-width="2"/>
+          </svg>
+        </div>
+        <div class="stat">
+          <span class="l">Link clicks</span>
+          <div class="v" id="vClicks">14,208</div>
+          <div class="d good" id="dClicks">↑ 11% vs prior period</div>
+          <svg class="spark" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points="0,26 33,28 66,22 100,24 133,14 166,16 200,9" fill="none" stroke="#C9A84C" stroke-width="2"/>
+          </svg>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-cell">
+          <div class="cell-label">Roadmap · Phase 2 — Launch</div>
+          <div class="phasebar" role="img" aria-label="Phase 2 progress: 4 of 6 deliverables complete"><i></i></div>
+          <div class="rowline"><span>Campaign creative set</span><span class="st ok">Delivered</span></div>
+          <div class="rowline"><span>Landing page revision</span><span class="st ok">Delivered</span></div>
+          <div class="rowline"><span>Retargeting build</span><span class="st warn">In progress</span></div>
+        </div>
+        <div class="panel-cell">
+          <div class="cell-label">Video pipeline</div>
+          <div class="rowline"><span>Patient story — Dr. Avery</span><span class="st ok">Posted</span></div>
+          <div class="rowline"><span>Procedure explainer #2</span><span class="st warn">Editing</span></div>
+          <div class="rowline"><span>Testimonial session</span><span class="st mut">Scheduled</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="mockcaption">The client dashboard — live numbers beside the roadmap, deliverables, and videos they belong to.</p>
+  </div>
+</div></section>
+
+<!-- ============ WHY NATIVE TOOLS FAIL ============ -->
+<section id="why"><div class="wrap">
+  <div class="sectionhead">
+    <div class="eyebrow">The Problem</div>
+    <h2>Every dashboard you already have shows <em>one slice.</em></h2>
+    <p class="lede">Each platform reports on itself, in its own language, with its own definitions.
+    None of them knows what work is being done, what's late, or whether the numbers are even syncing.</p>
+  </div>
+  <div class="grid3">
+    <div class="card keyhole"><h3>Meta Business Suite</h3><p>Facebook and Instagram only. Nothing about your Google Ads, your website behavior, or the campaign work behind the numbers.</p></div>
+    <div class="card keyhole"><h3>Google Ads &amp; GA4</h3><p>Google's channels and your site — in metrics that don't line up with Meta's, and with no view of deliverables or delivery status.</p></div>
+    <div class="card keyhole"><h3>Agency slide decks</h3><p>A PDF once a month. Static, curated, already out of date — and disconnected from what happens next.</p></div>
+  </div>
+  <div class="vsline"><span class="rule"></span><span class="word">ROXIUM instead</span><span class="rule"></span></div>
+  <div class="unify">
+    <h3>One operating layer above your platforms.</h3>
+    <p>ROXIUM standardizes every channel to the same metrics, freezes each month as a locked snapshot,
+    and puts performance beside the roadmap, deliverables, and videos that produced it — with the
+    current month updating live.</p>
+    <ul>
+      <li>All channels, one screen, comparable metrics</li>
+      <li>Numbers next to the work that drove them</li>
+      <li>Past months archived, current month live</li>
+      <li>What needs attention, surfaced automatically</li>
+    </ul>
+  </div>
+</div></section>
+
+<!-- ============ WHAT ROXIUM CENTRALIZES ============ -->
+<section id="platform"><div class="wrap">
+  <div class="sectionhead">
+    <div class="eyebrow">The Platform</div>
+    <h2>What ROXIUM <em>centralizes.</em></h2>
+  </div>
+  <div class="grid4">
+    <div class="card"><span class="tag">Reporting</span><h3>KPI sync &amp; snapshots</h3><p>Spend, reach, clicks and more from every source, synced automatically. Each reported month locks as an immutable snapshot; the live month updates as data lands.</p></div>
+    <div class="card"><span class="tag">Execution</span><h3>Deliverables &amp; milestones</h3><p>Every work item tracked promised → in progress → delivered, grouped by phase. Milestones advance automatically as phases complete.</p></div>
+    <div class="card"><span class="tag">Content</span><h3>Video pipeline</h3><p>Every video visible from Planned to Posted — scheduling, shooting, editing, delivery — with automatic notifications at each stage.</p></div>
+    <div class="card"><span class="tag">Visibility</span><h3>Team &amp; client views</h3><p>Your whole practice signs in with secure email links — no passwords to manage. Clients see a clean portal; the ROXIUM team runs the operations behind it.</p></div>
+  </div>
+</div></section>
+
+<!-- ============ PRODUCT TOUR ============ -->
+<section id="tour"><div class="wrap">
+  <div class="sectionhead">
+    <div class="eyebrow">Product Tour</div>
+    <h2>Two audiences. One source of <em>truth.</em></h2>
+  </div>
+  <div class="toggle" role="tablist" aria-label="Switch product view">
+    <button id="tabClient" class="on" role="tab" aria-selected="true">What clients see</button>
+    <button id="tabTeam" role="tab" aria-selected="false">What our team sees</button>
+  </div>
+
+  <div id="viewClient" class="tourview on" role="tabpanel">
+    <div class="panel">
+      <div class="panel-bar"><span class="panel-title"><b>Client Portal</b> · Roadmap · Progress · Video · Metrics · Updates</span>
+        <div class="chiprow"><span class="chip ok"><span class="dot ok"></span>Phase 2 of 4</span></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-cell">
+          <div class="cell-label">Your roadmap</div>
+          <div class="rowline"><span>Phase 1 — Foundation</span><span class="st ok">Complete</span></div>
+          <div class="rowline"><span>Phase 2 — Launch</span><span class="st warn">Current · 67%</span></div>
+          <div class="rowline"><span>Phase 3 — Scale</span><span class="st mut">Planned</span></div>
+          <div class="rowline"><span>Phase 4 — Optimize</span><span class="st mut">Planned</span></div>
+        </div>
+        <div class="panel-cell">
+          <div class="cell-label">Latest updates</div>
+          <div class="rowline"><span>“Patient story” video posted</span><span class="st mut">Today</span></div>
+          <div class="rowline"><span>September numbers synced</span><span class="st mut">Yesterday</span></div>
+          <div class="rowline"><span>Phase 2 deliverable completed</span><span class="st mut">Mon</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="mockcaption">A clean, focused portal: where things stand, what was delivered, and how it's performing — no clutter, no empty metrics.</p>
+  </div>
+
+  <div id="viewTeam" class="tourview" role="tabpanel">
+    <div class="panel">
+      <div class="panel-bar"><span class="panel-title"><b>Operations Dashboard</b> · every client, every channel</span>
+        <div class="chiprow"><span class="chip"><span class="dot warn"></span>3 items need attention</span></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-cell">
+          <div class="cell-label">Needs attention</div>
+          <div class="rowline"><span>Dr. Kim — retargeting build overdue</span><span class="st bad">Overdue 3d</span></div>
+          <div class="rowline"><span>Northside Clinic — Google Ads sync stale</span><span class="st warn">Stale 26h</span></div>
+          <div class="rowline"><span>Dr. Avery — explainer stuck in editing</span><span class="st warn">6 days</span></div>
+        </div>
+        <div class="panel-cell">
+          <div class="cell-label">Reporting sources · Dr. Avery</div>
+          <div class="rowline"><span>Meta Ads</span><span class="st ok">✓ Synced 2h ago</span></div>
+          <div class="rowline"><span>Instagram Insights</span><span class="st ok">✓ Synced 2h ago</span></div>
+          <div class="rowline"><span>Google Ads</span><span class="st ok">✓ Synced 2h ago</span></div>
+          <div class="rowline"><span>GA4</span><span class="st mut">○ Pending access</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="mockcaption">The operations view: a needs-attention queue, per-source sync health, and company-wide KPI rollups — accountability is built in, not reported after the fact.</p>
+  </div>
+</div></section>
+
+<!-- ============ ONBOARDING ============ -->
+<section id="onboarding"><div class="wrap">
+  <div class="sectionhead">
+    <div class="eyebrow">Onboarding</div>
+    <h2>Connected in days. <em>Without a single password.</em></h2>
+    <p class="lede">Every platform has an official way to grant read-only access — that's all we ever use.
+    Tell us who manages your marketing today, and we handle the rest.</p>
+  </div>
+  <div class="grid3">
+    <div class="card tier"><span class="time">10–15 min</span><span class="tag">Tier 1</span><h3>You have an agency</h3>
+      <ol><li>We email your agency a one-page checklist.</li><li>They grant partner access — they do this all the time.</li><li>Your data starts flowing. You do nothing.</li></ol></div>
+    <div class="card tier"><span class="time">15–30 min</span><span class="tag">Tier 2</span><h3>Someone in-house runs it</h3>
+      <ol><li>We send them a plain-language checklist and a 3-minute video.</li><li>One screen in Meta connects Facebook, Instagram, and ads at once.</li><li>Stuck anywhere? We jump on a 15-minute screen-share.</li></ol></div>
+    <div class="card tier"><span class="time">30–45 min</span><span class="tag">Tier 3</span><h3>Not sure who owns what</h3>
+      <ol><li>We book one guided call and walk it together.</li><li>You click, we navigate — your logins never leave your hands.</li><li>Anything missing, we chase down for you afterward.</li></ol></div>
+  </div>
+  <div class="notepanel"><b>You stay in control, permanently.</b> Access is granted through each platform's own
+  partner/user feature at view-only level, visible on your side at all times — and revocable with one click.
+  We can see performance; we can't post, spend, or change anything.</div>
+</div></section>
+
+<!-- ============ PROOF ============ -->
+<section><div class="wrap">
+  <div class="sectionhead">
+    <div class="eyebrow">Sources &amp; Expectations</div>
+    <h2>Every channel you run, <em>accounted for.</em></h2>
+  </div>
+  <div class="prooflist" aria-label="Supported data sources and connection states">
+    <span class="chip ok"><span class="dot ok"></span>Meta Ads — Connected</span>
+    <span class="chip ok"><span class="dot ok"></span>Instagram Insights — Connected</span>
+    <span class="chip ok"><span class="dot ok"></span>Facebook Page — Connected</span>
+    <span class="chip"><span class="dot warn"></span>Google Ads — Syncing</span>
+    <span class="chip"><span class="dot idle"></span>GA4 — Pending access</span>
+    <span class="chip"><span class="dot idle"></span>Google Business Profile — Optional</span>
+    <span class="chip"><span class="dot idle"></span>YouTube — Optional</span>
+    <span class="chip"><span class="dot idle"></span>Microsoft Ads — Optional</span>
+  </div>
+  <div class="expect">
+    <div class="x"><div class="n">3–5 days</div><div class="t">Typical time to fully connected</div></div>
+    <div class="x"><div class="n">15–30 min</div><div class="t">Total effort on your side</div></div>
+    <div class="x"><div class="n">0</div><div class="t">Passwords shared with us</div></div>
+    <div class="x"><div class="n">Every 2h</div><div class="t">Automatic data sync</div></div>
+  </div>
+</div></section>
+
+<!-- ============ CTA ============ -->
+<section id="demo" class="cta-final"><div class="wrap">
+  <div class="eyebrow">Next Step</div>
+  <h2>See your practice in <em>one view.</em></h2>
+  <p class="lede" style="margin-left:auto;margin-right:auto">A 20-minute walkthrough with your own channels in mind — what gets connected, what you'll see, and when.</p>
+  <div class="ctarow" style="margin-top:30px">
+    <a class="btn" href="mailto:hello@roxium.com?subject=ROXIUM%20demo">Book a demo</a>
+    <a class="btn ghost" href="/portal.html">Already a client? Sign in</a>
+  </div>
+</div></section>
+
+<footer><div class="wrap foot">
+  <span class="mark">ROX<b>I</b>UM</span>
+  <span>One operating view for marketing performance, deliverables, and client accountability.</span>
+  <span><a href="/portal.html" style="color:var(--gold)">Client portal sign-in</a></span>
+</div></footer>
 
 <script>
-(function(){
-  var KEY='roxium_cache_bust';
-  fetch('version.json',{cache:'no-store'})
-    .then(function(r){return r.json()})
-    .then(function(v){
-      if(!v||!v.sha) return;
-      var el=document.getElementById('portalBuild');
-      if(el) el.textContent='build '+v.sha;
-      var app=document.querySelector('script[src*="app.js"]');
-      var src=(app&&app.getAttribute('src'))||'';
-      if(src.indexOf(v.sha)>=0) return;
-      var k=KEY+v.sha;
-      if(sessionStorage.getItem(k)) return;
-      sessionStorage.setItem(k,'1');
-      var u=new URL(location.href);
-      u.searchParams.set('_v',v.sha);
-      location.replace(u.toString());
-    }).catch(function(){});
-})();
+// Product tour toggle
+const tc=document.getElementById('tabClient'),tt=document.getElementById('tabTeam'),
+      vc=document.getElementById('viewClient'),vt=document.getElementById('viewTeam');
+function tour(client){
+  tc.classList.toggle('on',client); tt.classList.toggle('on',!client);
+  tc.setAttribute('aria-selected',client); tt.setAttribute('aria-selected',!client);
+  vc.classList.toggle('on',client); vt.classList.toggle('on',!client);
+}
+tc.onclick=()=>tour(true); tt.onclick=()=>tour(false);
+
+// Hero month toggle — All months vs single month
+const DATA={
+  all:{spend:'$41.8K',spendD:['6 months · all channels','idle'],reach:'612K',reachD:['↑ 27% vs prior period','good'],clicks:'14,208',clicksD:['↑ 11% vs prior period','good']},
+  sep:{spend:'$7.9K',spendD:['September · all channels','idle'],reach:'148K',reachD:['↑ 27% vs August','good'],clicks:'3,214',clicksD:['↑ 11% vs August','good']}
+};
+document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.mchip').forEach(x=>x.classList.remove('ok'));
+  b.classList.add('ok');
+  const d=DATA[b.dataset.m];
+  const set=(id,v,dv)=>{document.getElementById('v'+id).textContent=v;
+    const el=document.getElementById('d'+id);el.textContent=dv[0];el.className='d '+dv[1];};
+  set('Spend',d.spend,d.spendD); set('Reach',d.reach,d.reachD); set('Clicks',d.clicks,d.clicksD);
+});
 </script>
-<script src="config.js?v=BUILD_SHA"></script>
-<script src="app.js?v=BUILD_SHA"></script>
 </body>
 </html>

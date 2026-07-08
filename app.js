@@ -133,6 +133,19 @@ const CHANNELS = [
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
   : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
+// Marketing-connection access states (see migrations/2026-07-08_marketing_connections.sql):
+// requested = we asked the client for platform access · granted = access arrived,
+// Coefficient/tab still to wire · connected = data flowing (auto-set on sync ok).
+const ACCESS_STATES = [['requested','Requested'],['granted','Granted'],['connected','Connected']];
+const accessLabel = k => (ACCESS_STATES.find(([v])=>v===k)?.[1]) || 'Connected';
+// Whole days since the access request went out (null when unknown / not requested).
+function accessAgeDays(s){
+  if(!s || !s.access_requested_at) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(String(s.access_requested_at).slice(0,10)+'T12:00:00'))/86400000));
+}
+// Escalation bands for an aging access request — the onboarding SOP says escalate
+// after 5 business days (~7 calendar): quiet <3d · amber 3–6d · red ≥7d.
+function accessAgeCls(days){ return days==null ? 'note' : days>=7 ? 'ssbad' : days>=3 ? 'sswarn' : 'note'; }
 // Human, correctly-capitalized role labels for access/account messaging.
 const roleLabel = r => ({ owner:'Owner', member:'Member', team:'ROXIUM Team', client:'Client', admin:'Admin' }[String(r||'').toLowerCase()]
   || (r ? String(r).replace(/\b\w/g, c=>c.toUpperCase()) : '—'));
@@ -427,7 +440,9 @@ $('btnLogin').onclick = async ()=>{
     const { data: jpid } = await sb.rpc('join_code_practice', { p_code: joinCode });
     allowed = !!jpid;
   }
-  const redirectTo = location.origin + (joinCode ? '/?join=' + encodeURIComponent(joinCode) : '');
+  // The app lives at /portal.html (the root is the public marketing page, which
+  // forwards stray auth callbacks here). Send magic links straight to the portal.
+  const redirectTo = location.origin + '/portal.html' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
   const { error } = await sb.auth.signInWithOtp({
     email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: !!allowed }
   });
@@ -911,6 +926,62 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- KPI insights (rule-based, no AI) ----------------
+   Turn month-over-month movement into short sentences so the metrics view
+   leads with "what changed" instead of asking the reader to diff charts.
+   Deterministic rules only: ≥10% month-over-month moves (top two), a
+   best-in-range record when one exists, and a missing-channel callout. */
+function buildKpiInsights(reported){
+  if(!reported || reported.length < 2) return [];
+  const cur = reported[0], prevRow = reported[1];
+  const watch = [
+    {k:'reach', l:'Reach'}, {k:'clicks', l:'Link clicks'}, {k:'spend', l:'Spend', neutral:true},
+    {k:'ctr', l:'CTR'}, {k:'cpc', l:'CPC', lowerBetter:true}, {k:'cpm', l:'CPM', lowerBetter:true},
+  ];
+  const out = [], deltas = [];
+  watch.forEach(w=>{
+    const def = CORE_METRICS.find(c=> c.k===w.k); if(!def) return;
+    const a = metricValue(def, cur), b = metricValue(def, prevRow);
+    if(a==null || b==null || !isFinite(+a) || !isFinite(+b) || +b===0) return;
+    const pct = (a-b)/Math.abs(b)*100;
+    if(Math.abs(pct) < 10) return;
+    deltas.push({ ...w, pct, good: w.neutral ? null : (w.lowerBetter ? pct<0 : pct>0) });
+  });
+  deltas.sort((x,y)=> Math.abs(y.pct)-Math.abs(x.pct));
+  const vsLbl = monthName(prevRow.period) || periodLabel(prevRow.period);
+  deltas.slice(0,2).forEach(d=>{
+    out.push({ cls: d.good==null ? 'info' : d.good ? 'good' : 'warn',
+      text:`${d.l} ${d.pct>0?'↑':'↓'} ${Math.abs(d.pct).toFixed(0)}% vs ${vsLbl}` });
+  });
+  // A record only counts against 3+ reported months — never call two points a streak.
+  if(reported.length >= 3){
+    const cpcDef = CORE_METRICS.find(c=> c.k==='cpc');
+    const cpcs = reported.map(r=> metricValue(cpcDef, r));
+    if(cpcs[0]!=null && cpcs.slice(1).every(v=> v==null || cpcs[0] < v)){
+      out.push({ cls:'good', text:`Best CPC of all ${reported.length} reported months (${fmt$(cpcs[0])})` });
+    } else {
+      const reaches = reported.map(r=> N(r,'reach'));
+      if(reaches[0]!=null && reaches.slice(1).every(v=> v==null || reaches[0] > v))
+        out.push({ cls:'good', text:`Highest reach of all ${reported.length} reported months` });
+    }
+  }
+  return out.slice(0,3);
+}
+// A channel that reported in earlier months but is absent from the latest one is
+// either paused or quietly broken — say so instead of letting "All channels" shrink.
+function missingChannelInsight(){
+  const rows = normalizeKpiRows(data.kpiRaw||[]);
+  if(!rows.length) return null;
+  const periods = [...new Set(rows.map(r=> String(r.period)))].sort();
+  if(periods.length < 2) return null;
+  const latestP = periods[periods.length-1];
+  const inLatest = new Set(rows.filter(r=> String(r.period)===latestP).map(r=> r.source));
+  const missing = [...new Set(rows.filter(r=> String(r.period)<latestP).map(r=> r.source))]
+    .filter(s=> !inLatest.has(s));
+  if(!missing.length) return null;
+  return { cls:'warn', text:`No ${missing.map(channelLabel).join(', ')} data for ${monthName(latestP)} yet` };
+}
+
 /* ---------------- render ---------------- */
 function render(){
   renderBanner();
@@ -995,6 +1066,14 @@ function render(){
   // KPI cards + status board — driven by the real ad metric model; only metrics
   // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
+    // Insights strip — what changed, in sentences, above the charts.
+    const insights = buildKpiInsights(reported);
+    if(getChan()==='all'){ const m = missingChannelInsight(); if(m) insights.push(m); }
+    const insEl = $('kpiInsights');
+    if(insEl){
+      insEl.innerHTML = insights.map(i=> `<span class="insight ${i.cls}">${esc(i.text)}</span>`).join('');
+      insEl.style.display = insights.length ? '' : 'none';
+    }
     renderKpiCharts(viewPeriod, isLive, { allMonths: allMonthsView });
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
       clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
@@ -2409,9 +2488,36 @@ function buildOpsAlerts(){
       }
     });
     const sync = kpiSyncMeta(p.id);
+    const pSources = (opsData?.sources||[]).filter(s=> s.practice_id===p.id);
     if(sync.hasError){
-      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics' });
+      alerts.push({ severity:'red', practice:pname, practiceId:p.id, title:'KPI sync failed', detail:'Reporting workbook sync error', sort:0, linkView:'metrics', action:'sync' });
+    } else {
+      // Data stopped flowing without an outright error (>26h since a 2-hourly job)
+      const staleSrcs = pSources.filter(s=> s.last_status!=='error' && syncAge(s.last_synced_at)?.cls==='bad');
+      if(staleSrcs.length){
+        alerts.push({ severity:'yellow', practice:pname, practiceId:p.id, title:'KPI sync stale',
+          detail:`${staleSrcs.map(s=> channelLabel(s.source)).join(', ')} · no data for over a day`,
+          sort: OPS_HEALTH_RANK.yellow, linkView:'metrics', action:'sync' });
+      }
     }
+    // The pre-pipeline chase: access asked for but never granted (SOP: escalate ~5
+    // business days), and access granted but never wired into a syncing tab.
+    pSources.forEach(s=>{
+      if(s.access_status==='requested'){
+        const days = accessAgeDays(s);
+        if(days==null || days < 3) return;
+        const sev = days>=7 ? 'red' : 'yellow';
+        alerts.push({ severity:sev, practice:pname, practiceId:p.id,
+          title: days>=7 ? 'Access request aging — escalate' : 'Access request pending',
+          detail:`${channelLabel(s.source)} · requested ${days}d ago`,
+          sort: OPS_HEALTH_RANK[sev], days, linkView:'metrics', srcKey:s.source });
+      } else if(s.access_status==='granted' && !s.last_synced_at){
+        alerts.push({ severity:'yellow', practice:pname, practiceId:p.id,
+          title:'Access granted — finish wiring',
+          detail:`${channelLabel(s.source)} · connect the workbook tab, then sync`,
+          sort: OPS_HEALTH_RANK.yellow, linkView:'metrics', srcKey:s.source });
+      }
+    });
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
       if(!m.target_date || m.status==='done') return;
       const days = Math.ceil((new Date(m.target_date+'T12:00:00')-Date.now())/86400000);
@@ -2426,7 +2532,7 @@ function buildOpsAlerts(){
   return alerts;
 }
 function opsAlertId(a){
-  return [a.practiceId, a.linkView||'', a.title, a.delivId||'', a.videoId||'', a.milestoneId||'', a.phase||''].join('|');
+  return [a.practiceId, a.linkView||'', a.title, a.delivId||'', a.videoId||'', a.milestoneId||'', a.phase||'', a.srcKey||''].join('|');
 }
 function defaultAlertSort(a, b){
   return a.sort - b.sort || (a.days??999) - (b.days??999) || a.practice.localeCompare(b.practice);
@@ -2628,6 +2734,7 @@ function renderOpsAlertItem(a){
     </div>
     <div class="ops-alert-actions">
       ${a.uiState==='active' ? `
+      ${a.action==='sync' ? `<button type="button" class="ops-alert-verb" data-sync-alert="${esc(a.id)}" title="Run the reporting sync now">Sync now</button>` : ''}
       <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}">📌</button>
       <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow">⏸</button>
       <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss">✕</button>` : `${resumeBtn}${restoreBtn}`}
@@ -2662,6 +2769,23 @@ function wireOpsAttentionList(root){
       opsAttentionState.dismissed.delete(id);
       saveOpsAttentionState(opsAttentionState);
       renderOperationsDashboard();
+    };
+  });
+  // One-click verb on sync alerts: run the reporting sync right from the queue,
+  // then reload ops data so the alert clears itself if the sync fixed it.
+  scope.querySelectorAll('[data-sync-alert]').forEach(btn=>{
+    btn.onclick = async e=>{
+      e.stopPropagation();
+      btn.disabled = true; btn.textContent = 'Syncing…';
+      try{
+        await invokeSyncFn({ action:'sync', trigger:'manual' });
+        await loadSheetSources();
+        await loadOperationsData(true);
+      }catch(err){
+        console.error('[ops] sync-now failed:', err);
+        btn.textContent = 'Failed';
+        setTimeout(()=>{ btn.disabled = false; btn.textContent = 'Sync now'; }, 2000);
+      }
     };
   });
   scope.querySelectorAll('[data-resume-alert]').forEach(btn=>{
@@ -2818,6 +2942,8 @@ function renderOpsClientDetail(r){
     { l:'Videos active', v: String(r.openVid), compact:false },
     { l:'Waiting on client', v: String(r.waitingVid), warn: r.waitingVid>0, compact:false },
     { l:'Marketing', v: r.marketing, compact:true },
+    { l:'Last sync', v: r.sync?.lastSync ? ago(r.sync.lastSync) : '—',
+      warn: !!(r.sync?.lastSync && syncAge(r.sync.lastSync)?.stale) || r.sync?.hasError, compact:true },
   ];
   const delivRows = groups.flatMap(g=> g.items.map(d=>{
     const daysLeft = d.due ? Math.ceil((new Date(d.due)-Date.now())/86400000) : null;
@@ -2847,12 +2973,38 @@ function renderOpsClientDetail(r){
       <td>${esc(st)}</td>
     </tr>`;
   });
+  // Marketing Connections — one row per source: access state → sync health.
+  // This is where "we asked for Google Ads access 9 days ago" stops being tribal
+  // knowledge and becomes a red row on the client card.
+  const connSources = (opsData.sources||[]).filter(s=> s.practice_id===r.p.id);
+  const connRows = connSources.map(s=>{
+    const acc = s.access_status || 'connected';
+    const age = syncAge(s.last_synced_at);
+    const reqDays = accessAgeDays(s);
+    let state;
+    if(s.last_status==='error') state = `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ Sync error${age?` · ${esc(age.label)}`:''}</span>`;
+    else if(age && !age.stale) state = `<span class="ssok">✓ Connected · synced ${esc(age.label)}</span>`;
+    else if(age) state = `<span class="${age.cls==='bad'?'ssbad':'sswarn'}">⚠ Connected · stale ${esc(age.label)}</span>`;
+    else if(acc==='granted') state = `<span class="sswarn">Granted — wire the tab &amp; sync</span>`;
+    else if(acc==='requested') state = `<span class="${accessAgeCls(reqDays)}">Requested${reqDays!=null?` · ${reqDays}d ago`:''}${(reqDays??0)>=7?' — escalate':''}</span>`;
+    else state = `<span class="note">Connected · awaiting first sync</span>`;
+    return `<div class="ops-conn-row">
+      <span class="ops-conn-name">${esc(channelLabel(s.source))}</span>
+      <span class="ops-conn-tab note">${esc(s.tab_name||'—')}</span>
+      <span class="ops-conn-state">${state}</span>
+    </div>`;
+  });
   return `<div class="ops-client-detail">
     <div class="ops-client-metrics">${mini.map(m=>`
       <div class="ops-client-metric${m.warn?' warn':''}${m.cls? ' band-'+m.cls:''}${m.compact?' compact':''}">
         <div class="ops-client-metric-v"${m.title? ` title="${esc(m.title)}"`:''}>${esc(m.v)}</div>
         <div class="ops-client-metric-l">${esc(m.l)}</div>
       </div>`).join('')}</div>
+    <div class="ops-client-section">
+      <h4>Marketing connections</h4>
+      ${connRows.length ? `<div class="ops-conn-list">${connRows.join('')}</div>`
+                        : '<p class="note">No reporting sources configured yet — add them in Team Controls → Reporting &amp; KPI.</p>'}
+    </div>
     <div class="ops-client-section">
       <h4>Open deliverables</h4>
       ${delivRows.length ? `<table class="ops-table ops-table-compact ops-edit-table"><thead><tr>
@@ -2909,6 +3061,16 @@ function renderOperationsDashboard(){
   const activeAttention = attentionList.filter(a=> a.uiState==='active');
   const needAttentionCount = activeAttention.length;
   const needAttentionClients = new Set(activeAttention.map(a=> a.practiceId)).size;
+  // Data-connection digest: everything between "we asked" and "data is flowing".
+  const allSources = opsData.sources || [];
+  const connPending = allSources.filter(s=> s.access_status==='requested' || (s.access_status==='granted' && !s.last_synced_at)).length;
+  const connErrors  = allSources.filter(s=> s.last_status==='error').length;
+  const connStale   = allSources.filter(s=> s.last_status!=='error' && syncAge(s.last_synced_at)?.cls==='bad').length;
+  const connIssues  = connPending + connErrors + connStale;
+  const connNoteParts = [];
+  if(connPending) connNoteParts.push(`${connPending} awaiting access/wiring`);
+  if(connErrors)  connNoteParts.push(`${connErrors} sync error${connErrors===1?'':'s'}`);
+  if(connStale)   connNoteParts.push(`${connStale} stale`);
   const cards = [
     { v: practices.length, l:'Active clients', note:'on the roster', tier:'primary' },
     { v: needAttentionCount, l:'Need attention', note: needAttentionCount ? `${needAttentionClients} client${needAttentionClients===1?'':'s'} · ${needAttentionCount} flag${needAttentionCount===1?'':'s'}` : 'nothing flagged', cls: needAttentionCount? 'a':'', tier:'primary' },
@@ -2918,6 +3080,7 @@ function renderOperationsDashboard(){
     { v: videosProd, l:'Videos in production', note:'not yet delivered', tier:'secondary' },
     { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
     { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
+    { v: connIssues, l:'Data connections', note: connIssues ? connNoteParts.join(' · ') : 'all sources flowing', cls: connErrors? 'r' : connIssues? 'a':'g', tier:'secondary' },
     { v: avgHealth, l:'Avg health score', note:'across filtered clients', tier:'secondary' },
   ];
   $('opsExecCards').innerHTML = cards.map(c=>`
@@ -3043,7 +3206,9 @@ async function loadOperationsData(force){
         sb.from('video_pipeline').select('id,practice_id,item,stage,blocked,blocked_reason,stage_since,planned_shoot_date,sort'),
         sb.from('kpi_monthly').select('practice_id,period,source,spend,reach,impr,clicks,cons,proc,updated_at'),
         sb.from('kpi_daily').select('practice_id,day,source,spend,reach,impr,clicks,updated_at').gte('day', dayCutoff),
-        sb.from('sheet_sources').select('practice_id,source,last_status,last_synced_at,tab_name'),
+        // '*' so the access-state columns (marketing-connections migration) ride
+        // along when present without breaking on databases that predate them.
+        sb.from('sheet_sources').select('*'),
       ]);
       opsData = {
         practices: practices.data||[],
@@ -3434,6 +3599,16 @@ function ago(ts){
   const h = Math.round(m/60); if(h<24) return `${h}h ago`;
   const d = Math.round(h/24); return d===1 ? 'yesterday' : `${d}d ago`;
 }
+// Sync freshness band. The automation runs every 2 hours, so a healthy source is
+// never more than a few hours old: ok <6h · warn 6–26h (missed runs) · bad >26h
+// (a full day without data). Returns null when there's no timestamp at all.
+function syncAge(ts){
+  if(!ts) return null;
+  const then = new Date(ts).getTime(); if(!isFinite(then)) return null;
+  const h = (Date.now()-then)/3600000;
+  const cls = h < 6 ? 'ok' : h <= 26 ? 'warn' : 'bad';
+  return { cls, hours: h, label: ago(ts), stale: cls!=='ok' };
+}
 // 'YYYY-MM-01'/'YYYY-MM' month keys -> 'Mar, Apr, May' for the synced-months chip
 function monthsList(arr){
   if(!arr || !arr.length) return '';
@@ -3593,14 +3768,31 @@ function sourceTabRow(pid, s){
   if(s.last_rows!=null) detail.push(`${s.last_rows} row(s)`);
   const sm = monthsList(s.last_months); if(sm) detail.push(sm);
   const dtxt = detail.length ? ` ${detail.join(' · ')}` : '';
-  const status = s.last_status==='error'
-      ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error</span>`
-    : s.last_synced_at
-      ? `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓${esc(dtxt)}</span>`
+  const age = syncAge(s.last_synced_at);
+  // Access state machine (present only once the marketing-connections migration ran).
+  const hasAccessCol = ('access_status' in s);
+  const acc = s.access_status || 'connected';
+  const accSel = hasAccessCol
+    ? `<select class="cellinput accesssel" data-pid="${pid}" data-source="${esc(source)}" title="Client access state (requested → granted → connected)">${
+        ACCESS_STATES.map(([v,l])=>`<option value="${v}" ${v===acc?'selected':''}>${l}</option>`).join('')}</select>`
+    : '';
+  const reqDays = accessAgeDays(s);
+  const notSynced = hasAccessCol && acc!=='connected'
+    ? (acc==='requested'
+        ? `<span class="${accessAgeCls(reqDays)}">access requested${reqDays!=null?` ${reqDays}d ago`:''}${(reqDays??0)>=7?' — escalate':''}</span>`
+        : `<span class="sswarn">access granted — wire the tab &amp; sync</span>`)
     : `<span class="note">not synced</span>`;
-  return `<div class="srcrow">
+  const status = s.last_status==='error'
+      ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error${age?` · ${esc(age.label)}`:''}</span>`
+    : age
+      ? (age.stale
+          ? `<span class="${age.cls==='bad'?'ssbad':'sswarn'}" title="${esc(new Date(s.last_synced_at).toLocaleString())}">⚠ stale · ${esc(age.label)}${esc(dtxt)}</span>`
+          : `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ ${esc(age.label)}${esc(dtxt)}</span>`)
+    : notSynced;
+  return `<div class="srcrow${accSel?' has-access':''}">
     <span class="chanlabel srcname">${esc(channelLabel(source))}</span>
     <select class="cellinput sheettab" data-pid="${pid}" data-source="${esc(source)}" title="Pick this source's tab">${tabOptions(pid, s.tab_name)}</select>
+    ${accSel}
     <span class="srcstatus">${status}</span>
     <button class="btn ghost xs danger" data-delsource="${pid}" data-source="${esc(source)}" title="Remove source">×</button>
   </div>`;
@@ -3730,6 +3922,8 @@ function wireAdminClients(){
   wrap.querySelectorAll('[data-deploy]').forEach(b=> b.onclick = ()=> deployClient(b.dataset.deploy));
   // picking a tab from the dropdown saves that source mapping immediately
   wrap.querySelectorAll('select.sheettab').forEach(sel=> sel.onchange = ()=> saveSheetSource(sel.dataset.pid, sel.dataset.source));
+  // access-state select saves immediately too (requested → granted → connected)
+  wrap.querySelectorAll('select.accesssel').forEach(sel=> sel.onchange = ()=> saveAccessStatus(sel.dataset.pid, sel.dataset.source, sel.value));
   wrap.querySelectorAll('.addsourcesel').forEach(sel=> sel.onchange = ()=>{
     const k = sel.closest('.addsource')?.querySelector('.addsourcekey'); if(k) k.style.display = sel.value==='__custom' ? '' : 'none';
   });
@@ -3915,6 +4109,27 @@ async function saveSheetSource(pid, source='marketing'){
   adminDelFlash(error? 'Save failed: '+error.message : `${channelLabel(source)} → ${tab_name||'(no tab)'} saved.`);
   // update in place (avoid a full re-render that would reset other open dropdowns)
   if(!error){ const k = ssKey(pid, source); if(sheetSources[k]) sheetSources[k].tab_name = tab_name||null; refreshOnboardChecklist(pid); }
+}
+// Save a source's access state (requested → granted → connected). Selecting
+// 'requested' stamps today as the request date so the portal can age the chase.
+// (A source that is actually syncing is snapped back to 'connected' by the DB
+// trigger — you can't un-connect data that is flowing.)
+async function saveAccessStatus(pid, source, status){
+  if(!isTeamView()) return;
+  const patch = { access_status: status };
+  if(status==='requested') patch.access_requested_at = new Date().toISOString().slice(0,10);
+  const { error } = await sb.from('sheet_sources').update(patch)
+    .eq('practice_id', pid).eq('source', source);
+  if(error){
+    adminDelFlash(/access_status/.test(error.message)
+      ? 'Access states need the marketing-connections migration (migrations/2026-07-08_marketing_connections.sql).'
+      : 'Save failed: '+error.message);
+    return;
+  }
+  const k = ssKey(pid, source);
+  if(sheetSources[k]) Object.assign(sheetSources[k], patch);
+  adminDelFlash(`${channelLabel(source)} access: ${accessLabel(status)}.`);
+  refreshClientSources(pid);
 }
 // Add a new source tab to a client (preset or custom key).
 async function addSource(pid){
