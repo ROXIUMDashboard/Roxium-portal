@@ -251,6 +251,9 @@ function showView(name){
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
   syncChrome();
+  // Charts built while their tab was hidden have a zero-size canvas — resize once the
+  // Metrics tab is actually visible so the live graph shows without a manual month switch.
+  if(name==='metrics') requestAnimationFrame(()=> kpiChartInstances.forEach(c=>{ try{ c.resize(); }catch(_){} }));
   if(name==='operations') loadOperationsData();
   if(name==='controls'){
     activateAdminTab(lastAdminTab);
