@@ -14,6 +14,8 @@ create table if not exists practices (
   name text not null,
   go_live date,
   workbook_sheet_id text,   -- the client's ONE master reporting workbook; every source is a TAB inside it
+  marketing_setup_type text check (marketing_setup_type is null or marketing_setup_type in ('agency','internal','none')),
+  marketing_connections jsonb not null default '{}'::jsonb,
   created_at timestamptz default now()
 );
 -- One practice per name (trimmed, case-insensitive) — prevents duplicate "Balikians".
@@ -353,6 +355,30 @@ begin
 end $$;
 grant execute on function get_my_ops_attention_state() to authenticated;
 grant execute on function set_my_ops_attention_state(jsonb) to authenticated;
+
+-- Marketing Connections pipeline state (team-only UI layer).
+create or replace function set_practice_marketing_connection(p_practice uuid, p_platform text, p_patch jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare cur jsonb; merged jsonb; full jsonb;
+begin
+  if not is_team() then raise exception 'Only team users can update marketing connections'; end if;
+  select coalesce(marketing_connections, '{}'::jsonb) into full from practices where id = p_practice;
+  if full is null then raise exception 'Practice not found'; end if;
+  cur := coalesce(full -> p_platform, '{}'::jsonb);
+  merged := cur || coalesce(p_patch, '{}'::jsonb) || jsonb_build_object('updated_at', now());
+  full := jsonb_set(full, array[p_platform], merged, true);
+  update practices set marketing_connections = full where id = p_practice;
+  return full;
+end $$;
+create or replace function set_practice_marketing_setup_type(p_practice uuid, p_type text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_team() then raise exception 'Only team users can update marketing setup type'; end if;
+  if p_type is not null and p_type not in ('agency','internal','none') then raise exception 'Invalid marketing setup type'; end if;
+  update practices set marketing_setup_type = p_type where id = p_practice;
+end $$;
+grant execute on function set_practice_marketing_connection(uuid, text, jsonb) to authenticated;
+grant execute on function set_practice_marketing_setup_type(uuid, text) to authenticated;
 
 -- memberships: user reads their own; team reads/manages all (invites write via service role).
 drop policy if exists "read memberships" on memberships;

@@ -841,3 +841,77 @@ select option{background:var(--surface2);color:var(--cream)}
 .synctable td{padding:8px 12px;font-size:12px;color:var(--cream);border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
 .synctable tr:last-child td{border-bottom:none}
 .synctable td .ssok,.synctable td .ssbad{font-size:11px}
+
+/* ---- Marketing Connections (Practice Growth OS layer) ---- */
+.ops-panel-marketing-health{margin-bottom:16px}
+.ops-mkt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.ops-marketing-health .ops-mkt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px}
+.ops-mkt-tagline{margin:0;font-size:12px;line-height:1.5;opacity:.9}
+.mkt-os-banner{margin:12px 0 18px;padding:14px 16px;border:1px solid rgba(201,168,76,.28);
+  background:linear-gradient(135deg,rgba(201,168,76,.08),rgba(13,12,16,.4));border-radius:4px}
+.mkt-os-banner p{margin:0;font-size:13px;line-height:1.55;color:var(--cream)}
+.mkt-os-banner em{color:var(--gold);font-style:italic}
+.mkt-connections-block{margin-top:4px}
+.mkt-client-summary{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(201,168,76,.12)}
+.mkt-setup-type{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.mkt-conn-count{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.mkt-platform-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.mkt-platform-card{border:1px solid var(--line);border-radius:4px;padding:11px 12px;background:var(--ink);
+  border-left-width:3px;transition:border-color .15s ease}
+.mkt-platform-card.mkt-connected{border-left-color:var(--green)}
+.mkt-platform-card.mkt-waiting,.mkt-platform-card.mkt-requested{border-left-color:var(--amber)}
+.mkt-platform-card.mkt-off,.mkt-platform-card.mkt-unused{border-left-color:rgba(154,148,138,.45)}
+.mkt-platform-card.mkt-error{border-left-color:var(--red)}
+.mkt-platform-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.mkt-platform-dot{flex-shrink:0;font-size:11px;line-height:1}
+.mkt-platform-name{flex:1;font-size:13px;color:var(--cream);min-width:0}
+.mkt-platform-status{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.mkt-platform-card.mkt-connected .mkt-platform-status{color:var(--green)}
+.mkt-platform-card.mkt-error .mkt-platform-status{color:var(--red)}
+.mkt-platform-detail,.mkt-platform-sync,.mkt-platform-by{font-size:11.5px;line-height:1.45;margin-top:3px}
+.mkt-platform-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.mkt-platform-actions .picker{flex:1;min-width:120px;font-size:11px;padding:6px 8px}
+.mkt-tech-setup{margin-top:14px;border:1px dashed var(--line);border-radius:4px;padding:10px 12px;background:rgba(13,12,16,.35)}
+.mkt-tech-setup>summary{cursor:pointer;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mkt-tech-setup[open]>summary{margin-bottom:10px;color:var(--gold)}
+.mkt-resources-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 20px}
+.mkt-resource-card{border:1px solid var(--line);border-radius:4px;padding:14px 15px;background:var(--surface)}
+.mkt-resource-card h4{font-family:'Cormorant Garamond',serif;font-size:17px;color:var(--gold);margin:0 0 6px}
+.mkt-resource-card .note{margin-bottom:10px;line-height:1.45}
+.mkt-checklist-panel{margin-top:18px;padding:16px 18px;border:1px solid var(--line);border-radius:4px;background:var(--surface)}
+.mkt-checklist-panel h4{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--cream);margin:0 0 6px}
+.mkt-checklist-row{padding:12px 0;border-bottom:1px solid rgba(201,168,76,.1)}
+.mkt-checklist-row:last-child{border-bottom:none;padding-bottom:0}
+.mkt-checklist-name{margin-bottom:4px;font-size:13px}
+.mkt-guides{margin-top:22px}
+.mkt-guides h4{font-family:'Cormorant Garamond',serif;font-size:17px;color:var(--gold);margin:0 0 8px}
+.mkt-guide-links{list-style:none;padding:0}
+.mkt-guide-links li{margin:6px 0}
+.mkt-guide-links a{color:var(--gold);text-decoration:none;border-bottom:1px solid rgba(201,168,76,.35)}
+.mkt-guide-links a:hover{color:var(--cream);border-bottom-color:var(--cream)}
+.onboard-wizard{margin:16px 0 12px;padding:16px 18px;border:1px solid var(--line);border-radius:4px;background:var(--surface)}
+.onboard-wizard-title{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);margin-bottom:12px}
+.onboard-wizard-steps{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0 0 16px;padding:0;list-style:none}
+.onboard-wizard-step{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.onboard-wizard-step .ow-num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border:1px solid var(--line);border-radius:50%;font-size:11px;font-variant-numeric:tabular-nums}
+.onboard-wizard-step.done{color:var(--cream)}
+.onboard-wizard-step.done .ow-num{background:var(--gold);border-color:var(--gold);color:var(--ink)}
+.onboard-wizard-step.current{color:var(--gold)}
+.onboard-wizard-step.current .ow-num{border-color:var(--gold);color:var(--gold)}
+.onboard-wizard-body{display:flex;flex-direction:column;gap:16px}
+.onboard-wizard-section h4{font-family:'Cormorant Garamond',serif;font-size:16px;color:var(--cream);margin:0 0 6px}
+.mkt-setup-choices{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.mkt-setup-choice{display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;line-height:1.45}
+.mkt-setup-choice input{margin-top:3px;accent-color:var(--gold)}
+.mkt-setup-instructions{margin-top:8px;padding:10px 12px;border-left:2px solid var(--gold);background:rgba(201,168,76,.06)}
+.ops-mkt-conn-strip{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ops-mkt-chip{font-size:10px;letter-spacing:.08em;padding:3px 8px;border:1px solid var(--line);border-radius:2px;color:var(--muted)}
+.ops-mkt-chip.connected{color:var(--green);border-color:rgba(123,168,122,.45)}
+.ops-mkt-chip.waiting{color:var(--amber);border-color:rgba(212,162,78,.45)}
+.ops-mkt-chip.missing{color:var(--muted)}
+@media(max-width:640px){
+  .mkt-platform-grid{grid-template-columns:1fr}
+  .onboard-wizard-steps{flex-direction:column}
+}

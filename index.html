@@ -143,6 +143,15 @@
         <div class="sub">What needs our attention today?</div>
       </div>
       <div id="opsExecCards" class="ops-cards cards"></div>
+      <div class="ops-panel ops-panel-marketing-health">
+        <div class="ops-mkt-head">
+          <div>
+            <h3>Marketing Health</h3>
+            <p class="note ops-panel-note">Live marketing data connections across the roster — Meta, Google, YouTube, and more feed one unified view.</p>
+          </div>
+        </div>
+        <div id="opsMarketingHealth" class="ops-marketing-health"></div>
+      </div>
       <div class="ops-panel ops-panel-attention">
         <div class="ops-attention-head">
           <div>
@@ -188,23 +197,34 @@
     <section id="adminPanel" class="view teamonly hidden" data-view="controls">
       <a href="#operations" class="adminback" id="btnAdminBack">← Back to Operations Dashboard</a>
       <h2>Team Controls · <em>configuration</em></h2>
-      <div class="sub">Management and platform configuration — create clients, manage access, configure KPI sources, and monitor sync. Not for day-to-day operations.</div>
+      <div class="sub">Practice Growth OS setup — onboard clients, manage access, connect marketing platforms, and monitor live performance data.</div>
 
       <nav class="admintabs" id="adminTabs">
         <button class="atab active" data-atab="clients">Clients</button>
         <button class="atab" data-atab="access">Access &amp; Invites</button>
-        <button class="atab" data-atab="reporting">Reporting &amp; KPI</button>
-        <button class="atab" data-atab="system">System</button>
+        <button class="atab" data-atab="connections">Marketing Connections</button>
+        <button class="atab" data-atab="resources">Marketing Resources</button>
+        <button class="atab" data-atab="system">Data Pipeline</button>
       </nav>
 
       <!-- A · CLIENTS / ONBOARDING -->
       <div class="admin-tab" data-atab="clients">
         <h3>New client onboarding</h3>
-        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Reporting &amp; KPI</b>.</p>
+        <p class="note" style="margin-top:-2px">Roxium is the operating system — Meta, Google, and other platforms are data sources that feed live performance into one place. Create the practice, invite the surgeon, then choose how marketing is set up.</p>
         <div class="entry">
           <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
           <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
           <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
+        </div>
+        <div id="onboardWizard" class="onboard-wizard hidden">
+          <div class="onboard-wizard-title">Onboarding workflow</div>
+          <ol class="onboard-wizard-steps">
+            <li class="onboard-wizard-step done" data-ow-step="create"><span class="ow-num">1</span> Create client</li>
+            <li class="onboard-wizard-step" data-ow-step="invite"><span class="ow-num">2</span> Invite doctor</li>
+            <li class="onboard-wizard-step" data-ow-step="setup"><span class="ow-num">3</span> Marketing setup</li>
+            <li class="onboard-wizard-step" data-ow-step="connect"><span class="ow-num">4</span> Connect platforms</li>
+          </ol>
+          <div id="onboardWizardBody" class="onboard-wizard-body"></div>
         </div>
         <div id="onboardChecklist" class="onboard-check hidden"></div>
         <p class="note" id="onbMsg" style="margin-top:6px"></p>
@@ -243,11 +263,14 @@
         </div>
       </div>
 
-      <!-- C · REPORTING / KPI SOURCES -->
-      <div class="admin-tab hidden" data-atab="reporting">
-        <h3>Reporting workbooks &amp; KPI sources</h3>
-        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
-        <h4 class="syncstatus-h">Auto-sync status</h4>
+      <!-- C · MARKETING CONNECTIONS -->
+      <div class="admin-tab hidden" data-atab="connections">
+        <h3>Marketing Connections</h3>
+        <p class="note" style="margin-top:-2px">Each platform is a <b>data source</b> — Roxium combines Meta, Google, YouTube, and more into one Practice Growth OS. Track connection status per client; expand <b>Connection setup</b> only when wiring is needed.</p>
+        <div class="mkt-os-banner">
+          <p>Meta Business Suite, Google Ads, GA4, YouTube, and Microsoft Ads feed <em>live marketing data</em> alongside deliverables, milestones, video production, and KPI reporting — without the client logging into each platform.</p>
+        </div>
+        <h4 class="syncstatus-h">Performance data refresh</h4>
         <div id="syncStatus" class="syncstatus"></div>
         <div class="reporting-toolbar" id="reportingToolbar">
           <div class="f reporting-search">
@@ -260,7 +283,7 @@
               <option value="name-asc">Name (A → Z)</option>
               <option value="name-desc">Name (Z → A)</option>
               <option value="setup-first">Needs setup first</option>
-              <option value="errors-first">Sync errors first</option>
+              <option value="errors-first">Connection errors first</option>
             </select>
           </div>
           <p class="note reporting-count" id="reportingClientCount"></p>
@@ -269,24 +292,62 @@
         <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
       </div>
 
-      <!-- D · SYSTEM / REPORTING SETTINGS -->
-      <div class="admin-tab hidden" data-atab="system">
-        <h3>System &amp; reporting settings</h3>
-        <p class="note" style="margin-top:-2px">Global settings for the whole portal.</p>
-        <div class="masterfolder">
-          <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
-          <div class="mfrow">
-            <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
-            <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
-            <button class="btn ghost sm" id="btnListWorkbooks">Test &amp; list workbooks</button>
+      <!-- D · MARKETING RESOURCES -->
+      <div class="admin-tab hidden" data-atab="resources">
+        <h3>Marketing Onboarding Resources</h3>
+        <p class="note" style="margin-top:-2px">Client-facing language only — never mention spreadsheets, imports, or third-party sync tools. Roxium is the product; platforms are data sources.</p>
+        <div class="mkt-resources-grid">
+          <div class="mkt-resource-card">
+            <h4>Record onboarding video</h4>
+            <p class="note">Placeholder for your hosted walkthrough — surgeons see Roxium as their Practice Growth OS.</p>
+            <button type="button" class="btn ghost sm" id="btnMktVideoPlaceholder" disabled>Coming soon</button>
           </div>
-          <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
+          <div class="mkt-resource-card">
+            <h4>Data Access Checklist</h4>
+            <p class="note">Platform-specific read-only access requirements for agencies and internal teams.</p>
+            <button type="button" class="btn ghost sm" id="btnScrollChecklist">View checklist below</button>
+          </div>
+          <div class="mkt-resource-card">
+            <h4>Copy invite email</h4>
+            <p class="note">Tier-appropriate onboarding email — customize before sending.</p>
+            <button type="button" class="btn ghost sm" id="btnCopyInviteEmail">Copy template</button>
+          </div>
+        </div>
+        <div id="mktDataAccessChecklist" class="mkt-checklist-panel">
+          <h4>Roxium Data Access Checklist</h4>
+          <p class="note">Grant <b>read-only</b> access to ROXIUM identities only. Never accept passwords or shared logins.</p>
+          <div id="mktChecklistPlatforms"></div>
+        </div>
+        <div class="mkt-guides">
+          <h4>Platform setup guides</h4>
+          <ul class="mkt-guide-links note">
+            <li><a href="docs/onboarding/meta-access-guide.md" target="_blank" rel="noopener">Meta Business Suite — partner access</a></li>
+            <li><a href="docs/onboarding/google-access-guide.md" target="_blank" rel="noopener">Google Ads, GA4, GBP &amp; YouTube</a></li>
+            <li><a href="docs/onboarding/agency-checklist.md" target="_blank" rel="noopener">Agency onboarding checklist</a></li>
+            <li><a href="docs/onboarding/client-checklist.md" target="_blank" rel="noopener">Client-facing checklist</a></li>
+            <li><a href="docs/onboarding/why-roxium.md" target="_blank" rel="noopener">Why Roxium vs. logging into each platform</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- E · DATA PIPELINE (technical, team-only) -->
+      <div class="admin-tab hidden" data-atab="system">
+        <h3>Data pipeline</h3>
+        <p class="note" style="margin-top:-2px">Internal configuration for how live marketing data reaches Roxium. Clients never see this section.</p>
+        <div class="masterfolder">
+          <span class="chanlabel">Master data folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
+          <div class="mfrow">
+            <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link">
+            <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
+            <button class="btn ghost sm" id="btnListWorkbooks">Test folder access</button>
+          </div>
+          <p class="note" id="masterFolderMsg" style="margin-top:4px">Used during connection setup to locate each practice's data container. Share with the backend service account.</p>
           <div class="detectout" id="folderWorkbooks"></div>
         </div>
-        <h4 class="syncstatus-h" style="margin-top:18px">Manual sync &amp; debugging</h4>
+        <h4 class="syncstatus-h" style="margin-top:18px">Refresh performance data</h4>
         <div class="syncnowrow">
-          <button class="btn ghost sm" id="btnSyncNow">↻ Run sync now</button>
-          <span class="note" id="syncNowMsg">Manual/debug — “Deploy setup” on a client also runs this. Sync runs automatically every 2 hours.</span>
+          <button class="btn ghost sm" id="btnSyncNow">↻ Refresh all marketing data</button>
+          <span class="note" id="syncNowMsg">Runs automatically every 2 hours. Use after connection changes.</span>
         </div>
       </div>
     </section>
@@ -319,14 +380,14 @@
       </div>
 
       <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
-      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (<b>Team Controls → Reporting &amp; KPI</b>). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
+      <p class="note" style="margin-top:-2px">Live marketing data flows in automatically from connected platforms (<b>Team Controls → Marketing Connections</b>). Use this manual layer for hand-entered months or overrides when a channel isn't connected yet. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI export</b> saves the entered months.</p>
       <div class="entry" id="kpiMeta">
         <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
       </div>
       <div class="entry" id="entryFields"></div>
       <div class="actions">
         <button class="btn" id="btnSaveKpi">Save month</button>
-        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI CSV</button>
+        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI export</button>
         <span id="saveMsg"></span>
       </div>
 
