@@ -926,6 +926,62 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- KPI insights (rule-based, no AI) ----------------
+   Turn month-over-month movement into short sentences so the metrics view
+   leads with "what changed" instead of asking the reader to diff charts.
+   Deterministic rules only: ≥10% month-over-month moves (top two), a
+   best-in-range record when one exists, and a missing-channel callout. */
+function buildKpiInsights(reported){
+  if(!reported || reported.length < 2) return [];
+  const cur = reported[0], prevRow = reported[1];
+  const watch = [
+    {k:'reach', l:'Reach'}, {k:'clicks', l:'Link clicks'}, {k:'spend', l:'Spend', neutral:true},
+    {k:'ctr', l:'CTR'}, {k:'cpc', l:'CPC', lowerBetter:true}, {k:'cpm', l:'CPM', lowerBetter:true},
+  ];
+  const out = [], deltas = [];
+  watch.forEach(w=>{
+    const def = CORE_METRICS.find(c=> c.k===w.k); if(!def) return;
+    const a = metricValue(def, cur), b = metricValue(def, prevRow);
+    if(a==null || b==null || !isFinite(+a) || !isFinite(+b) || +b===0) return;
+    const pct = (a-b)/Math.abs(b)*100;
+    if(Math.abs(pct) < 10) return;
+    deltas.push({ ...w, pct, good: w.neutral ? null : (w.lowerBetter ? pct<0 : pct>0) });
+  });
+  deltas.sort((x,y)=> Math.abs(y.pct)-Math.abs(x.pct));
+  const vsLbl = monthName(prevRow.period) || periodLabel(prevRow.period);
+  deltas.slice(0,2).forEach(d=>{
+    out.push({ cls: d.good==null ? 'info' : d.good ? 'good' : 'warn',
+      text:`${d.l} ${d.pct>0?'↑':'↓'} ${Math.abs(d.pct).toFixed(0)}% vs ${vsLbl}` });
+  });
+  // A record only counts against 3+ reported months — never call two points a streak.
+  if(reported.length >= 3){
+    const cpcDef = CORE_METRICS.find(c=> c.k==='cpc');
+    const cpcs = reported.map(r=> metricValue(cpcDef, r));
+    if(cpcs[0]!=null && cpcs.slice(1).every(v=> v==null || cpcs[0] < v)){
+      out.push({ cls:'good', text:`Best CPC of all ${reported.length} reported months (${fmt$(cpcs[0])})` });
+    } else {
+      const reaches = reported.map(r=> N(r,'reach'));
+      if(reaches[0]!=null && reaches.slice(1).every(v=> v==null || reaches[0] > v))
+        out.push({ cls:'good', text:`Highest reach of all ${reported.length} reported months` });
+    }
+  }
+  return out.slice(0,3);
+}
+// A channel that reported in earlier months but is absent from the latest one is
+// either paused or quietly broken — say so instead of letting "All channels" shrink.
+function missingChannelInsight(){
+  const rows = normalizeKpiRows(data.kpiRaw||[]);
+  if(!rows.length) return null;
+  const periods = [...new Set(rows.map(r=> String(r.period)))].sort();
+  if(periods.length < 2) return null;
+  const latestP = periods[periods.length-1];
+  const inLatest = new Set(rows.filter(r=> String(r.period)===latestP).map(r=> r.source));
+  const missing = [...new Set(rows.filter(r=> String(r.period)<latestP).map(r=> r.source))]
+    .filter(s=> !inLatest.has(s));
+  if(!missing.length) return null;
+  return { cls:'warn', text:`No ${missing.map(channelLabel).join(', ')} data for ${monthName(latestP)} yet` };
+}
+
 /* ---------------- render ---------------- */
 function render(){
   renderBanner();
@@ -1010,6 +1066,14 @@ function render(){
   // KPI cards + status board — driven by the real ad metric model; only metrics
   // that actually have a value render (no broken cards for unavailable data).
   safe('performance metrics', ()=>{
+    // Insights strip — what changed, in sentences, above the charts.
+    const insights = buildKpiInsights(reported);
+    if(getChan()==='all'){ const m = missingChannelInsight(); if(m) insights.push(m); }
+    const insEl = $('kpiInsights');
+    if(insEl){
+      insEl.innerHTML = insights.map(i=> `<span class="insight ${i.cls}">${esc(i.text)}</span>`).join('');
+      insEl.style.display = insights.length ? '' : 'none';
+    }
     renderKpiCharts(viewPeriod, isLive, { allMonths: allMonthsView });
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
       clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};

@@ -835,6 +835,12 @@ select option{background:var(--surface2);color:var(--cream)}
 .ssbad{font-size:10.5px;color:var(--red);letter-spacing:.04em}
 .sswarn{font-size:10.5px;color:var(--amber);letter-spacing:.04em}
 .metricpickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* KPI insights strip — rule-based "what changed" sentences above the charts */
+.kpi-insights{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 2px}
+.insight{font-size:12px;letter-spacing:.05em;padding:6px 12px;border:1px solid var(--line);background:var(--surface);color:var(--cream)}
+.insight.good{color:var(--green);border-color:rgba(123,168,122,.35)}
+.insight.warn{color:var(--amber);border-color:rgba(212,162,78,.4)}
+.insight.info{color:var(--muted)}
 @media(max-width:640px){.sheetchans{grid-template-columns:1fr}}
 
 /* ---- sync observability: did the 2-hour automation run? status banner + audit table ---- */
