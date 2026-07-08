@@ -85,7 +85,9 @@ Deno.serve(async (req) => {
   const role_label = role === "owner" ? "Owner" : "Member";
   const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
     data: { full_name, role, role_label },
-    redirectTo: SITE_URL || undefined,
+    // Invite links land on the portal app page — the site root is the public
+    // marketing page (its auth-forwarder would catch this, but go direct).
+    redirectTo: SITE_URL ? SITE_URL.replace(/\/+$/, "") + "/portal.html" : undefined,
   });
   if (invited?.user) {
     userId = invited.user.id;

@@ -12,13 +12,13 @@ BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-for f in index.html app.js styles.css config.js _headers; do
+for f in index.html portal.html app.js styles.css config.js _headers; do
   cp "$ROOT/$f" "$OUT/"
 done
 if [ -f "$ROOT/_redirects" ]; then cp "$ROOT/_redirects" "$OUT/"; fi
 
 # Inject deploy identity into HTML (cache-bust + footer label).
-sed -i "s/BUILD_SHA/$SHORT_SHA/g" "$OUT/index.html"
+sed -i "s/BUILD_SHA/$SHORT_SHA/g" "$OUT/index.html" "$OUT/portal.html"
 
 cat > "$OUT/version.json" <<EOF
 {"sha":"$SHORT_SHA","full_sha":"$FULL_SHA","built_at":"$BUILT_AT"}

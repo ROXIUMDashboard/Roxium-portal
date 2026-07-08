@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROXIUM · Client Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=BUILD_SHA">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <div class="mark big">ROX<b>I</b>UM</div>
+    <div class="eyebrow">Sign in to your portal</div>
+    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed. If your practice invited you (or you're on the roster), signing up is automatic — no manual approval needed.</p>
+    <input id="loginEmail" type="email" placeholder="you@practice.com">
+    <button class="btn" id="btnLogin">Send sign-in link</button>
+    <div id="loginCodeRow" class="hidden" style="margin-top:10px">
+      <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code from your email">
+      <button class="btn" id="btnVerifyCode">Enter code</button>
+      <p class="note" style="margin-top:6px">Outlook can be slow or block the button — the code above always works.</p>
+    </div>
+    <p class="note login-persist">After you sign in once, this browser keeps you signed in until you choose Sign out.</p>
+    <p class="note" id="loginMsg"></p>
+    <p class="note" style="margin-top:14px"><a href="/" style="color:var(--gold);text-decoration:none">← Back to roxium.com</a></p>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <header><div class="wrap bar">
+    <div class="mark">ROX<b>I</b>UM</div>
+    <div class="right">
+      <div id="practiceSwitcher" class="switcher hidden">
+        <button type="button" id="practiceSwitcherBtn" class="switcher-btn picker" aria-haspopup="listbox" aria-expanded="false">
+          <span class="switcher-btn-label" id="practiceCurrentName">Select client…</span>
+          <span class="switcher-caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="practiceSwitcherPop" class="switcher-pop hidden">
+          <input id="practiceSearch" class="switcher-search" type="search" placeholder="Search clients…" autocomplete="off" spellcheck="false" aria-label="Search clients">
+          <div id="practiceResults" class="switcher-results"></div>
+        </div>
+      </div>
+      <button class="btn ghost sm teamonly hidden" id="btnPreview">Preview as client</button>
+      <span class="practice" id="whoami"></span>
+      <button class="btn ghost sm" id="btnLogout">Sign out</button>
+    </div>
+  </div></header>
+
+  <!-- Team workspace · primary navigation (internal Roxium employees) -->
+  <nav id="teamTopNav" class="teamtopnav teamonly hidden" aria-label="Team workspace">
+    <div class="wrap teamtopnav-inner">
+      <a href="#operations" class="teamtop" data-teamnav="operations">Operations Dashboard</a>
+      <a href="#roadmap" class="teamtop" data-teamnav="clients">Clients</a>
+      <a href="#controls" class="teamtop" data-teamnav="controls">Team Controls</a>
+    </div>
+  </nav>
+
+  <div id="notifyBar" class="notifybar hidden"></div>
+
+  <div class="wrap">
+    <div class="hero">
+      <div class="eyebrow">Live Performance & Delivery</div>
+      <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
+      <div class="updated" id="updated"></div>
+      <div class="stats" id="heroStats"></div>
+    </div>
+
+    <!-- Tabbed navigation (hash-routed) -->
+    <nav class="tabs" id="tabnav">
+      <a href="#roadmap"      class="tab" data-view="roadmap">Roadmap</a>
+      <a href="#deliverables" class="tab" data-view="deliverables">Progress</a>
+      <a href="#video"        class="tab" data-view="video">Video</a>
+      <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
+      <a href="#updates"      class="tab" data-view="updates">Updates</a>
+      <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
+      <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
+    </nav>
+
+    <!-- Milestone timeline -->
+    <section class="view" data-view="roadmap">
+      <div class="sechead">
+        <div>
+          <h2>Your <em>roadmap</em></h2>
+          <div class="sub">Every milestone, where you stand today, and what happens next.</div>
+        </div>
+      </div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <!-- Project progress: phase-by-phase delivery -->
+    <section class="view" data-view="deliverables">
+      <div class="sechead">
+        <div>
+          <h2>Project <em>Progress</em></h2>
+          <div class="sub" id="delivSub"></div>
+        </div>
+        <button class="btn ghost sm" id="delivGuideBtn" type="button">What do these mean?</button>
+      </div>
+      <div id="delivGuide" class="guide hidden"></div>
+      <div class="progressbar"><div id="delivBar"></div></div>
+      <div id="delivTable"></div>
+    </section>
+
+    <!-- Video pipeline -->
+    <section class="view" data-view="video">
+      <h2>Video production <em>pipeline</em></h2>
+      <div class="sub">Every asset and its exact stage. Items waiting on the practice are flagged gold. Click any card for details, history and the finished video.</div>
+      <div class="pipeline" id="pipeline"></div>
+    </section>
+
+    <!-- KPI dashboard -->
+    <section class="view" data-view="metrics">
+      <h2>Performance <em>metrics</em></h2>
+      <div class="metricshead">
+        <div class="sub" id="kpiSub">Latest month against target.</div>
+        <div class="metricpickers">
+          <div class="mp-field hidden" id="channelField"><span class="mp-label">Channel</span><select id="channelPicker" class="picker"></select></div>
+          <div class="mp-field"><span class="mp-label">Month</span><div id="metricsPicker" class="monthsel"></div></div>
+        </div>
+      </div>
+      <div id="kpiCharts" class="kpi-charts hidden"></div>
+      <div class="cards" id="kpiCards"></div>
+      <div class="status" id="statusBoard" style="margin-top:16px"></div>
+    </section>
+
+    <!-- Activity feed -->
+    <section class="view" data-view="updates">
+      <h2>Latest <em>updates</em></h2>
+      <div class="sub">Posted by your ROXIUM team as work ships.</div>
+      <div id="feed"></div>
+    </section>
+
+    <!-- OPERATIONS DASHBOARD · team command center -->
+    <section id="operationsPanel" class="view teamonly hidden" data-view="operations">
+      <div class="ops-head">
+        <h2>Roxium <em>Operations Dashboard</em></h2>
+        <div class="sub">What needs our attention today?</div>
+      </div>
+      <div id="opsExecCards" class="ops-cards cards"></div>
+      <div class="ops-panel ops-panel-attention">
+        <div class="ops-attention-head">
+          <div>
+            <h3>Needs attention</h3>
+            <p class="note ops-panel-note">Drag to reorder active items, pin, snooze (⏸), or dismiss (✕). Paused and dismissed items stay at the bottom — resume or restore anytime.</p>
+          </div>
+          <button type="button" class="btn sm ghost" id="opsAttentionReset" hidden>Reset sort</button>
+        </div>
+        <div id="opsAttentionFeed" class="ops-attention-list"></div>
+      </div>
+      <div class="ops-panel">
+        <div class="ops-kpi-head">
+          <h3>Company KPI overview</h3>
+          <div class="ops-kpi-toolbar">
+            <div class="f ops-kpi-month-field">
+              <label for="opsKpiMonthPicker">Reporting month</label>
+              <div id="opsKpiMonthPicker"></div>
+            </div>
+          </div>
+        </div>
+        <p class="note ops-panel-note" id="opsKpiPeriod"></p>
+        <div id="opsKpiRollup" class="ops-kpi-rollup cards"></div>
+        <div id="opsKpiCharts" class="ops-kpi-charts hidden"></div>
+      </div>
+      <div class="ops-panel ops-panel-overview">
+        <div class="ops-overview-head">
+          <div>
+            <h3>Client overview</h3>
+            <p class="note ops-panel-note">Search by client, deliverable, video, or milestone — then expand a row for inline edits.</p>
+          </div>
+          <div class="ops-overview-tools">
+            <input id="opsClientSearch" type="search" class="picker ops-client-search" placeholder="Search clients, deliverables, videos, milestones…" autocomplete="off" spellcheck="false" aria-label="Search client overview">
+            <button type="button" class="btn sm ghost" id="opsClientSort" aria-pressed="true">A → Z</button>
+          </div>
+        </div>
+        <p class="note ops-client-count" id="opsClientCount"></p>
+        <div id="opsUrgentStrip" class="ops-urgent-strip"></div>
+        <div id="opsClientOverview" class="ops-client-list"></div>
+      </div>
+    </section>
+
+    <!-- TEAM CONTROLS · global configuration (formerly Admin) -->
+    <section id="adminPanel" class="view teamonly hidden" data-view="controls">
+      <a href="#operations" class="adminback" id="btnAdminBack">← Back to Operations Dashboard</a>
+      <h2>Team Controls · <em>configuration</em></h2>
+      <div class="sub">Management and platform configuration — create clients, manage access, configure KPI sources, and monitor sync. Not for day-to-day operations.</div>
+
+      <nav class="admintabs" id="adminTabs">
+        <button class="atab active" data-atab="clients">Clients</button>
+        <button class="atab" data-atab="access">Access &amp; Invites</button>
+        <button class="atab" data-atab="reporting">Reporting &amp; KPI</button>
+        <button class="atab" data-atab="system">System</button>
+      </nav>
+
+      <!-- A · CLIENTS / ONBOARDING -->
+      <div class="admin-tab" data-atab="clients">
+        <h3>New client onboarding</h3>
+        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Reporting &amp; KPI</b>.</p>
+        <div class="entry">
+          <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
+          <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
+          <div class="f" style="align-self:end"><button class="btn" id="btnAddClient">Create client</button></div>
+        </div>
+        <div id="onboardChecklist" class="onboard-check hidden"></div>
+        <p class="note" id="onbMsg" style="margin-top:6px"></p>
+      </div>
+
+      <!-- B · ACCESS / INVITES -->
+      <div class="admin-tab hidden" data-atab="access">
+        <h3>Platform administrators</h3>
+        <p class="note" style="margin-top:-2px">Who can open Team Controls. <b>Make admin</b> grants full platform configuration access by email — the person must have signed in at least once first. The last administrator can't remove themselves, so you're never locked out.</p>
+        <div class="entry">
+          <div class="f"><label>Email</label><input id="promoteEmail" type="email" placeholder="teammate@roxium.com"></div>
+          <div class="f" style="align-self:end"><button class="btn sm" id="btnPromoteAdmin">Make admin</button></div>
+        </div>
+        <p class="note" id="promoteMsg" style="margin-top:6px"></p>
+        <div id="platformAdminRoster" class="roster roster-compact"></div>
+
+        <h3 style="margin-top:22px">Practice access &amp; invites</h3>
+        <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
+        <div class="entry invite-entry">
+          <div class="f"><label>Practice</label><select id="accessPractice" class="picker"></select></div>
+          <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>
+          <div class="f"><label>Name (optional)</label><input id="accessName" placeholder="Dr. Jane Smith"></div>
+          <div class="f"><label>Role</label><select id="accessRole" class="picker"><option value="owner">Owner (can invite team)</option><option value="member">Member</option></select></div>
+          <div class="f">
+            <label class="checklabel invite-check"><input type="checkbox" id="accessSendEmail" checked> Send welcome email</label>
+          </div>
+          <div class="f invite-send">
+            <label class="invite-send-spacer" aria-hidden="true">&nbsp;</label>
+            <button class="btn ghost sm" id="btnInvite">Send invite</button>
+          </div>
+        </div>
+        <div id="accessRoster" class="roster"></div>
+        <div class="access-delete-row">
+          <button class="btn ghost sm danger" id="btnDeleteAccessClient">Delete selected client</button>
+          <p class="note" id="accessDelMsg">Permanently removes the practice selected above and all of its data.</p>
+        </div>
+      </div>
+
+      <!-- C · REPORTING / KPI SOURCES -->
+      <div class="admin-tab hidden" data-atab="reporting">
+        <h3>Reporting workbooks &amp; KPI sources</h3>
+        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
+        <h4 class="syncstatus-h">Auto-sync status</h4>
+        <div id="syncStatus" class="syncstatus"></div>
+        <div class="reporting-toolbar" id="reportingToolbar">
+          <div class="f reporting-search">
+            <label for="reportingClientSearch">Find client</label>
+            <input id="reportingClientSearch" class="picker" type="search" placeholder="Search by surgeon / practice name…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="f reporting-sort">
+            <label for="reportingClientSort">Sort</label>
+            <select id="reportingClientSort" class="picker">
+              <option value="name-asc">Name (A → Z)</option>
+              <option value="name-desc">Name (Z → A)</option>
+              <option value="setup-first">Needs setup first</option>
+              <option value="errors-first">Sync errors first</option>
+            </select>
+          </div>
+          <p class="note reporting-count" id="reportingClientCount"></p>
+        </div>
+        <div id="adminClientList" class="clientlist"></div>
+        <p class="note" id="adminDelMsg" style="margin-top:6px"></p>
+      </div>
+
+      <!-- D · SYSTEM / REPORTING SETTINGS -->
+      <div class="admin-tab hidden" data-atab="system">
+        <h3>System &amp; reporting settings</h3>
+        <p class="note" style="margin-top:-2px">Global settings for the whole portal.</p>
+        <div class="masterfolder">
+          <span class="chanlabel">Master Reporting Drive Folder <span class="note" style="text-transform:none;letter-spacing:0">— global, for the whole system</span></span>
+          <div class="mfrow">
+            <input id="masterFolder" class="cellinput" placeholder="Paste the team's master Google Drive folder link — all client reporting workbooks live here">
+            <button class="btn ghost sm" id="btnSaveMasterFolder">Save folder</button>
+            <button class="btn ghost sm" id="btnListWorkbooks">Test &amp; list workbooks</button>
+          </div>
+          <p class="note" id="masterFolderMsg" style="margin-top:4px">Each client's “Find in master folder” searches this folder by practice name. Share the folder with the backend service account so it can read it.</p>
+          <div class="detectout" id="folderWorkbooks"></div>
+        </div>
+        <h4 class="syncstatus-h" style="margin-top:18px">Manual sync &amp; debugging</h4>
+        <div class="syncnowrow">
+          <button class="btn ghost sm" id="btnSyncNow">↻ Run sync now</button>
+          <span class="note" id="syncNowMsg">Manual/debug — “Deploy setup” on a client also runs this. Sync runs automatically every 2 hours.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLIENT OWNER · invite their own team (not global admin) -->
+    <section id="accessPanel" class="view accessonly hidden" data-view="access">
+      <h2>Invite <em>team members</em></h2>
+      <div class="sub">Add as many colleagues as you need — each gets their own login scoped to this practice only. Send invite also adds them to the allowlist automatically.</div>
+      <div class="entry">
+        <div class="f"><label>Email</label><input id="clientInviteEmail" type="email" placeholder="colleague@practice.com"></div>
+        <div class="f"><label>Name (optional)</label><input id="clientInviteName" placeholder="Office manager"></div>
+        <div class="f" style="align-self:end"><button class="btn" id="btnClientInvite">Send invite</button></div>
+      </div>
+      <p class="note" id="clientAccessMsg" style="margin-top:6px"></p>
+      <div id="clientRoster" class="roster"></div>
+    </section>
+
+    <!-- TEAM-ONLY · controls for the practice currently open -->
+    <section id="teamPanel" class="view teamonly hidden" data-view="team">
+      <h2>Team · <em>controls</em></h2>
+      <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in <b>Team Controls</b>.)</div>
+
+      <h3>Deliverables, roadmap & video pipeline</h3>
+      <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. <b>Roadmap milestones:</b> click any milestone on the Roadmap tab to edit all fields, drag to reorder, or use <b>+ Add milestone</b>. Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
+
+      <h3>Post an update</h3>
+      <div class="entry">
+        <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
+        <div class="f"><button class="btn" id="btnPost">Post update</button></div>
+      </div>
+
+      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
+      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (<b>Team Controls → Reporting &amp; KPI</b>). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
+      <div class="entry" id="kpiMeta">
+        <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
+      </div>
+      <div class="entry" id="entryFields"></div>
+      <div class="actions">
+        <button class="btn" id="btnSaveKpi">Save month</button>
+        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI CSV</button>
+        <span id="saveMsg"></span>
+      </div>
+
+      <h3 class="danger-title">Danger zone</h3>
+      <div class="dangerzone">
+        <p class="note">Reset returns <b id="resetTarget">this practice</b> to a clean slate: it permanently deletes every KPI month, the activity feed, all notifications and stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.</p>
+        <div class="actions">
+          <button class="btn danger" id="btnResetData">Reset all data for this practice</button>
+          <span id="resetMsg" class="note"></span>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>ROXIUM · Practice Growth Systems</span>
+      <span id="portalBuild">build BUILD_SHA</span><span> · Live KPI Data</span>
+    </footer>
+  </div>
+</div>
+
+<div id="modal" class="modal"></div>
+
+<script>
+(function(){
+  var KEY='roxium_cache_bust';
+  fetch('version.json',{cache:'no-store'})
+    .then(function(r){return r.json()})
+    .then(function(v){
+      if(!v||!v.sha) return;
+      var el=document.getElementById('portalBuild');
+      if(el) el.textContent='build '+v.sha;
+      var app=document.querySelector('script[src*="app.js"]');
+      var src=(app&&app.getAttribute('src'))||'';
+      if(src.indexOf(v.sha)>=0) return;
+      var k=KEY+v.sha;
+      if(sessionStorage.getItem(k)) return;
+      sessionStorage.setItem(k,'1');
+      var u=new URL(location.href);
+      u.searchParams.set('_v',v.sha);
+      location.replace(u.toString());
+    }).catch(function(){});
+})();
+</script>
+<script src="config.js?v=BUILD_SHA"></script>
+<script src="app.js?v=BUILD_SHA"></script>
+</body>
+</html>
