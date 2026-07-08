@@ -750,6 +750,16 @@ select.cellinput option{background:var(--ink);color:var(--cream)}
 .detectout:empty{display:none}
 /* compact source mappings — scales to many channels without a giant vertical stack */
 .srclist{display:flex;flex-direction:column;gap:5px;margin:6px 0 8px}
+.srcrow.has-access{grid-template-columns:150px minmax(0,1fr) 118px auto 28px}
+.srcrow .accesssel{font-size:11.5px;padding:7px 8px}
+.ops-conn-list{display:flex;flex-direction:column;gap:2px}
+.ops-conn-row{display:grid;grid-template-columns:170px minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:7px 2px;border-bottom:1px dashed rgba(201,168,76,.14);font-size:12.5px}
+.ops-conn-row:last-child{border-bottom:none}
+.ops-conn-name{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)}
+.ops-conn-tab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ops-conn-state{text-align:right;white-space:nowrap}
+@media(max-width:640px){.ops-conn-row{grid-template-columns:1fr auto}.ops-conn-tab{display:none}}
 .srcrow{display:grid;grid-template-columns:150px minmax(0,1fr) auto 28px;align-items:center;gap:10px;
   padding:7px 10px;border:1px solid var(--line);border-radius:3px;background:var(--ink)}
 .srcrow .srcname{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)}

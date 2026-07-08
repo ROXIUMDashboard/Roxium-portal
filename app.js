@@ -133,6 +133,19 @@ const CHANNELS = [
 const channelLabel = src => (!src || ['marketing','meta','coefficient'].includes(src))
   ? 'Meta Ads'
   : (CHANNELS.find(c=>c.source===src)?.label || src.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase()));
+// Marketing-connection access states (see migrations/2026-07-08_marketing_connections.sql):
+// requested = we asked the client for platform access · granted = access arrived,
+// Coefficient/tab still to wire · connected = data flowing (auto-set on sync ok).
+const ACCESS_STATES = [['requested','Requested'],['granted','Granted'],['connected','Connected']];
+const accessLabel = k => (ACCESS_STATES.find(([v])=>v===k)?.[1]) || 'Connected';
+// Whole days since the access request went out (null when unknown / not requested).
+function accessAgeDays(s){
+  if(!s || !s.access_requested_at) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(String(s.access_requested_at).slice(0,10)+'T12:00:00'))/86400000));
+}
+// Escalation bands for an aging access request — the onboarding SOP says escalate
+// after 5 business days (~7 calendar): quiet <3d · amber 3–6d · red ≥7d.
+function accessAgeCls(days){ return days==null ? 'note' : days>=7 ? 'ssbad' : days>=3 ? 'sswarn' : 'note'; }
 // Human, correctly-capitalized role labels for access/account messaging.
 const roleLabel = r => ({ owner:'Owner', member:'Member', team:'ROXIUM Team', client:'Client', admin:'Admin' }[String(r||'').toLowerCase()]
   || (r ? String(r).replace(/\b\w/g, c=>c.toUpperCase()) : '—'));
@@ -2851,12 +2864,38 @@ function renderOpsClientDetail(r){
       <td>${esc(st)}</td>
     </tr>`;
   });
+  // Marketing Connections — one row per source: access state → sync health.
+  // This is where "we asked for Google Ads access 9 days ago" stops being tribal
+  // knowledge and becomes a red row on the client card.
+  const connSources = (opsData.sources||[]).filter(s=> s.practice_id===r.p.id);
+  const connRows = connSources.map(s=>{
+    const acc = s.access_status || 'connected';
+    const age = syncAge(s.last_synced_at);
+    const reqDays = accessAgeDays(s);
+    let state;
+    if(s.last_status==='error') state = `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ Sync error${age?` · ${esc(age.label)}`:''}</span>`;
+    else if(age && !age.stale) state = `<span class="ssok">✓ Connected · synced ${esc(age.label)}</span>`;
+    else if(age) state = `<span class="${age.cls==='bad'?'ssbad':'sswarn'}">⚠ Connected · stale ${esc(age.label)}</span>`;
+    else if(acc==='granted') state = `<span class="sswarn">Granted — wire the tab &amp; sync</span>`;
+    else if(acc==='requested') state = `<span class="${accessAgeCls(reqDays)}">Requested${reqDays!=null?` · ${reqDays}d ago`:''}${(reqDays??0)>=7?' — escalate':''}</span>`;
+    else state = `<span class="note">Connected · awaiting first sync</span>`;
+    return `<div class="ops-conn-row">
+      <span class="ops-conn-name">${esc(channelLabel(s.source))}</span>
+      <span class="ops-conn-tab note">${esc(s.tab_name||'—')}</span>
+      <span class="ops-conn-state">${state}</span>
+    </div>`;
+  });
   return `<div class="ops-client-detail">
     <div class="ops-client-metrics">${mini.map(m=>`
       <div class="ops-client-metric${m.warn?' warn':''}${m.cls? ' band-'+m.cls:''}${m.compact?' compact':''}">
         <div class="ops-client-metric-v"${m.title? ` title="${esc(m.title)}"`:''}>${esc(m.v)}</div>
         <div class="ops-client-metric-l">${esc(m.l)}</div>
       </div>`).join('')}</div>
+    <div class="ops-client-section">
+      <h4>Marketing connections</h4>
+      ${connRows.length ? `<div class="ops-conn-list">${connRows.join('')}</div>`
+                        : '<p class="note">No reporting sources configured yet — add them in Team Controls → Reporting &amp; KPI.</p>'}
+    </div>
     <div class="ops-client-section">
       <h4>Open deliverables</h4>
       ${delivRows.length ? `<table class="ops-table ops-table-compact ops-edit-table"><thead><tr>
@@ -3047,7 +3086,9 @@ async function loadOperationsData(force){
         sb.from('video_pipeline').select('id,practice_id,item,stage,blocked,blocked_reason,stage_since,planned_shoot_date,sort'),
         sb.from('kpi_monthly').select('practice_id,period,source,spend,reach,impr,clicks,cons,proc,updated_at'),
         sb.from('kpi_daily').select('practice_id,day,source,spend,reach,impr,clicks,updated_at').gte('day', dayCutoff),
-        sb.from('sheet_sources').select('practice_id,source,last_status,last_synced_at,tab_name'),
+        // '*' so the access-state columns (marketing-connections migration) ride
+        // along when present without breaking on databases that predate them.
+        sb.from('sheet_sources').select('*'),
       ]);
       opsData = {
         practices: practices.data||[],
@@ -3608,16 +3649,30 @@ function sourceTabRow(pid, s){
   const sm = monthsList(s.last_months); if(sm) detail.push(sm);
   const dtxt = detail.length ? ` ${detail.join(' · ')}` : '';
   const age = syncAge(s.last_synced_at);
+  // Access state machine (present only once the marketing-connections migration ran).
+  const hasAccessCol = ('access_status' in s);
+  const acc = s.access_status || 'connected';
+  const accSel = hasAccessCol
+    ? `<select class="cellinput accesssel" data-pid="${pid}" data-source="${esc(source)}" title="Client access state (requested → granted → connected)">${
+        ACCESS_STATES.map(([v,l])=>`<option value="${v}" ${v===acc?'selected':''}>${l}</option>`).join('')}</select>`
+    : '';
+  const reqDays = accessAgeDays(s);
+  const notSynced = hasAccessCol && acc!=='connected'
+    ? (acc==='requested'
+        ? `<span class="${accessAgeCls(reqDays)}">access requested${reqDays!=null?` ${reqDays}d ago`:''}${(reqDays??0)>=7?' — escalate':''}</span>`
+        : `<span class="sswarn">access granted — wire the tab &amp; sync</span>`)
+    : `<span class="note">not synced</span>`;
   const status = s.last_status==='error'
       ? `<span class="ssbad" title="${esc(s.last_error||'')}">⚠ error${age?` · ${esc(age.label)}`:''}</span>`
     : age
       ? (age.stale
           ? `<span class="${age.cls==='bad'?'ssbad':'sswarn'}" title="${esc(new Date(s.last_synced_at).toLocaleString())}">⚠ stale · ${esc(age.label)}${esc(dtxt)}</span>`
           : `<span class="ssok" title="${esc(new Date(s.last_synced_at).toLocaleString())}">✓ ${esc(age.label)}${esc(dtxt)}</span>`)
-    : `<span class="note">not synced</span>`;
-  return `<div class="srcrow">
+    : notSynced;
+  return `<div class="srcrow${accSel?' has-access':''}">
     <span class="chanlabel srcname">${esc(channelLabel(source))}</span>
     <select class="cellinput sheettab" data-pid="${pid}" data-source="${esc(source)}" title="Pick this source's tab">${tabOptions(pid, s.tab_name)}</select>
+    ${accSel}
     <span class="srcstatus">${status}</span>
     <button class="btn ghost xs danger" data-delsource="${pid}" data-source="${esc(source)}" title="Remove source">×</button>
   </div>`;
@@ -3747,6 +3802,8 @@ function wireAdminClients(){
   wrap.querySelectorAll('[data-deploy]').forEach(b=> b.onclick = ()=> deployClient(b.dataset.deploy));
   // picking a tab from the dropdown saves that source mapping immediately
   wrap.querySelectorAll('select.sheettab').forEach(sel=> sel.onchange = ()=> saveSheetSource(sel.dataset.pid, sel.dataset.source));
+  // access-state select saves immediately too (requested → granted → connected)
+  wrap.querySelectorAll('select.accesssel').forEach(sel=> sel.onchange = ()=> saveAccessStatus(sel.dataset.pid, sel.dataset.source, sel.value));
   wrap.querySelectorAll('.addsourcesel').forEach(sel=> sel.onchange = ()=>{
     const k = sel.closest('.addsource')?.querySelector('.addsourcekey'); if(k) k.style.display = sel.value==='__custom' ? '' : 'none';
   });
@@ -3932,6 +3989,27 @@ async function saveSheetSource(pid, source='marketing'){
   adminDelFlash(error? 'Save failed: '+error.message : `${channelLabel(source)} → ${tab_name||'(no tab)'} saved.`);
   // update in place (avoid a full re-render that would reset other open dropdowns)
   if(!error){ const k = ssKey(pid, source); if(sheetSources[k]) sheetSources[k].tab_name = tab_name||null; refreshOnboardChecklist(pid); }
+}
+// Save a source's access state (requested → granted → connected). Selecting
+// 'requested' stamps today as the request date so the portal can age the chase.
+// (A source that is actually syncing is snapped back to 'connected' by the DB
+// trigger — you can't un-connect data that is flowing.)
+async function saveAccessStatus(pid, source, status){
+  if(!isTeamView()) return;
+  const patch = { access_status: status };
+  if(status==='requested') patch.access_requested_at = new Date().toISOString().slice(0,10);
+  const { error } = await sb.from('sheet_sources').update(patch)
+    .eq('practice_id', pid).eq('source', source);
+  if(error){
+    adminDelFlash(/access_status/.test(error.message)
+      ? 'Access states need the marketing-connections migration (migrations/2026-07-08_marketing_connections.sql).'
+      : 'Save failed: '+error.message);
+    return;
+  }
+  const k = ssKey(pid, source);
+  if(sheetSources[k]) Object.assign(sheetSources[k], patch);
+  adminDelFlash(`${channelLabel(source)} access: ${accessLabel(status)}.`);
+  refreshClientSources(pid);
 }
 // Add a new source tab to a client (preset or custom key).
 async function addSource(pid){
