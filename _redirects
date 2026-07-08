@@ -1,12 +1,19 @@
 # Cloudflare Pages routing.
-# / (index.html)  = public marketing page. It forwards any auth-callback hash/query
-#                   (magic links, invites, ?join=) to /portal.html.
-# /portal.html    = the portal app (login + client/team dashboards).
-# Any path that is not a real static file falls back to the PORTAL (HTTP 200, no
-# redirect) so client-side routes and magic-link callbacks resolve instead of 404ing
-# with Cloudflare's "nothing here yet" page.
+# / (index.html)        = public marketing page. It forwards any auth-callback
+#                         hash/query (magic links, invites, ?join=) to /portal/.
+# /portal/ (index.html) = the portal app (login + client/team dashboards).
 #
-# NOTE: this is the correct rule for Cloudflare *Pages* (`wrangler pages deploy`).
-# It is safe now because the Workers deploy path (`wrangler deploy` / wrangler.jsonc)
-# was removed — that path rejected this rule as an infinite loop (error 100324).
-/*    /portal.html    200
+# The portal MUST live at a directory index (portal/index.html), NOT a bare
+# portal.html: Pages route-normalizes "/portal.html" to "/portal" with a 308,
+# and "/portal" then falls into the /* rewrite whose .html target 308s again —
+# an infinite redirect loop (Safari: "too many redirects"). Directory indexes
+# are served directly with no extension redirect, exactly like the site root.
+#
+# Order matters — first match wins. The explicit /portal.html rule catches any
+# old links (e.g. already-sent emails) from the brief window that URL existed.
+/portal.html    /portal/    301
+/portal         /portal/    301
+# SPA fallback: any path that is not a real static file serves the portal app
+# (HTTP 200, no redirect) so client-side routes and magic-link callbacks
+# resolve instead of 404ing.
+/*    /portal/index.html    200
