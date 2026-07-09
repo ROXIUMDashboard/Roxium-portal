@@ -182,9 +182,9 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','access','team','controls'];
+const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','settings','access','team','controls'];
 const TEAM_ONLY_VIEWS = ['operations','team','controls'];
-const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','access','team'];
+const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','settings','access','team'];
 const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
 let lastClientView = 'roadmap';
@@ -198,6 +198,7 @@ function activateAdminTab(name){
 }
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
+function canSeeSettingsTab(){ return canSeeAccessTab(); }
 // Hash may carry deep-link params: #deliverables&pid=…&deliv=…&video=…&phase=…
 function hashParts(){
   const raw = (location.hash||'').replace(/^#/,'');
@@ -265,6 +266,7 @@ function showView(name){
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
   if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
+  if(name === 'settings' && !canSeeSettingsTab()) name = 'roadmap';
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
@@ -282,6 +284,7 @@ function showView(name){
     if(pid) refreshOnboardChecklist(pid);
   }
   if(name==='access') loadClientAccessRoster();
+  if(name==='settings') renderSettingsMarketing();
 }
 // Chrome visibility: Operations + Team Controls are global team screens; Clients = per-practice portal.
 function syncChrome(){
@@ -301,6 +304,8 @@ function syncChrome(){
   $('tabnav').classList.toggle('hidden', globalTeam);
   document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
+  document.querySelector('.tab[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
+  document.querySelector('section[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
   TEAM_ONLY_VIEWS.forEach(v=>{
     const tab = document.querySelector(`.tab[data-view="${v}"]`);
     if(tab) tab.classList.toggle('hidden', !teamView);
@@ -624,6 +629,7 @@ async function loadAll(){
   }catch(_){ /* pre-migration DB */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
+  maybeOpenWizardFromOAuthReturn();
   requestAnimationFrame(()=> applyDeepLinkFocus());
 }
 
@@ -961,26 +967,123 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
-/* ---------------- Marketing Setup Wizard (first-run, client) ----------------
-   Stripe-style onboarding for a freshly approved practice: connect Facebook &
-   Instagram and Google with their own logins — no spreadsheets, no IDs, no
-   technical language. Shown until the practice completes or skips it; the
-   team never sees it in their own view (Preview-as-client does).
-   Each Connect button asks the oauth-start function for an authorize URL;
-   when a provider isn't configured yet (no developer app), the card degrades
-   to "our team will connect this with you" so the flow never dead-ends. */
+/* ---------------- Marketing Setup Wizard (opt-in, client) ----------------
+   Never blocks the portal. Opened only via Connect Marketing CTAs or Settings.
+   Completes only when the user clicks Finish — Skip closes without marking done. */
 const WIZARD_PROVIDERS = [
   { key:'meta',   title:'Facebook & Instagram',
     body:'Your ads, reach, and engagement across Facebook and Instagram — connected in one click with your Facebook login.' },
   { key:'google', title:'Google',
     body:'Your Google Ads performance and website analytics — connected with your Google login.' },
 ];
+let marketingWizardOpen = false;
+const mktBannerDismissKey = ()=> practiceId ? `roxium_mkt_banner_dismiss_${practiceId}` : '';
+function hasMarketingConnected(){
+  const conns = data.connections || [];
+  if(conns.some(c=> c.status === 'connected')) return true;
+  // Practices on the legacy sheet pipeline count as connected too.
+  return (data.kpiRaw||[]).some(r=>{
+    const s = N(r,'spend'), reach = N(r,'reach'), clicks = N(r,'clicks');
+    return s!=null || reach!=null || clicks!=null;
+  });
+}
+function marketingOnboardingSettled(){
+  return !!(data.practice?.wizard_completed_at) || hasMarketingConnected();
+}
+function shouldPromptMarketingConnect(){
+  return !isTeamView() && data.practice && !marketingOnboardingSettled();
+}
+function openMarketingWizard(){
+  if(isTeamView() || !data.practice) return;
+  marketingWizardOpen = true;
+  const modal = $('setupWizardModal');
+  if(modal){ modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); }
+  renderSetupWizard();
+  $('setupWizard')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+function closeMarketingWizard(){
+  marketingWizardOpen = false;
+  const modal = $('setupWizardModal');
+  if(modal){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
+  const el = $('setupWizard'); if(el) el.innerHTML = '';
+}
+function renderMarketingConnectBanner(){
+  const bar = $('mktConnectBanner'); if(!bar) return;
+  if(!shouldPromptMarketingConnect()){
+    bar.classList.add('hidden');
+    if(hasMarketingConnected()){
+      try{ sessionStorage.removeItem(mktBannerDismissKey()); }catch(_){}
+    }
+    return;
+  }
+  let dismissed = false;
+  try{ dismissed = sessionStorage.getItem(mktBannerDismissKey()) === '1'; }catch(_){}
+  bar.classList.toggle('hidden', dismissed);
+  if(!bar._dismissWired){
+    bar._dismissWired = true;
+    $('mktBannerDismiss')?.addEventListener('click', ()=>{
+      try{ sessionStorage.setItem(mktBannerDismissKey(), '1'); }catch(_){}
+      bar.classList.add('hidden');
+    });
+  }
+}
+function renderMarketingMetricsCta(){
+  const el = $('mktMetricsCta'); if(!el) return;
+  if(!shouldPromptMarketingConnect()){
+    el.classList.add('hidden'); el.innerHTML = ''; return;
+  }
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="mkt-cta-card">
+      <h3>Connect Your Marketing Data</h3>
+      <p class="note">To begin tracking your marketing performance inside ROXIUM, connect your advertising platforms.</p>
+      <ul class="mkt-cta-list">
+        <li>✓ Meta Ads &amp; Instagram</li>
+        <li>✓ Google Ads</li>
+        <li>✓ Google Analytics</li>
+        <li>✓ Microsoft Ads <span class="note">(optional)</span></li>
+      </ul>
+      <p class="note mkt-cta-time">Estimated setup time: 2–5 minutes.</p>
+      <button type="button" class="btn btn-connect-marketing">Connect Marketing</button>
+    </div>`;
+}
+function renderSettingsMarketing(){
+  const el = $('settingsMktStatus'); if(!el || !canSeeSettingsTab()) return;
+  if(marketingOnboardingSettled()){
+    const conns = (data.connections||[]).filter(c=> c.status==='connected');
+    el.innerHTML = conns.length
+      ? `<p class="note ssok">${conns.length} platform${conns.length===1?'':'s'} connected${data.practice?.wizard_completed_at ? ' · setup complete' : ''}.</p>`
+      : `<p class="note ssok">Marketing data is flowing · setup complete.</p>`;
+  } else {
+    const lines = WIZARD_PROVIDERS.map(p=>{
+      const c = (data.connections||[]).find(x=> x.provider===p.key);
+      const st = c?.status==='connected' ? '✓ Connected' : 'Not connected';
+      return `<div class="settings-mkt-row"><span>${esc(p.title)}</span><span class="note">${st}</span></div>`;
+    }).join('');
+    el.innerHTML = `<div class="settings-mkt-rows">${lines}</div>
+      <p class="note" style="margin-top:10px">Your progress is saved if you exit — click <b>Connect Marketing</b> to continue.</p>`;
+  }
+  wireMarketingConnectButtons();
+}
+function wireMarketingConnectButtons(){
+  document.querySelectorAll('.btn-connect-marketing').forEach(btn=>{
+    if(btn._mktWired) return;
+    btn._mktWired = true;
+    btn.addEventListener('click', e=>{ e.preventDefault(); openMarketingWizard(); });
+  });
+  if(!document.body._mktModalWired){
+    document.body._mktModalWired = true;
+    $('setupWizardModal')?.addEventListener('click', e=>{
+      if(e.target?.id === 'setupWizardModal') closeMarketingWizard();
+    });
+  }
+}
 function renderSetupWizard(){
   const el = $('setupWizard'); if(!el) return;
-  const show = !isTeamView() && data.practice && !data.practice.wizard_completed_at;
-  el.classList.toggle('hidden', !show);
-  if(!show){ el.innerHTML=''; return; }
-  // Landing back from an OAuth round-trip: ?connected=meta / ?connect_error=…
+  if(!marketingWizardOpen || isTeamView() || !data.practice){
+    closeMarketingWizard();
+    return;
+  }
   let flash = '';
   try{
     const q = new URL(location.href).searchParams;
@@ -1007,20 +1110,21 @@ function renderSetupWizard(){
   }).join('');
   el.innerHTML = `
     <div class="wizard-head">
-      <div class="eyebrow">Welcome — let's connect your marketing</div>
-      <p class="note">Connect your accounts below with your own logins — you never share a password, we only ever <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.</p>
+      <button type="button" class="modalx wizard-close" id="wizardClose" title="Close">✕</button>
+      <div class="eyebrow">Connect your marketing</div>
+      <p class="note">Use your own logins below — you never share a password, we only <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.</p>
     </div>
     ${flash}
     <div class="wizard-cards">${cards}
       <div class="wizard-card wizard-card-rest">
         <div class="wizard-card-title">Everything else</div>
-        <p class="note">YouTube, Microsoft Ads, call tracking and the rest — our team wires these up for you. Nothing for you to do.</p>
+        <p class="note">YouTube, Microsoft Ads, call tracking and the rest — our team wires these up for you.</p>
         <div class="wizard-card-state"><span class="note">Handled by ROXIUM ✓</span></div>
       </div>
     </div>
     <div class="wizard-foot">
-      <button class="btn ghost sm" id="wizardSkip">Skip for now</button>
-      <button class="btn sm" id="wizardDone">Done — take me to my dashboard</button>
+      <button class="btn ghost sm" id="wizardSkip">Continue without connecting</button>
+      <button class="btn sm" id="wizardDone">Finish</button>
     </div>`;
   el.querySelectorAll('.wizard-connect').forEach(b=> b.onclick = async ()=>{
     b.disabled = true; b.textContent = 'Opening…';
@@ -1030,24 +1134,30 @@ function renderSetupWizard(){
       });
       if(error) throw error;
       if(res?.url){ location.href = res.url; return; }
-      // Provider app not configured yet — degrade gracefully, never dead-end.
       const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
-      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks.</span>';
     }catch(e){
       console.warn('[wizard] oauth-start failed:', e);
       const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
-      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks. Nothing else needed.</span>';
+      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks.</span>';
     }
   });
   const finish = async ()=>{
     try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
     if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
-    // Drop the one-time OAuth params so the flash doesn't resurrect on refresh.
     try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
-    renderSetupWizard();
+    closeMarketingWizard();
+    render();
   };
-  $('wizardSkip').onclick = finish;
+  $('wizardSkip').onclick = ()=> closeMarketingWizard();
   $('wizardDone').onclick = finish;
+  $('wizardClose').onclick = ()=> closeMarketingWizard();
+}
+function maybeOpenWizardFromOAuthReturn(){
+  try{
+    const q = new URL(location.href).searchParams;
+    if(q.get('connected') || q.get('connect_error')) openMarketingWizard();
+  }catch(_){}
 }
 
 /* ---------------- engagement timeline ----------------
@@ -1175,8 +1285,14 @@ function render(){
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
-  // Marketing Setup Wizard — first-run onboarding for approved clients
-  safe('setup wizard', ()=> renderSetupWizard());
+  // Marketing connection prompts + opt-in wizard (never blocks the portal)
+  safe('marketing connect', ()=>{
+    renderMarketingConnectBanner();
+    renderMarketingMetricsCta();
+    renderSettingsMarketing();
+    wireMarketingConnectButtons();
+    if(marketingWizardOpen) renderSetupWizard();
+  });
 
   // "You are here" journey line — feature 9, currently REVERTED from the UI at
   // the owner's request. The renderer stays; it no-ops while the #youAreHere
