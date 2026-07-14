@@ -3,19 +3,25 @@
 // POST { provider: 'meta'|'google', practice_id } with the caller's JWT.
 // The caller must be a member of that practice (or team).
 //
+// Connections run through COMPOSIO: we ask Composio for a hosted auth link
+// (user_id = practice_id) and hand the browser Composio's redirect URL. Meta /
+// Google tokens are held by Composio, never by us — there is no ROXIUM Meta or
+// Google developer app to register or maintain.
+//
 // Returns { ok, configured, url? }:
-//   • configured:false when the provider's developer app isn't set up yet
-//     (no META_APP_ID / GOOGLE_CLIENT_ID secrets) — the wizard degrades to
-//     "our team will connect this with you" instead of dead-ending.
-//   • otherwise an authorize URL carrying an HMAC-signed state token so the
-//     callback can trust which practice/provider it belongs to.
+//   • configured:false when Composio isn't wired up yet (no COMPOSIO_API_KEY or
+//     no auth-config id for this provider) — the wizard degrades to "our team
+//     will connect this with you" instead of dead-ending.
+//   • otherwise Composio's authorize URL, with an HMAC-signed state token in the
+//     callback so oauth-callback can trust which practice/provider it belongs to.
 //
 // Deploy:  supabase functions deploy oauth-start --no-verify-jwt
-// Secrets: SYNC_SECRET (state signing; already set), and per provider:
-//          META_APP_ID + META_APP_SECRET, GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET.
+// Secrets: SYNC_SECRET (state signing), COMPOSIO_API_KEY,
+//          COMPOSIO_META_AUTH_CONFIG_ID, COMPOSIO_GOOGLE_AUTH_CONFIG_ID.
 // ============================================================
 import { serviceClient, bearerToken, UUID_RE } from "../_shared/auth.ts";
-import { providerConfig, signState, callbackUrl } from "../_shared/oauth.ts";
+import { signState, callbackUrl } from "../_shared/oauth.ts";
+import { composioKey, composioProvider, createLink } from "../_shared/composio.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -48,27 +54,27 @@ Deno.serve(async (req) => {
       if (!mem) return respond({ ok: false, error: "not a member of this practice" }, 403);
     }
 
-    const cfg = providerConfig(String(provider));
-    if (!cfg) return respond({ ok: true, configured: false });
+    // Provider wired up in Composio yet?
+    const prov = composioProvider(String(provider));
+    if (!composioKey() || !prov) return respond({ ok: true, configured: false });
 
     const secret = Deno.env.get("SYNC_SECRET");
     if (!secret) return respond({ ok: false, error: "SYNC_SECRET not configured" }, 500);
-    const state = await signState({ p: String(practice_id), v: String(provider), u: uid, ts: Date.now() }, secret);
 
-    const u = new URL(cfg.authUrl);
-    u.searchParams.set("client_id", cfg.clientId);
-    u.searchParams.set("redirect_uri", callbackUrl());
-    u.searchParams.set("state", state);
-    u.searchParams.set("scope", cfg.scopes.join(provider === "google" ? " " : ","));
-    if (provider === "google") {
-      u.searchParams.set("response_type", "code");
-      u.searchParams.set("access_type", "offline");   // refresh token
-      u.searchParams.set("prompt", "consent");        // always re-issue refresh token
-      u.searchParams.set("include_granted_scopes", "true");
-    } else {
-      u.searchParams.set("response_type", "code");
-    }
-    return respond({ ok: true, configured: true, url: u.toString() });
+    // Sign practice+provider into the callback so the callback can trust it
+    // regardless of the query params Composio appends.
+    const state = await signState({ p: String(practice_id), v: String(provider), u: uid, ts: Date.now() }, secret);
+    const cb = `${callbackUrl()}?state=${encodeURIComponent(state)}`;
+
+    const { redirectUrl, connectedAccountId } = await createLink(prov.authConfigId, String(practice_id), cb);
+
+    // Record the in-flight connection so the callback (and a re-click) can find it.
+    await admin.from("platform_connections").upsert({
+      practice_id: String(practice_id), provider: String(provider), status: "pending",
+      composio_connection_id: connectedAccountId, connected_by: uid, last_error: null,
+    }, { onConflict: "practice_id,provider" });
+
+    return respond({ ok: true, configured: true, url: redirectUrl });
   } catch (e) {
     return respond({ ok: false, error: String((e as Error)?.message || e) }, 500);
   }

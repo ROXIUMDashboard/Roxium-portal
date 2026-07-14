@@ -60,59 +60,71 @@ Shown to approved clients until their practice completes/skips it
 Google) plus "Everything else — handled by ROXIUM". Copy is entirely
 non-technical: *read-only, no passwords, disconnect anytime, ~2 minutes.*
 
-- **Connect** → `oauth-start` returns the provider authorize URL (state is
-  HMAC-signed with `SYNC_SECRET`); browser round-trips through consent;
-  `oauth-callback` exchanges the code, stores the connection, and lands back
-  on the wizard with a success flash.
-- **Before the developer apps exist** the same button degrades to "our team
-  will connect this with you" — the wizard ships safely today.
-- **Tokens** live in `platform_tokens`: RLS enabled with **no policies**, so
-  only the service role (edge functions) can ever touch them. Clients/team see
-  metadata only (`platform_connections`, member-readable for their own
-  practice).
+- **Connect** → `oauth-start` asks **Composio** for a hosted auth link
+  (`user_id` = practice id) and hands the browser Composio's redirect URL
+  (our callback carries an `SYNC_SECRET`-signed state); the client consents
+  with their own Facebook / Google login; Composio bounces back to
+  `oauth-callback`, which confirms the connection is ACTIVE and owned by that
+  practice, marks it connected, and lands on the wizard with a success flash.
+- **Before Composio is wired up** the same button degrades to "our team will
+  connect this with you" — the wizard ships safely today.
+- **Tokens** are held by **Composio**, never by us — there is no ROXIUM Meta
+  or Google developer app and no token table to secure. `platform_connections`
+  stores only safe metadata (provider, status, Composio connection id, account
+  label) and is member-readable for the client's own practice. (The legacy
+  `platform_tokens` table is left in place, unused.)
 - **Team visibility:** connections appear to the team via the existing
   data-connection surfaces; the day-2 client experience stays plumbing-free
   per the standing client-visibility rule.
 
 ## Ingestion — how "no spreadsheets" actually happens
 
-`sync-platforms` (cron, same auth pattern as the existing 2-hour sync) reads
-each connected practice's tokens and writes **the exact same
-`kpi_monthly`/`kpi_daily` rows** the Coefficient path writes — same conflict
-keys, same source keys (`marketing`, `google_ads`) — so dashboards, snapshots,
-channel pickers, and insights all work unchanged. Meta ingestion is complete
-(6 months monthly + live-month daily). Google Ads ingestion activates itself
-the moment `GOOGLE_ADS_DEVELOPER_TOKEN` exists. The Coefficient pipeline keeps
-working in parallel for practices not yet migrated — per practice+source,
-whichever pipeline ran last wins, so migrate a practice by connecting OAuth
-and removing its sheet tab mapping.
+`sync-platforms` (cron, same auth pattern as the existing 2-hour sync) calls
+**Composio's tool-execute API** for each connected practice — Composio injects
+that practice's stored token — and writes **the exact same `kpi_monthly` rows**
+the Coefficient path writes — same conflict keys, same source keys
+(`marketing`, `google_ads`) — so dashboards, snapshots, channel pickers, and
+insights all work unchanged. Meta uses `METAADS_GET_AD_ACCOUNTS` (ad account
+discovered once, then persisted) + `METAADS_GET_INSIGHTS` per month for the
+last six months. Google Ads uses `GOOGLEADS_SEARCH_STREAM_GAQL` (monthly
+cost/impressions/clicks) — **no Google Ads developer token required**, since
+Composio's managed Google Ads auth config carries its own approved token. The
+Coefficient pipeline keeps working in parallel for practices not yet migrated —
+per practice+source, whichever pipeline ran last wins, so migrate a practice by
+connecting through the wizard and removing its sheet tab mapping.
 
 ## Deployment
 
 Everything deploys on merge (Pages + all edge functions). Manual, in order:
 
-1. **Run both migrations** (Supabase → SQL Editor, idempotent, ~1 min total):
-   `migrations/2026-07-09_account_approvals.sql`, then
-   `migrations/2026-07-09_platform_connections.sql`.
+1. **Run the migrations** (Supabase → SQL Editor, idempotent, ~1 min total):
+   `migrations/2026-07-09_account_approvals.sql`,
+   `migrations/2026-07-09_platform_connections.sql`, then
+   `migrations/2026-07-14_composio_connections.sql`.
 2. **Enable signups:** Supabase → Authentication → Sign In / Up → make sure
    **"Allow new users to sign up" is ON** (it was previously recommended OFF
    for the old invite-gate model; the approval layer replaces that defense).
 3. **Schedule the platform sync** alongside the existing sync cron (weekly
    digest SQL pattern, URL `…/functions/v1/sync-platforms`, every 2h).
-4. **External provider setup** — see "Remaining external integrations" in the
-   PR / final handoff: Meta developer app, Google Cloud OAuth client, secrets
-   (`META_APP_ID`, `META_APP_SECRET`, `GOOGLE_CLIENT_ID`,
-   `GOOGLE_CLIENT_SECRET`, optional `GOOGLE_ADS_DEVELOPER_TOKEN`), and the
-   OAuth redirect URI `https://<project-ref>.supabase.co/functions/v1/oauth-callback`
-   registered with both providers.
+4. **Composio setup** (replaces the DIY Meta/Google developer apps):
+   - In the Composio dashboard, create a **managed auth config** for the
+     `metaads` toolkit and one for the `googleads` toolkit. Copy each `ac_…` id.
+   - Set the Supabase Edge Function secrets: `COMPOSIO_API_KEY`,
+     `COMPOSIO_META_AUTH_CONFIG_ID`, `COMPOSIO_GOOGLE_AUTH_CONFIG_ID`
+     (plus the already-set `SYNC_SECRET` and `SITE_URL`).
+   - No provider-side redirect URI to register and **no Meta App Review / Google
+     Ads developer token** — Composio owns the underlying developer apps and
+     approved tokens. The wizard Connect buttons go live the moment the three
+     secrets exist.
 
 ## Verification
 
 - **Option A:** invite a test email → sign in with it → no pending screen,
   wizard appears. **Option B:** sign in with a random email → waiting room;
   approve it in Team Controls → sign in again → wizard.
-- **Wizard degrade:** with no provider secrets set, Connect shows the
+- **Wizard degrade:** with the Composio secrets unset, Connect shows the
   "our team will connect this" note (never an error).
-- **OAuth (once configured):** Connect Meta with a test user → lands back
-  with the success flash → `sb.functions.invoke('sync-platforms',{body:{}})`
-  as team → kpi rows appear → Metrics renders them like any other month.
+- **Composio (once configured):** Connect Meta as a practice member → Composio
+  consent → lands back with the success flash → `platform_connections` row flips
+  to `connected` → `sb.functions.invoke('sync-platforms',{body:{}})` as team →
+  kpi rows appear → Metrics renders them like any other month.
