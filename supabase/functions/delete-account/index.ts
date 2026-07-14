@@ -18,14 +18,7 @@
 // ============================================================
 import { serviceClient, bearerToken, UUID_RE } from "../_shared/auth.ts";
 import { composioKey, deleteConnectedAccount } from "../_shared/composio.ts";
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const respond = (b: unknown, s = 200) =>
-  new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
+import { cors, respond } from "../_shared/http.ts";
 
 // Revoke every Composio connection for a set of practices (best-effort).
 async function revokePracticeConnections(sb: ReturnType<typeof serviceClient>, practiceIds: string[]) {

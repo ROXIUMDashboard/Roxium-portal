@@ -1,10 +1,18 @@
 -- ============================================================
--- ROXIUM CLIENT PORTAL · SUPABASE SCHEMA
+-- ROXIUM CLIENT PORTAL · SUPABASE SCHEMA (ORIGINAL BASELINE)
 -- ------------------------------------------------------------
--- This file mirrors the LIVE database (project nchtmeqsjkpcvtuscxfy).
--- Run it once on a fresh Supabase project: SQL Editor → New query → paste → Run.
--- It is safe to re-run: every object uses CREATE ... IF NOT EXISTS / OR REPLACE
--- or DROP ... IF EXISTS first, so it will not clobber data on an existing project.
+-- ⚠️  NOT a full mirror of the live database. This is the ORIGINAL baseline.
+--     Everything added since (platform_connections, platform_tokens,
+--     kpi_dashboard_prefs, the composio/approval columns, etc.) lives in
+--     `migrations/` — that folder is the source of truth for post-baseline
+--     changes. See `migrations/README.md` for the canonical apply order.
+--
+--     To bootstrap a FRESH project: run this file, THEN every file in
+--     `migrations/` in filename order. To refresh this baseline from the live
+--     DB, regenerate it with `supabase db dump` (see migrations/README.md).
+--
+-- Safe to re-run: every object uses CREATE ... IF NOT EXISTS / OR REPLACE or
+-- DROP ... IF EXISTS first, so it will not clobber data on an existing project.
 -- ============================================================
 
 -- ---------- CORE TABLES ----------
