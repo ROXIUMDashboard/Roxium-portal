@@ -620,13 +620,16 @@ async function afterLogin(){
     ({ data: prof } = await sb.from('profiles').select('*').eq('id', uid).single());
   }
   me = prof;
-  // Approval gate — a client account with no approval and no practice link
-  // waits at the door. (approval_status is absent on pre-migration databases;
+  // Approval gate. Rejected is a HARD deny regardless of any leftover
+  // practice_id (reject_account now also revokes memberships + nulls
+  // practice_id, but gate defensively). Pending with no practice link waits in
+  // the waiting room. (approval_status is absent on pre-migration databases;
   // treat that as legacy-approved so nothing changes until the migration runs.)
-  if(me.role !== 'team' && ('approval_status' in me)
-     && me.approval_status !== 'approved' && !me.practice_id){
-    showPendingPane(me.approval_status, authEmail);
-    return;
+  if(me.role !== 'team' && ('approval_status' in me)){
+    if(me.approval_status === 'rejected'){ showPendingPane('rejected', authEmail); return; }
+    if(me.approval_status !== 'approved' && !me.practice_id){
+      showPendingPane(me.approval_status, authEmail); return;
+    }
   }
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
@@ -866,11 +869,12 @@ function aggregateOpsDailyByDay(rows, viewPeriod, isLive){
     return { day, label, spend:slot.spend, reach:slot.reach, impr:slot.impr, clicks:slot.clicks };
   });
 }
+const prefersReducedMotion = ()=> { try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){ return false; } };
 function buildInvestChartOptions(highlightIdx, en){
   const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
   const clicksOnly = en.clicks && !en.spend && !en.reach && !en.impr;
   return {
-    responsive:true, maintainAspectRatio:false, animation:{ duration:420 },
+    responsive:true, maintainAspectRatio:false, animation: prefersReducedMotion() ? false : { duration:420 },
     interaction:{ mode:'index', intersect:false },
     plugins:{
       legend:{ display:false },
@@ -1675,30 +1679,6 @@ function render(){
     if(marketingWizardOpen) renderSetupWizard();
   });
   safe('connections manager', ()=> renderConnectionsPage());
-
-  // "You are here" journey line — feature 9, currently REVERTED from the UI at
-  // the owner's request. The renderer stays; it no-ops while the #youAreHere
-  // node is absent from portal/index.html. Re-enable by restoring that div.
-  safe('you are here', ()=>{
-    const el = $('youAreHere'); if(!el) return;
-    const parts = [];
-    if(data.practice && data.deliv.length){
-      const phase = computePracticePhaseState(data.practice, data.deliv);
-      if(phase.currentPhase){
-        const g = groupDelivsByPhase(data.deliv).find(x=> x.phase===phase.currentPhase);
-        const done = g ? g.items.filter(d=> d.status==='delivered').length : 0;
-        const total = g ? g.items.length : 0;
-        parts.push(`<b>${esc(phase.currentPhase)}</b>${total? ` · ${done} of ${total} delivered`:''}`);
-      } else {
-        parts.push('<b>All phases delivered</b>');
-      }
-    }
-    const nextMs = (data.miles||[]).filter(m=> m.status!=='done')
-      .sort((a,b)=> (a.sort||0)-(b.sort||0))[0];
-    if(nextMs) parts.push(`Next milestone: ${esc(nextMs.name)}${nextMs.target_date? ` — ${esc(prettyDate(nextMs.target_date))}`:''}`);
-    el.innerHTML = parts.join('<span class="yah-sep">·</span>');
-    el.classList.toggle('hidden', !parts.length);
-  });
 
   // timeline
   const isTeam = isTeamView();
@@ -3025,46 +3005,62 @@ function groupDelivsByPhase(delivs){
     .sort((a,b)=> comparePhaseNames(a, b, order))
     .map(phase=>({ phase, items: groups[phase].sort((x,y)=>(x.sort||0)-(y.sort||0)) }));
 }
+// Sequential phase state machine. Exactly ONE phase runs a live countdown at a
+// time — the first phase that isn't fully delivered. Earlier phases are
+// 'complete' (green); later phases are 'upcoming' (green, no clock) and only
+// begin counting once their immediate predecessor completes. This is what stops
+// every future phase from turning yellow on the same day (they used to share the
+// last-completed phase's start date and cross the warn/red thresholds together).
 function computePracticePhaseState(practice, delivs){
   const groups = groupDelivsByPhase(delivs);
+  const fallbackStart = practice.go_live ? new Date(practice.go_live+'T12:00:00') : new Date(practice.created_at||Date.now());
   let prevCompleteAt = practice.go_live ? new Date(practice.go_live+'T12:00:00') : null;
   let currentPhase = null;
   let currentHealth = 'green';
   let currentDays = 0;
+  let reachedCurrent = false;   // once we hit the first incomplete phase, all later phases are 'upcoming'
   const states = [];
   for(const g of groups){
     const num = parsePhaseNum(g.phase);
     const delivered = g.items.filter(d=> d.status==='delivered');
-    const allDelivered = delivered.length === g.items.length;
-    let phaseStart = prevCompleteAt || (practice.go_live ? new Date(practice.go_live+'T12:00:00') : new Date(practice.created_at||Date.now()));
-    if(!allDelivered){
+    const done = delivered.length;
+    const allDelivered = g.items.length > 0 && done === g.items.length;
+    let health = 'green';
+    let days = 0;
+    let phaseState;
+
+    if(!g.items.length){
+      phaseState = 'complete';                       // empty phase — nothing to track
+    } else if(allDelivered){
+      phaseState = 'complete';
+      const dates = delivered.map(d=> d.delivered_at).filter(Boolean).map(d=> new Date(d));
+      if(dates.length) prevCompleteAt = new Date(Math.max(...dates));   // advance the anchor
+    } else if(!reachedCurrent){
+      // THE current phase — the only one with a live clock
+      reachedCurrent = true;
+      currentPhase = g.phase;
+      phaseState = 'current';
+      let phaseStart = prevCompleteAt || fallbackStart;
       const active = g.items.filter(d=> d.status!=='promised');
       if(active.length){
         const starts = active.map(d=> new Date(d.status_since||phaseStart)).filter(d=> !isNaN(d));
         if(starts.length) phaseStart = new Date(Math.min(...starts));
       }
-      if(!currentPhase) currentPhase = g.phase;
-    }
-    const days = Math.max(0, Math.floor((Date.now()-phaseStart.getTime())/86400000));
-    const rule = PHASE_TIMING[num];
-    let health = 'green';
-    if(!allDelivered && rule){
-      if(days >= rule.red) health = 'red';
-      else if(days >= rule.warn) health = 'yellow';
-    }
-    if(!allDelivered && !currentPhase) currentPhase = g.phase;
-    if(g.phase === currentPhase){
+      days = Math.max(0, Math.floor((Date.now()-phaseStart.getTime())/86400000));
+      const rule = PHASE_TIMING[num];
+      if(rule){
+        if(days >= rule.red) health = 'red';
+        else if(days >= rule.warn) health = 'yellow';
+      }
       currentHealth = health;
       currentDays = days;
+    } else {
+      phaseState = 'upcoming';                        // predecessor not done yet — no clock
     }
-    let completeAt = null;
-    if(allDelivered){
-      const dates = delivered.map(d=> d.delivered_at).filter(Boolean).map(d=> new Date(d));
-      if(dates.length) completeAt = new Date(Math.max(...dates));
-    }
-    if(completeAt) prevCompleteAt = completeAt;
-    const done = delivered.length;
-    states.push({ phase:g.phase, num, health, days, isCurrent: g.phase===currentPhase, progress: g.items.length? Math.round(100*done/g.items.length):0 });
+
+    states.push({ phase:g.phase, num, health, days, state: phaseState,
+      isCurrent: g.phase===currentPhase,
+      progress: g.items.length? Math.round(100*done/g.items.length):0 });
   }
   if(!currentPhase && groups.length) currentPhase = groups[groups.length-1].phase;
   return { currentPhase, currentHealth, currentDays, states };
@@ -3765,7 +3761,6 @@ function renderOperationsDashboard(){
     ? attentionList.map(a=> renderOpsAlertItem(a)).join('')
     : '<p class="note ops-empty-note">No priorities flagged — everything looks on track.</p>';
   wireOpsAttentionList(feed);
-  safe('ops accountability', ()=> renderOpsAccountability());
   // KPI rollup — selected reporting month across all clients
   const monthly = aggregateCompanyKpiByMonth(opsData.kpiRaw);
   const latestPeriod = monthly.length ? monthly[monthly.length-1].period : null;
@@ -3863,36 +3858,6 @@ function renderOperationsDashboard(){
 // quantifies a front office: shipped volume, on-time rate, and what's aging.
 // Uses only columns the ops loader already fetches (due / delivered_at /
 // status / status_since) — no schema change.
-function renderOpsAccountability(){
-  const el = $('opsAccountability'); if(!el || !opsData) return;
-  const now = Date.now(), d30 = now - 30*86400000;
-  const rows = (opsData.practices||[]).map(p=>{
-    const ds = (opsData.deliverables||[]).filter(d=> d.practice_id===p.id);
-    if(!ds.length) return null;
-    const delivered30 = ds.filter(d=> d.status==='delivered' && d.delivered_at && new Date(d.delivered_at).getTime()>=d30).length;
-    const judged = ds.filter(d=> d.status==='delivered' && d.delivered_at && d.due);
-    const onTime = judged.length
-      ? Math.round(100 * judged.filter(d=> new Date(d.delivered_at) <= new Date(String(d.due).slice(0,10)+'T23:59:59')).length / judged.length)
-      : null;
-    const openOverdue = ds.filter(d=> d.status!=='delivered' && d.due && new Date(d.due) < new Date()).length;
-    const inProg = ds.filter(d=> d.status==='in_progress').map(d=> daysIn(d.status_since));
-    const oldestInProg = inProg.length ? Math.max(...inProg) : null;
-    return { name: p.name, delivered30, onTime, judgedCount: judged.length, openOverdue, oldestInProg };
-  }).filter(Boolean);
-  if(!rows.length){ el.innerHTML = '<p class="note">No deliverables tracked yet.</p>'; return; }
-  rows.sort((a,b)=> b.openOverdue - a.openOverdue || (a.onTime??101) - (b.onTime??101) || b.delivered30 - a.delivered30);
-  const otCell = r => r.onTime==null ? '<span class="note">—</span>'
-    : `<span class="${r.onTime>=80?'ssok':r.onTime>=50?'sswarn':'ssbad'}" title="${r.judgedCount} delivered item(s) had a due date">${r.onTime}%</span>`;
-  el.innerHTML = `<table class="ops-table ops-table-compact"><thead><tr>
-      <th>Client</th><th>Delivered 30d</th><th>On-time rate</th><th>Open overdue</th><th>Longest in progress</th>
-    </tr></thead><tbody>${rows.map(r=>`<tr class="${r.openOverdue? 'ops-row-warn':''}">
-      <td>${esc(r.name)}</td>
-      <td>${r.delivered30 || '—'}</td>
-      <td>${otCell(r)}</td>
-      <td>${r.openOverdue ? `<span class="ssbad">${r.openOverdue}</span>` : '0'}</td>
-      <td>${r.oldestInProg!=null ? `${r.oldestInProg}d${r.oldestInProg>=14?' <span class="ssbad">⚠</span>':r.oldestInProg>=7?' <span class="sswarn">⚠</span>':''}` : '—'}</td>
-    </tr>`).join('')}</tbody></table>`;
-}
 async function loadOperationsData(force){
   if(!isTeamView()) return;
   if(opsLoadPromise && !force) return opsLoadPromise;
@@ -4942,8 +4907,12 @@ async function deletePractice(id, name, opts={}){
   if(!ok) return;
   flash('Deleting…');
   try{
-    const { error } = await sb.rpc('delete_practice', { p_id: id });
+    // Route through the edge function so the clients' auth.users rows (and their
+    // Composio connections) are actually removed — an RPC can't delete auth
+    // users, which is what made "deleted" clients reappear as pending accounts.
+    const { data: res, error } = await sb.functions.invoke('delete-account', { body: { practice_id: id } });
     if(error) throw error;
+    if(res && res.ok === false) throw new Error(res.error || 'delete failed');
     delete selByPractice[id];
     delete chanByPractice[id];
     if(practiceId===id){ practiceId = null; }

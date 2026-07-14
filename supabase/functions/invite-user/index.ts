@@ -116,6 +116,12 @@ Deno.serve(async (req) => {
   );
   if (memErr) return json({ error: `Membership: ${memErr.message}` }, 500);
 
+  // Invited users are approved by definition. The insert-only approval trigger
+  // does NOT fire on a membership conflict-update (re-invite of an existing
+  // member), so set approval explicitly here. Best-effort so a pre-migration DB
+  // (no approval_status column) still completes the invite.
+  await admin.from("profiles").update({ approval_status: "approved" }).eq("id", userId);
+
   await admin.from("practice_invites")
     .update({ status: "accepted", accepted_at: new Date().toISOString() })
     .eq("practice_id", practice_id).ilike("email", email);
