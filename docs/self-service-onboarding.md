@@ -93,6 +93,36 @@ Coefficient pipeline keeps working in parallel for practices not yet migrated �
 per practice+source, whichever pipeline ran last wins, so migrate a practice by
 connecting through the wizard and removing its sheet tab mapping.
 
+## Marketing Connections 2.0 — the self-service integration platform
+
+Beyond the wizard, practice owners get a dedicated **Connections** tab
+(AgencyAnalytics-style) to manage every data source:
+
+- **Per-connection card:** platform, health dot, last successful sync,
+  connected account, connected-by. Actions: **Refresh now** (members can
+  sync their own practice on demand), **Reconnect**, **Disconnect**
+  (stops future syncs, preserves all imported KPI rows, reconnectable),
+  **View details** (sync history + imported-months summary).
+- **Add data source:** catalog grid driven by `PLATFORM_CATALOG` in
+  `app.js` — already-connected platforms are hidden until disconnected.
+- **Automatic population:** `oauth-callback` fires the first import the
+  moment a connection lands, so dashboards fill without waiting for cron.
+- **Adding a NEW platform** requires exactly two things — a
+  `PLATFORM_CATALOG` entry (title/icon/blurb) and a Composio auth config
+  whose id is stored as `COMPOSIO_<PROVIDER>_AUTH_CONFIG_ID` (e.g.
+  `COMPOSIO_TIKTOK_AUTH_CONFIG_ID`). `composioProvider()` resolves any
+  provider key generically; ingestion beyond Meta/Google reports
+  "handled by ROXIUM" until its puller is written in `sync-platforms`.
+
+**Editable KPI dashboard:** the Metrics card row is driven by
+`METRIC_REGISTRY` + per-user prefs (`kpi_dashboard_prefs`, localStorage
+fallback pre-migration). Customize (⚙) lets each user add / remove /
+reorder / rename cards; new metrics added to the registry appear in the
+picker with no further UI work. The old duplicated Reach card is replaced
+by **Frequency** (impressions ÷ reach) in the default set.
+
+Migration: `migrations/2026-07-14_connections_2_0.sql` (idempotent).
+
 ## Deployment
 
 Everything deploys on merge (Pages + all edge functions). Manual, in order:
