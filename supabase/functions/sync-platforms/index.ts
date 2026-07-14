@@ -1,22 +1,25 @@
 // ============================================================
-// sync-platforms — pull marketing metrics DIRECTLY from connected platforms
-// (OAuth connections made in the Marketing Setup Wizard) into kpi_monthly /
-// kpi_daily, using the exact same row shape and conflict keys as the
-// Coefficient pipeline — the portal cannot tell the difference.
+// sync-platforms — pull marketing metrics for every Composio-connected practice
+// into kpi_monthly, using the exact same row shape and conflict keys as the
+// Coefficient pipeline, so the portal cannot tell the difference.
 //
-//   • Meta: account-level insights, last 6 months monthly (spend, reach,
-//     impressions, link clicks) + current-month daily rows → source 'marketing'
-//   • Google Ads: monthly cost/impressions/clicks via GAQL → source
-//     'google_ads'. Requires GOOGLE_ADS_DEVELOPER_TOKEN (external approval);
-//     silently skipped until that secret exists.
+// Tokens are held by Composio (keyed by user_id = practice_id); we never store
+// or refresh them. We call Composio's tool-execute API, which injects each
+// practice's token:
+//   • Meta  → METAADS_GET_AD_ACCOUNTS (discover the ad account once) then
+//     METAADS_GET_INSIGHTS per month, last 6 months → source 'marketing'.
+//   • Google→ GOOGLEADS_SEARCH_STREAM_GAQL (monthly cost/impr/clicks) → source
+//     'google_ads'. No developer token needed — Composio's managed Google Ads
+//     auth config carries its own approved developer token.
 //
 // Auth mirrors sync-coefficient: x-sync-key == SYNC_SECRET (cron) or team JWT.
 // Schedule alongside the existing 2-hour sync cron (see docs).
 //
 // Deploy:  supabase functions deploy sync-platforms --no-verify-jwt
+// Secrets: SYNC_SECRET, COMPOSIO_API_KEY.
 // ============================================================
 import { serviceClient, bearerToken } from "../_shared/auth.ts";
-import { providerConfig } from "../_shared/oauth.ts";
+import { composioKey, executeTool } from "../_shared/composio.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +30,7 @@ const respond = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
 type Json = Record<string, unknown>;
+const num = (x: unknown) => { const n = Number(x); return isFinite(n) ? n : 0; };
 const monthStart = (d: string) => d.slice(0, 7) + "-01";
 
 async function authorize(req: Request): Promise<Response | null> {
@@ -46,108 +50,119 @@ async function authorize(req: Request): Promise<Response | null> {
   return respond({ ok: false, error: "unauthorized" }, 401);
 }
 
-// ---- Meta -------------------------------------------------------------------
-async function pullMeta(sb: ReturnType<typeof serviceClient>, conn: Json, token: string) {
-  const acct = String(conn.external_account_id || "");
-  if (!acct) throw new Error("no ad account discovered for this connection");
-  const until = new Date().toISOString().slice(0, 10);
-  const since = new Date(Date.now() - 183 * 86400000).toISOString().slice(0, 10);
-  const base = `https://graph.facebook.com/v21.0/${acct}/insights`;
-  const common = `level=account&fields=spend,reach,impressions,inline_link_clicks&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}&access_token=${encodeURIComponent(token)}`;
+// ---- response helpers -------------------------------------------------------
+function firstArrayByKeys(o: unknown, keys: string[]): Json[] | null {
+  if (!o || typeof o !== "object") return null;
+  const obj = o as Json;
+  for (const k of keys) if (Array.isArray(obj[k])) return obj[k] as Json[];
+  return null;
+}
+// Composio wraps the tool's output under `data`; the tool payload then carries
+// the real rows under a provider-specific key.
+function rows(resp: Json, keys: string[]): Json[] {
+  const d = (resp.data && typeof resp.data === "object" && !Array.isArray(resp.data))
+    ? resp.data as Json : resp;
+  return firstArrayByKeys(d, keys)
+    ?? firstArrayByKeys((d as Json).data, keys)
+    ?? (Array.isArray(resp.data) ? resp.data as Json[] : []);
+}
 
-  // Monthly snapshots.
-  const mr = await fetch(`${base}?time_increment=monthly&${common}`);
-  const mj = await mr.json() as Json;
-  if (!mr.ok) throw new Error(String((mj.error as Json)?.message || "meta insights failed"));
-  const monthly = (Array.isArray(mj.data) ? mj.data as Json[] : []).map((r) => ({
-    practice_id: conn.practice_id, period: monthStart(String(r.date_start)), source: "marketing",
-    spend: Number(r.spend || 0), reach: Number(r.reach || 0),
-    impr: Number(r.impressions || 0), clicks: Number(r.inline_link_clicks || 0),
+// ---- Meta -------------------------------------------------------------------
+function monthWindows(n: number): { since: string; until: string; period: string }[] {
+  const out: { since: string; until: string; period: string }[] = [];
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  for (let i = 0; i < n; i++) {
+    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0));
+    const since = first.toISOString().slice(0, 10);
+    let until = last.toISOString().slice(0, 10);
+    if (until > today) until = today; // don't ask past today for the live month
+    out.push({ since, until, period: since }); // since is already YYYY-MM-01
+  }
+  return out;
+}
+
+async function pullMeta(sb: ReturnType<typeof serviceClient>, conn: Json) {
+  const practice = String(conn.practice_id);
+  const caId = (conn.composio_connection_id as string) || null;
+
+  // Discover the ad account once, then persist it (id + human label).
+  let acct = String(conn.external_account_id || "");
+  if (!acct) {
+    const r = await executeTool("METAADS_GET_AD_ACCOUNTS", practice,
+      { limit: 1, fields: "id,account_id,name" }, caId);
+    const list = rows(r, ["data", "ad_accounts", "accounts"]);
+    const first = list[0] as Json | undefined;
+    if (!first) throw new Error("no ad account accessible for this connection");
+    acct = String(first.id || (first.account_id ? `act_${first.account_id}` : ""));
+    if (!acct) throw new Error("could not resolve ad account id");
+    await sb.from("platform_connections").update({
+      external_account_id: acct,
+      external_account_name: first.name ? String(first.name) : (conn.external_account_name ?? null),
+    }).eq("id", conn.id);
+  }
+
+  const monthly: Json[] = [];
+  for (const w of monthWindows(6)) {
+    const r = await executeTool("METAADS_GET_INSIGHTS", practice, {
+      object_id: acct, level: "account",
+      time_range: { since: w.since, until: w.until },
+      fields: ["spend", "reach", "impressions", "clicks"],
+    }, caId);
+    const insight = rows(r, ["data"]);
+    if (!insight.length) continue;
+    // Aggregate (a windowed account-level query returns a single row, but sum defensively).
+    const agg = insight.reduce((a, row) => ({
+      spend: a.spend + num(row.spend), reach: a.reach + num(row.reach),
+      impr: a.impr + num(row.impressions), clicks: a.clicks + num(row.clicks ?? row.inline_link_clicks),
+    }), { spend: 0, reach: 0, impr: 0, clicks: 0 });
+    monthly.push({
+      practice_id: practice, period: monthStart(w.period), source: "marketing",
+      spend: agg.spend, reach: agg.reach, impr: agg.impr, clicks: agg.clicks,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  if (monthly.length) {
+    const { error } = await sb.from("kpi_monthly").upsert(monthly, { onConflict: "practice_id,period,source" });
+    if (error) throw new Error(error.message);
+  }
+  return { monthly: monthly.length };
+}
+
+// ---- Google Ads -------------------------------------------------------------
+async function pullGoogleAds(sb: ReturnType<typeof serviceClient>, conn: Json) {
+  const practice = String(conn.practice_id);
+  const caId = (conn.composio_connection_id as string) || null;
+  const query = `SELECT segments.month, metrics.cost_micros, metrics.impressions, metrics.clicks
+                 FROM campaign WHERE segments.date DURING LAST_180_DAYS`;
+  const r = await executeTool("GOOGLEADS_SEARCH_STREAM_GAQL", practice, { query }, caId);
+  const results = rows(r, ["results", "rows", "data"]);
+
+  const byMonth = new Map<string, { spend: number; impr: number; clicks: number }>();
+  for (const row of results) {
+    const seg = (row.segments as Json) || {};
+    const met = (row.metrics as Json) || {};
+    const raw = String(seg.month || "");
+    if (!raw) continue;
+    const period = monthStart(raw);
+    if (!period || period === "-01") continue;
+    const m = byMonth.get(period) || { spend: 0, impr: 0, clicks: 0 };
+    m.spend += num(met.costMicros ?? met.cost_micros) / 1e6;
+    m.impr += num(met.impressions);
+    m.clicks += num(met.clicks);
+    byMonth.set(period, m);
+  }
+  const monthly = [...byMonth.entries()].map(([period, m]) => ({
+    practice_id: practice, period, source: "google_ads",
+    spend: Math.round(m.spend * 100) / 100, impr: m.impr, clicks: m.clicks,
     updated_at: new Date().toISOString(),
   }));
   if (monthly.length) {
     const { error } = await sb.from("kpi_monthly").upsert(monthly, { onConflict: "practice_id,period,source" });
     if (error) throw new Error(error.message);
   }
-
-  // Daily rows for the live month (feeds the month-zoom charts).
-  const curSince = new Date(); curSince.setDate(1);
-  const dcommon = `level=account&fields=spend,reach,impressions,inline_link_clicks&time_range=${encodeURIComponent(JSON.stringify({ since: curSince.toISOString().slice(0, 10), until }))}&access_token=${encodeURIComponent(token)}`;
-  const dr = await fetch(`${base}?time_increment=1&${dcommon}`);
-  const dj = await dr.json() as Json;
-  const daily = (dr.ok && Array.isArray(dj.data) ? dj.data as Json[] : []).map((r) => ({
-    practice_id: conn.practice_id, day: String(r.date_start), source: "marketing",
-    spend: Number(r.spend || 0), reach: Number(r.reach || 0),
-    impr: Number(r.impressions || 0), clicks: Number(r.inline_link_clicks || 0),
-    updated_at: new Date().toISOString(),
-  }));
-  if (daily.length) {
-    const { error } = await sb.from("kpi_daily").upsert(daily, { onConflict: "practice_id,day,source" });
-    if (error) throw new Error(error.message);
-  }
-  return { monthly: monthly.length, daily: daily.length };
-}
-
-// ---- Google Ads -------------------------------------------------------------
-async function refreshGoogleToken(refreshToken: string): Promise<string> {
-  const cfg = providerConfig("google");
-  if (!cfg) throw new Error("google oauth not configured");
-  const body = new URLSearchParams({
-    client_id: cfg.clientId, client_secret: cfg.clientSecret,
-    refresh_token: refreshToken, grant_type: "refresh_token",
-  });
-  const r = await fetch(cfg.tokenUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-  const t = await r.json() as Json;
-  if (!r.ok || !t.access_token) throw new Error(String(t.error_description || t.error || "google token refresh failed"));
-  return String(t.access_token);
-}
-
-async function pullGoogleAds(sb: ReturnType<typeof serviceClient>, conn: Json, refreshToken: string) {
-  const devToken = Deno.env.get("GOOGLE_ADS_DEVELOPER_TOKEN");
-  if (!devToken) return { skipped: "GOOGLE_ADS_DEVELOPER_TOKEN not set" };
-  const access = await refreshGoogleToken(refreshToken);
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${access}`, "developer-token": devToken, "Content-Type": "application/json",
-  };
-  // Discover the customer id once, then persist it on the connection.
-  let customer = String(conn.external_account_id || "");
-  if (!customer) {
-    const lr = await fetch("https://googleads.googleapis.com/v18/customers:listAccessibleCustomers", { headers });
-    const lj = await lr.json() as Json;
-    if (!lr.ok) throw new Error(String((lj.error as Json)?.message || "listAccessibleCustomers failed"));
-    const names = Array.isArray(lj.resourceNames) ? lj.resourceNames as string[] : [];
-    if (!names.length) throw new Error("no accessible Google Ads accounts");
-    customer = names[0].replace("customers/", "");
-    await sb.from("platform_connections").update({ external_account_id: customer }).eq("id", conn.id);
-  }
-  const query = `SELECT segments.month, metrics.cost_micros, metrics.impressions, metrics.clicks
-                 FROM customer WHERE segments.date DURING LAST_180_DAYS`;
-  const r = await fetch(`https://googleads.googleapis.com/v18/customers/${customer}/googleAds:search`, {
-    method: "POST", headers, body: JSON.stringify({ query }),
-  });
-  const j = await r.json() as Json;
-  if (!r.ok) throw new Error(String((j.error as Json)?.message || "google ads search failed"));
-  const byMonth = new Map<string, { spend: number; impr: number; clicks: number }>();
-  (Array.isArray(j.results) ? j.results as Json[] : []).forEach((row) => {
-    const seg = row.segments as Json, met = row.metrics as Json;
-    const period = monthStart(String(seg?.month || ""));
-    if (!period || period === "-01") return;
-    const m = byMonth.get(period) || { spend: 0, impr: 0, clicks: 0 };
-    m.spend += Number(met?.costMicros || 0) / 1e6;
-    m.impr += Number(met?.impressions || 0);
-    m.clicks += Number(met?.clicks || 0);
-    byMonth.set(period, m);
-  });
-  const rows = [...byMonth.entries()].map(([period, m]) => ({
-    practice_id: conn.practice_id, period, source: "google_ads",
-    spend: Math.round(m.spend * 100) / 100, impr: m.impr, clicks: m.clicks,
-    updated_at: new Date().toISOString(),
-  }));
-  if (rows.length) {
-    const { error } = await sb.from("kpi_monthly").upsert(rows, { onConflict: "practice_id,period,source" });
-    if (error) throw new Error(error.message);
-  }
-  return { monthly: rows.length };
+  return { monthly: monthly.length };
 }
 
 // ---- main -------------------------------------------------------------------
@@ -157,34 +172,28 @@ Deno.serve(async (req) => {
   try {
     const denied = await authorize(req);
     if (denied) return denied;
+    if (!composioKey()) return respond({ ok: false, error: "COMPOSIO_API_KEY not configured" }, 500);
+
     const sb = serviceClient();
     const { data: conns, error } = await sb.from("platform_connections")
-      .select("id,practice_id,provider,external_account_id,status").eq("status", "connected");
+      .select("id,practice_id,provider,external_account_id,external_account_name,composio_connection_id,status")
+      .eq("status", "connected");
     if (error) throw error;
 
     const reports: Json[] = [];
     for (const conn of (conns || []) as Json[]) {
-      const { data: tok } = await sb.from("platform_tokens")
-        .select("access_token,refresh_token,expires_at").eq("connection_id", conn.id).maybeSingle();
-      if (!tok?.access_token) { reports.push({ id: conn.id, error: "no token" }); continue; }
       try {
         let result: Json;
-        if (conn.provider === "meta") {
-          result = await pullMeta(sb, conn, String(tok.access_token));
-        } else if (conn.provider === "google") {
-          result = tok.refresh_token
-            ? await pullGoogleAds(sb, conn, String(tok.refresh_token)) as Json
-            : { skipped: "no refresh token — reconnect Google" };
-        } else {
-          result = { skipped: "unknown provider" };
-        }
+        if (conn.provider === "meta") result = await pullMeta(sb, conn);
+        else if (conn.provider === "google") result = await pullGoogleAds(sb, conn);
+        else result = { skipped: "unknown provider" };
         await sb.from("platform_connections")
           .update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", conn.id);
         reports.push({ id: conn.id, provider: conn.provider, practice: conn.practice_id, ...result });
       } catch (e) {
         const msg = String((e as Error)?.message || e).slice(0, 300);
         await sb.from("platform_connections")
-          .update({ status: /expired|invalid|revoked|OAuth/i.test(msg) ? "error" : "connected", last_error: msg })
+          .update({ status: /expired|invalid|revoked|not active|reconnect/i.test(msg) ? "error" : "connected", last_error: msg })
           .eq("id", conn.id);
         reports.push({ id: conn.id, provider: conn.provider, error: msg });
       }
