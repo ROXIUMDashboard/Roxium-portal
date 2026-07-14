@@ -82,6 +82,13 @@ export async function getConnectedAccount(id: string): Promise<{
   };
 }
 
+// Revoke a connected account on Composio (best-effort during account teardown,
+// so the practice's third-party token doesn't live on after deletion). Throws on
+// failure — callers should swallow it so a Composio hiccup can't block deletion.
+export async function deleteConnectedAccount(id: string): Promise<void> {
+  await api(`/connected_accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 // Execute a Composio tool as a given practice (user_id) — Composio injects that
 // user's stored token. Prefer the explicit connected_account_id when known.
 export async function executeTool(

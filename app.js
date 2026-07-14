@@ -620,13 +620,16 @@ async function afterLogin(){
     ({ data: prof } = await sb.from('profiles').select('*').eq('id', uid).single());
   }
   me = prof;
-  // Approval gate — a client account with no approval and no practice link
-  // waits at the door. (approval_status is absent on pre-migration databases;
+  // Approval gate. Rejected is a HARD deny regardless of any leftover
+  // practice_id (reject_account now also revokes memberships + nulls
+  // practice_id, but gate defensively). Pending with no practice link waits in
+  // the waiting room. (approval_status is absent on pre-migration databases;
   // treat that as legacy-approved so nothing changes until the migration runs.)
-  if(me.role !== 'team' && ('approval_status' in me)
-     && me.approval_status !== 'approved' && !me.practice_id){
-    showPendingPane(me.approval_status, authEmail);
-    return;
+  if(me.role !== 'team' && ('approval_status' in me)){
+    if(me.approval_status === 'rejected'){ showPendingPane('rejected', authEmail); return; }
+    if(me.approval_status !== 'approved' && !me.practice_id){
+      showPendingPane(me.approval_status, authEmail); return;
+    }
   }
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
@@ -4904,8 +4907,12 @@ async function deletePractice(id, name, opts={}){
   if(!ok) return;
   flash('Deleting…');
   try{
-    const { error } = await sb.rpc('delete_practice', { p_id: id });
+    // Route through the edge function so the clients' auth.users rows (and their
+    // Composio connections) are actually removed — an RPC can't delete auth
+    // users, which is what made "deleted" clients reappear as pending accounts.
+    const { data: res, error } = await sb.functions.invoke('delete-account', { body: { practice_id: id } });
     if(error) throw error;
+    if(res && res.ok === false) throw new Error(res.error || 'delete failed');
     delete selByPractice[id];
     delete chanByPractice[id];
     if(practiceId===id){ practiceId = null; }
