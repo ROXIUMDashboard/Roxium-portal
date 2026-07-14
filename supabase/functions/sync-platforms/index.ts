@@ -134,8 +134,12 @@ async function pullMeta(sb: ReturnType<typeof serviceClient>, conn: Json) {
 async function pullGoogleAds(sb: ReturnType<typeof serviceClient>, conn: Json) {
   const practice = String(conn.practice_id);
   const caId = (conn.composio_connection_id as string) || null;
+  // GAQL has no LAST_180_DAYS literal (only LAST_7/14/30_DAYS etc.), so use an
+  // explicit BETWEEN range for the trailing ~6 months.
+  const until = new Date().toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
   const query = `SELECT segments.month, metrics.cost_micros, metrics.impressions, metrics.clicks
-                 FROM campaign WHERE segments.date DURING LAST_180_DAYS`;
+                 FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
   const r = await executeTool("GOOGLEADS_SEARCH_STREAM_GAQL", practice, { query }, caId);
   const results = rows(r, ["results", "rows", "data"]);
 

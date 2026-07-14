@@ -95,9 +95,11 @@ export async function executeTool(
   args: Json,
   connectedAccountId?: string | null,
 ): Promise<Json> {
-  const body: Json = { arguments: args };
+  // Composio requires the entity `user_id` AND a `version`; a connected_account_id
+  // must be paired with the user_id (sent alone it 400s with entity-id-required),
+  // and without `version` the execute endpoint 404s with "Tool not found".
+  const body: Json = { arguments: args, user_id: userId, version: "latest" };
   if (connectedAccountId) body.connected_account_id = connectedAccountId;
-  else body.user_id = userId;
   const j = await api(`/tools/execute/${encodeURIComponent(slug)}`, {
     method: "POST",
     body: JSON.stringify(body),
