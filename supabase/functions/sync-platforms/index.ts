@@ -148,7 +148,17 @@ async function pullGoogleAds(sb: ReturnType<typeof serviceClient>, conn: Json) {
   const since = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
   const query = `SELECT segments.month, metrics.cost_micros, metrics.impressions, metrics.clicks
                  FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
-  const r = await executeTool("GOOGLEADS_SEARCH_STREAM_GAQL", practice, { query }, caId);
+  // One short-backoff retry on 429: Composio's managed Google Ads auth shares a
+  // developer token across its customers, so QPS-style throttles are common and
+  // often clear in seconds. (A drained DAILY quota won't — the cron re-tries.)
+  let r: Json;
+  try {
+    r = await executeTool("GOOGLEADS_SEARCH_STREAM_GAQL", practice, { query }, caId);
+  } catch (e) {
+    if (!/RESOURCE_EXHAUSTED|"code":\s*429|\b429\b/.test(String((e as Error)?.message || e))) throw e;
+    await new Promise((res) => setTimeout(res, 5000));
+    r = await executeTool("GOOGLEADS_SEARCH_STREAM_GAQL", practice, { query }, caId);
+  }
   const results = rows(r, ["results", "rows", "data"]);
 
   const byMonth = new Map<string, { spend: number; impr: number; clicks: number }>();
@@ -213,9 +223,21 @@ Deno.serve(async (req) => {
           .update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", conn.id);
         reports.push({ id: conn.id, provider: conn.provider, practice: conn.practice_id, ...result });
       } catch (e) {
-        const msg = String((e as Error)?.message || e).slice(0, 300);
+        // Google/Meta errors often arrive as a JSON blob — condense to
+        // "STATUS: message" so ops (and the client UI) get a readable line.
+        let msg = String((e as Error)?.message || e);
+        try {
+          const parsed = JSON.parse(msg);
+          const err = (Array.isArray(parsed) ? (parsed[0] as Json)?.error : (parsed as Json)?.error) as Json | undefined;
+          if (err) msg = `${err.status || err.code || "error"}: ${err.message || ""}`.trim();
+        } catch { /* not a JSON blob — keep as-is */ }
+        msg = msg.slice(0, 300);
+        // Only genuine auth failures flip the connection to 'error' (needs
+        // reconnect). Quota throttles and query bugs stay 'connected' — the
+        // cron simply retries them.
+        const authDead = /expired|invalid_grant|revoked|not active|reconnect|unauthorized|\b401\b/i.test(msg);
         await sb.from("platform_connections")
-          .update({ status: /expired|invalid|revoked|not active|reconnect/i.test(msg) ? "error" : "connected", last_error: msg })
+          .update({ status: authDead ? "error" : "connected", last_error: msg })
           .eq("id", conn.id);
         reports.push({ id: conn.id, provider: conn.provider, error: msg });
       }
