@@ -7,9 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css?v=BUILD_SHA">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!-- Deferred so they don't block first paint; `defer` preserves order, so
+     supabase + Chart are defined before config.js/app.js run (also deferred). -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -233,13 +234,6 @@
         <div id="opsUrgentStrip" class="ops-urgent-strip"></div>
         <div id="opsClientOverview" class="ops-client-list"></div>
       </div>
-      <!-- Delivery accountability panel (feature 8) is reverted from the UI for
-           now — restore this block to re-enable; the renderer no-ops without it.
-      <div class="ops-panel">
-        <h3>Delivery accountability</h3>
-        <p class="note ops-panel-note">Execution measured per client: what shipped in the last 30 days, whether it shipped on time, and what's aging right now. Sorted worst-first.</p>
-        <div id="opsAccountability"></div>
-      </div> -->
     </section>
 
     <!-- TEAM CONTROLS · global configuration (formerly Admin) -->
@@ -442,7 +436,7 @@
     }).catch(function(){});
 })();
 </script>
-<script src="/config.js?v=BUILD_SHA"></script>
-<script src="/app.js?v=BUILD_SHA"></script>
+<script defer src="/config.js?v=BUILD_SHA"></script>
+<script defer src="/app.js?v=BUILD_SHA"></script>
 </body>
 </html>

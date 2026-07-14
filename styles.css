@@ -16,7 +16,9 @@ body{background:var(--ink);color:var(--cream);font-family:'Jost',sans-serif;font
 .login-card input:focus{outline:1px solid var(--gold)}
 
 /* chrome */
-header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(13,12,16,.92);backdrop-filter:blur(8px);z-index:10}
+/* Solid (not blurred) sticky header — backdrop-filter on a sticky element
+   repaints every scroll frame and janks on mobile. Opaque bg reads the same. */
+header{border-bottom:1px solid var(--line);position:sticky;top:0;background:#0F0E13;z-index:10}
 .bar{display:flex;align-items:center;justify-content:space-between;height:64px}
 .mark{font-weight:500;letter-spacing:.42em;font-size:15px}
 .mark.big{font-size:22px;margin-bottom:10px}
@@ -976,3 +978,16 @@ select option{background:var(--surface2);color:var(--cream)}
 .kpipref-add .picker{flex:1}
 .kpipref-foot{display:flex;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .kpipref-spacer{flex:1}
+
+/* ============ Accessibility: honor reduced-motion ============
+   Users who ask their OS to minimize motion get near-instant transitions
+   instead of slide/fade/pulse animations. Chart.js animation is disabled
+   separately in app.js when this query matches. */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration:.001ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+    scroll-behavior:auto !important;
+  }
+}
