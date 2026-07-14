@@ -20,20 +20,15 @@ export function composioKey(): string | null {
   return Deno.env.get("COMPOSIO_API_KEY") || null;
 }
 
-// provider ('meta' | 'google') → the managed auth config + toolkit, or null
-// when that provider hasn't been wired up yet (wizard degrades gracefully).
-export function composioProvider(
-  provider: string,
-): { authConfigId: string; toolkit: string } | null {
-  if (provider === "meta") {
-    const id = Deno.env.get("COMPOSIO_META_AUTH_CONFIG_ID");
-    return id ? { authConfigId: id, toolkit: "metaads" } : null;
-  }
-  if (provider === "google") {
-    const id = Deno.env.get("COMPOSIO_GOOGLE_AUTH_CONFIG_ID");
-    return id ? { authConfigId: id, toolkit: "googleads" } : null;
-  }
-  return null;
+// Any provider key → its Composio auth config, or null when that provider
+// hasn't been wired up yet (callers degrade gracefully). Adding a NEW platform
+// requires zero code changes here: create the auth config in the Composio
+// dashboard and set COMPOSIO_<PROVIDER>_AUTH_CONFIG_ID as an edge secret
+// (e.g. provider 'google_analytics' → COMPOSIO_GOOGLE_ANALYTICS_AUTH_CONFIG_ID).
+export function composioProvider(provider: string): { authConfigId: string } | null {
+  if (!/^[a-z][a-z0-9_]{1,30}$/.test(provider)) return null;
+  const id = Deno.env.get(`COMPOSIO_${provider.toUpperCase()}_AUTH_CONFIG_ID`);
+  return id ? { authConfigId: id } : null;
 }
 
 async function api(path: string, init: RequestInit): Promise<Json> {

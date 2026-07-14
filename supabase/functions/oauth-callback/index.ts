@@ -77,6 +77,19 @@ Deno.serve(async (req) => {
     }, { onConflict: "practice_id,provider" });
     if (cerr) throw new Error(cerr.message);
 
+    // Kick off the FIRST import immediately (fire-and-forget) so dashboards
+    // populate right after connecting instead of waiting for the next cron tick.
+    const base = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+    if (base && secret) {
+      const firstSync = fetch(`${base}/functions/v1/sync-platforms`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-sync-key": secret },
+        body: JSON.stringify({ practice_id: state.p, provider: state.v }),
+      }).catch(() => {});
+      // deno-lint-ignore no-explicit-any
+      try { (globalThis as any).EdgeRuntime?.waitUntil?.(firstSync); } catch { /* best effort */ }
+    }
+
     return redirect("connected=" + encodeURIComponent(state.v));
   } catch (e) {
     return fail(String((e as Error)?.message || e));

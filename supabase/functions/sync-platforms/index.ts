@@ -18,7 +18,7 @@
 // Deploy:  supabase functions deploy sync-platforms --no-verify-jwt
 // Secrets: SYNC_SECRET, COMPOSIO_API_KEY.
 // ============================================================
-import { serviceClient, bearerToken } from "../_shared/auth.ts";
+import { serviceClient, bearerToken, UUID_RE } from "../_shared/auth.ts";
 import { composioKey, executeTool } from "../_shared/composio.ts";
 
 const cors = {
@@ -33,7 +33,10 @@ type Json = Record<string, unknown>;
 const num = (x: unknown) => { const n = Number(x); return isFinite(n) ? n : 0; };
 const monthStart = (d: string) => d.slice(0, 7) + "-01";
 
-async function authorize(req: Request): Promise<Response | null> {
+// Cron (x-sync-key) and team sync everything; a practice member may refresh
+// their OWN practice ("Refresh now" in the Connections manager) by passing
+// practice_id — the membership check scopes them to it.
+async function authorize(req: Request, practiceId: string | null): Promise<Response | null> {
   const secret = Deno.env.get("SYNC_SECRET");
   const got = req.headers.get("x-sync-key") || new URL(req.url).searchParams.get("key");
   if (secret && got === secret) return null;
@@ -44,6 +47,11 @@ async function authorize(req: Request): Promise<Response | null> {
     if (data?.user) {
       const { data: prof } = await admin.from("profiles").select("role").eq("id", data.user.id).single();
       if (prof?.role === "team") return null;
+      if (practiceId) {
+        const { data: mem } = await admin.from("memberships")
+          .select("role").eq("user_id", data.user.id).eq("practice_id", practiceId).maybeSingle();
+        if (mem) return null;
+      }
     }
   }
   if (!secret) return respond({ ok: false, error: "SYNC_SECRET not configured" }, 500);
@@ -174,14 +182,24 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return respond({ ok: false, error: "method not allowed" }, 405);
   try {
-    const denied = await authorize(req);
+    // Optional scope: {practice_id, provider} → sync just that connection
+    // (used by the first-import-on-connect kick and the client "Refresh now").
+    let scope: { practice_id?: string; provider?: string } = {};
+    try { scope = await req.json() || {}; } catch { /* empty body = sync all */ }
+    const scopePractice = scope.practice_id && UUID_RE.test(String(scope.practice_id)) ? String(scope.practice_id) : null;
+    const scopeProvider = scope.provider && /^[a-z][a-z0-9_]{1,30}$/.test(String(scope.provider)) ? String(scope.provider) : null;
+
+    const denied = await authorize(req, scopePractice);
     if (denied) return denied;
     if (!composioKey()) return respond({ ok: false, error: "COMPOSIO_API_KEY not configured" }, 500);
 
     const sb = serviceClient();
-    const { data: conns, error } = await sb.from("platform_connections")
+    let q = sb.from("platform_connections")
       .select("id,practice_id,provider,external_account_id,external_account_name,composio_connection_id,status")
       .eq("status", "connected");
+    if (scopePractice) q = q.eq("practice_id", scopePractice);
+    if (scopeProvider) q = q.eq("provider", scopeProvider);
+    const { data: conns, error } = await q;
     if (error) throw error;
 
     const reports: Json[] = [];
@@ -190,7 +208,7 @@ Deno.serve(async (req) => {
         let result: Json;
         if (conn.provider === "meta") result = await pullMeta(sb, conn);
         else if (conn.provider === "google") result = await pullGoogleAds(sb, conn);
-        else result = { skipped: "unknown provider" };
+        else result = { skipped: "ingestion for this platform is handled by ROXIUM" };
         await sb.from("platform_connections")
           .update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", conn.id);
         reports.push({ id: conn.id, provider: conn.provider, practice: conn.practice_id, ...result });

@@ -30,6 +30,7 @@ const CORE_METRICS = [
   {k:'ctr',    label:'CTR',          fmt:v=>fmtP(v),  derive:m=>{const i=N(m,'impr'),c=N(m,'clicks');return i?c/i:null;}},
   {k:'cpm',    label:'CPM',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),i=N(m,'impr');return i?s/(i/1000):null;}, lowerBetter:true},
   {k:'cpc',    label:'CPC',          fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),c=N(m,'clicks');return c?s/c:null;}, lowerBetter:true},
+  {k:'freq',   label:'Frequency',    fmt:v=>(Math.round(v*10)/10).toFixed(1)+'×', derive:m=>{const r=N(m,'reach'),i=N(m,'impr');return r?i/r:null;}},
   {k:'page_engagement', label:'Page Engagement', fmt:v=>fmtNum(v), hideIfZero:true},   // only renders when the source provides it
 ];
 // hideIfZero: these engagement/social metrics are shown ONLY when the source
@@ -55,7 +56,61 @@ const METRIC_INFO = {
   clicks: {label:'Link Clicks', what:'The number of times people clicked a link in your ad to go to your site or landing page.', why:'A direct signal of intent — the step between seeing the ad and becoming a lead or customer.', higher:'Higher clicks mean more people are taking action on your ads.', lower:'Lower clicks mean fewer people are acting; check CTR and creative.'},
   cpc:    {label:'CPC (Cost per Link Click)', what:'The average cost of a single link click — spend ÷ link clicks.', why:'Shows how efficiently your budget converts into actual visits and intent.', higher:'Higher CPC means each click costs more — less efficient.', lower:'Lower CPC is better: you are paying less for each engaged visitor.'},
   page_engagement: {label:'Page Engagement', what:'Total interactions with your page and posts (reactions, comments, shares, saves, clicks) driven by the ads this period.', why:'Shows how much your content sparks action beyond a passive view — a signal of brand resonance.', higher:'Higher engagement means the audience is interacting more with your brand.', lower:'Lower engagement means fewer interactions; the creative may not be prompting action.'},
+  freq:   {label:'Frequency', what:'How many times, on average, each person saw your ads — impressions ÷ reach.', why:'Balances exposure against fatigue: enough repetition to be remembered, not so much that people tune out.', higher:'Higher frequency means more repeat exposure per person — good for recall, but watch for ad fatigue above ~4×.', lower:'Lower frequency means most people saw the ad only once or twice — fresher, but possibly under-exposed.'},
+  lpv:    {label:'Landing Page Views', what:'How many times people reached your landing page after clicking an ad.', why:'Closer to intent than a raw click — it confirms the visitor actually arrived and the page loaded.', higher:'Higher landing page views mean more real visits from your ads.', lower:'Lower views vs clicks can signal slow pages or accidental taps.'},
+  page_likes: {label:'Page Likes', what:'New likes on your page generated during this period.', why:'A signal of audience growth and brand affinity beyond a single campaign.', higher:'Higher likes mean your content is winning new followers.', lower:'Lower likes mean less audience growth this period.'},
+  foll:   {label:'Followers', what:'New followers gained across your profiles this period.', why:'Your owned audience — people you can reach again without paying for ads.', higher:'Higher follower growth compounds future organic reach.', lower:'Lower growth means fewer new people opting in to hear from you.'},
 };
+
+/* ---------------- editable KPI dashboard (registry + per-user prefs) ---------
+   The KPI card row is fully customizable: add / remove / reorder / rename.
+   METRIC_REGISTRY is the single catalog — a new metric added here is instantly
+   available in the "Customize" picker with zero further UI changes. Prefs are
+   stored per user + practice in kpi_dashboard_prefs (localStorage fallback
+   pre-migration), as an ordered array of {k, label?}. */
+const METRIC_REGISTRY = [...CORE_METRICS, ...OPTIONAL_METRICS];
+const metricDef = k => METRIC_REGISTRY.find(d=> d.k===k) || null;
+// Default card set. Spend / Link Clicks / CPC / Reach already headline the hero
+// stats, so the default row complements rather than repeats them (the old row
+// duplicated Reach top-and-bottom — Frequency now covers that slot with new
+// information instead). Users can still ADD any hero metric back deliberately.
+const DEFAULT_KPI_CARDS = [
+  {k:'impr'}, {k:'ctr'}, {k:'cpm'}, {k:'freq'}, {k:'page_engagement'},
+];
+let kpiPrefs = null;          // null = defaults; else ordered [{k, label?}]
+let kpiPrefsLoadedFor = '';   // `${uid}:${practiceId}` guard
+const kpiPrefsLsKey = ()=> `roxium_kpi_cards_${practiceId||'none'}`;
+function activeKpiCards(){
+  const list = (Array.isArray(kpiPrefs) && kpiPrefs.length) ? kpiPrefs : DEFAULT_KPI_CARDS;
+  return list.filter(c=> c && metricDef(c.k));
+}
+async function loadKpiPrefs(){
+  const uid = me?.id; if(!uid || !practiceId) return;
+  const guard = `${uid}:${practiceId}`;
+  if(kpiPrefsLoadedFor === guard) return;
+  kpiPrefsLoadedFor = guard;
+  try{ const ls = localStorage.getItem(kpiPrefsLsKey()); if(ls) kpiPrefs = JSON.parse(ls); }catch(_){}
+  try{
+    const { data: row, error } = await sb.from('kpi_dashboard_prefs')
+      .select('cards').eq('user_id', uid).eq('practice_id', practiceId).maybeSingle();
+    if(!error && row && Array.isArray(row.cards) && row.cards.length) kpiPrefs = row.cards;
+  }catch(_){ /* pre-migration DB — localStorage carries the prefs */ }
+}
+async function saveKpiPrefs(cards){
+  kpiPrefs = (cards && cards.length) ? cards : null;
+  try{
+    if(kpiPrefs) localStorage.setItem(kpiPrefsLsKey(), JSON.stringify(kpiPrefs));
+    else localStorage.removeItem(kpiPrefsLsKey());
+  }catch(_){}
+  try{
+    if(me?.id && practiceId){
+      await sb.from('kpi_dashboard_prefs').upsert({
+        user_id: me.id, practice_id: practiceId,
+        cards: kpiPrefs || [], updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,practice_id' });
+    }
+  }catch(_){ /* pre-migration DB — localStorage saved above */ }
+}
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 // human month name from a period key ('YYYY-MM-01' -> 'March')
 function monthName(period){ if(!period) return ''; const mi=+String(period).slice(5,7)-1; return MONTH_NAMES[mi]||''; }
@@ -182,9 +237,9 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','settings','access','team','controls'];
+const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','connections','settings','access','team','controls'];
 const TEAM_ONLY_VIEWS = ['operations','team','controls'];
-const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','settings','access','team'];
+const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','connections','settings','access','team'];
 const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
 let lastClientView = 'roadmap';
@@ -199,6 +254,9 @@ function activateAdminTab(name){
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
 function canSeeSettingsTab(){ return canSeeAccessTab(); }
+// Connections manager: practice owners manage their own data sources; the team
+// sees it via Preview-as-client (a real client-eye view of the same page).
+function canSeeConnectionsTab(){ return canSeeAccessTab() || (me && me.role === 'team' && previewMode); }
 // Hash may carry deep-link params: #deliverables&pid=…&deliv=…&video=…&phase=…
 function hashParts(){
   const raw = (location.hash||'').replace(/^#/,'');
@@ -267,6 +325,7 @@ function showView(name){
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
   if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
   if(name === 'settings' && !canSeeSettingsTab()) name = 'roadmap';
+  if(name === 'connections' && !canSeeConnectionsTab()) name = 'roadmap';
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
@@ -285,6 +344,7 @@ function showView(name){
   }
   if(name==='access') loadClientAccessRoster();
   if(name==='settings') renderSettingsMarketing();
+  if(name==='connections') renderConnectionsPage();
 }
 // Chrome visibility: Operations + Team Controls are global team screens; Clients = per-practice portal.
 function syncChrome(){
@@ -306,6 +366,8 @@ function syncChrome(){
   document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   document.querySelector('.tab[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
   document.querySelector('section[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
+  document.querySelector('.tab[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
+  document.querySelector('section[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
   TEAM_ONLY_VIEWS.forEach(v=>{
     const tab = document.querySelector(`.tab[data-view="${v}"]`);
     if(tab) tab.classList.toggle('hidden', !teamView);
@@ -624,9 +686,11 @@ async function loadAll(){
   data.connections = [];
   try{
     const { data: pc, error: pcErr } = await sb.from('platform_connections')
-      .select('provider,status,external_account_name,connected_at').eq('practice_id', practiceId);
+      .select('provider,status,external_account_name,connected_at,last_synced_at,last_error,connected_by')
+      .eq('practice_id', practiceId);
     if(!pcErr && Array.isArray(pc)) data.connections = pc;
   }catch(_){ /* pre-migration DB */ }
+  try{ await loadKpiPrefs(); }catch(_){ /* defaults render fine */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
   maybeOpenWizardFromOAuthReturn();
@@ -1178,6 +1242,290 @@ function maybeOpenWizardFromOAuthReturn(){
   }catch(_){}
 }
 
+/* ---------------- KPI dashboard customization (editor modal) ---------------- */
+let kpiEditorState = null;
+function openKpiPrefsEditor(){
+  kpiEditorState = activeKpiCards().map(c=> ({ k:c.k, label:c.label||'' }));
+  renderKpiPrefsEditor();
+  const modal = $('kpiPrefsModal');
+  if(modal){
+    modal.classList.remove('hidden'); modal.classList.add('open'); modal.setAttribute('aria-hidden','false');
+    modal.onclick = e=>{ if(e.target === modal) closeKpiPrefsEditor(); };
+  }
+}
+function closeKpiPrefsEditor(){
+  const modal = $('kpiPrefsModal');
+  if(modal){ modal.classList.remove('open'); modal.classList.add('hidden'); modal.setAttribute('aria-hidden','true'); }
+  kpiEditorState = null;
+}
+function renderKpiPrefsEditor(){
+  const card = $('kpiPrefsCard'); if(!card || !kpiEditorState) return;
+  // carry any in-progress rename inputs into state before re-rendering
+  const syncRenames = ()=> card.querySelectorAll('.kpipref-rename').forEach(inp=>{
+    const i = +inp.dataset.i; if(kpiEditorState[i]) kpiEditorState[i].label = inp.value.trim();
+  });
+  const used = new Set(kpiEditorState.map(c=> c.k));
+  const addable = METRIC_REGISTRY.filter(d=> !used.has(d.k));
+  const rows = kpiEditorState.map((c,i)=>{
+    const def = metricDef(c.k); if(!def) return '';
+    return `<div class="kpipref-row">
+      <span class="kpipref-move">
+        <button type="button" class="kpipref-btn" data-move="up" data-i="${i}" ${i===0?'disabled':''} title="Move up">▲</button>
+        <button type="button" class="kpipref-btn" data-move="down" data-i="${i}" ${i===kpiEditorState.length-1?'disabled':''} title="Move down">▼</button>
+      </span>
+      <span class="kpipref-name">${esc(def.label)}</span>
+      <input class="kpipref-rename" data-i="${i}" placeholder="${esc(def.label)}" value="${esc(c.label||'')}" title="Custom label (optional)">
+      <button type="button" class="kpipref-btn kpipref-x" data-remove="${i}" title="Remove card">✕</button>
+    </div>`;
+  }).join('');
+  card.innerHTML = `
+    <h3 class="kpipref-title">Customize your KPI dashboard</h3>
+    <p class="note">Choose which metrics appear, rename them, and set their order. A card only shows when its metric has data for the selected month.</p>
+    <div class="kpipref-list">${rows || '<p class="note">No cards yet — add your first KPI below.</p>'}</div>
+    <div class="kpipref-add">
+      <select id="kpiPrefAddSel" class="picker">${addable.map(d=> `<option value="${d.k}">${esc(d.label)}</option>`).join('')}</select>
+      <button type="button" class="btn sm" id="kpiPrefAddBtn" ${addable.length?'':'disabled'}>＋ Add KPI</button>
+    </div>
+    <div class="kpipref-foot">
+      <button type="button" class="btn ghost sm" id="kpiPrefReset">Reset to default</button>
+      <span class="kpipref-spacer"></span>
+      <button type="button" class="btn ghost sm" id="kpiPrefCancel">Cancel</button>
+      <button type="button" class="btn sm" id="kpiPrefSave">Save dashboard</button>
+    </div>`;
+  card.querySelectorAll('[data-move]').forEach(b=> b.onclick = ()=>{
+    syncRenames();
+    const i = +b.dataset.i, j = b.dataset.move==='up' ? i-1 : i+1;
+    if(j<0 || j>=kpiEditorState.length) return;
+    [kpiEditorState[i], kpiEditorState[j]] = [kpiEditorState[j], kpiEditorState[i]];
+    renderKpiPrefsEditor();
+  });
+  card.querySelectorAll('[data-remove]').forEach(b=> b.onclick = ()=>{
+    syncRenames(); kpiEditorState.splice(+b.dataset.remove, 1); renderKpiPrefsEditor();
+  });
+  $('kpiPrefAddBtn')?.addEventListener('click', ()=>{
+    const k = $('kpiPrefAddSel')?.value; if(!k) return;
+    syncRenames(); kpiEditorState.push({ k, label:'' }); renderKpiPrefsEditor();
+  });
+  $('kpiPrefReset').onclick = async ()=>{ await saveKpiPrefs(null); closeKpiPrefsEditor(); render(); };
+  $('kpiPrefCancel').onclick = ()=> closeKpiPrefsEditor();
+  $('kpiPrefSave').onclick = async ()=>{
+    syncRenames();
+    const cards = kpiEditorState.map(c=> c.label ? { k:c.k, label:c.label } : { k:c.k });
+    await saveKpiPrefs(cards); closeKpiPrefsEditor(); render();
+  };
+}
+
+/* ---------------- Marketing Connections manager ------------------------------
+   AgencyAnalytics-style self-service data sources. PLATFORM_CATALOG is the
+   connector registry: adding a future platform = one entry here + a Composio
+   auth config (COMPOSIO_<KEY>_AUTH_CONFIG_ID secret). No page redesign.
+   Connected platforms disappear from "Add data source" until disconnected;
+   disconnecting stops future syncs but preserves every imported KPI row. */
+const PLATFORM_CATALOG = [
+  { key:'meta',               title:'Meta Ads',                icon:'📘', blurb:'Facebook & Instagram advertising — spend, reach, impressions and link clicks.', dflt:true },
+  { key:'facebook_insights',  title:'Facebook Insights',       icon:'👥', blurb:'Organic Facebook page performance and audience growth.', dflt:true },
+  { key:'instagram_insights', title:'Instagram Insights',      icon:'📸', blurb:'Organic Instagram reach, profile activity and engagement.', dflt:true },
+  { key:'google',             title:'Google Ads',              icon:'🔍', blurb:'Search & display campaigns — cost, impressions and clicks.', dflt:true },
+  { key:'google_analytics',   title:'Google Analytics',        icon:'📈', blurb:'Website sessions, traffic sources and on-site conversions.', dflt:true },
+  { key:'youtube',            title:'YouTube Analytics',       icon:'▶️', blurb:'Channel views, watch time and subscriber growth.', dflt:true },
+  { key:'microsoft_ads',      title:'Microsoft Ads',           icon:'🪟', blurb:'Bing search campaign performance.', dflt:true },
+  { key:'tiktok',             title:'TikTok Ads',              icon:'🎵', blurb:'TikTok campaign spend and performance.' },
+  { key:'linkedin_ads',       title:'LinkedIn Ads',            icon:'💼', blurb:'LinkedIn campaign performance.' },
+  { key:'gbp',                title:'Google Business Profile', icon:'📍', blurb:'Local search views, calls and direction requests.' },
+  { key:'callrail',           title:'CallRail',                icon:'📞', blurb:'Call tracking and marketing attribution.' },
+  { key:'hubspot',            title:'HubSpot',                 icon:'🧲', blurb:'CRM contacts and lead pipeline.' },
+];
+const platformInfo = key => PLATFORM_CATALOG.find(p=> p.key===key)
+  || { key, title:key.replace(/_/g,' ').replace(/\b\w/g, c=> c.toUpperCase()), icon:'🔗', blurb:'' };
+// kpi source keys written by each connector's ingestion (for the import summary)
+const PLATFORM_KPI_SOURCES = { meta:['marketing'], google:['google_ads'] };
+
+function connAgo(ts){
+  if(!ts) return null;
+  const s = (Date.now() - new Date(ts).getTime())/1000;
+  if(!isFinite(s) || s<0) return null;
+  if(s<60) return 'just now';
+  const m = Math.round(s/60);  if(m<60)  return `${m} minute${m===1?'':'s'} ago`;
+  const h = Math.round(s/3600); if(h<24) return `${h} hour${h===1?'':'s'} ago`;
+  const d = Math.round(s/86400); return `${d} day${d===1?'':'s'} ago`;
+}
+// One health readout per connection: dot class + label + optional note.
+function connHealth(c){
+  if(c.status==='connected'){
+    if(c.last_error) return { cls:'warn', label:'Connected — last sync had an issue', note:c.last_error };
+    if(!c.last_synced_at) return { cls:'warn', label:'Connected — first import queued', note:'Your numbers start appearing within a couple of hours.' };
+    const ago = connAgo(c.last_synced_at);
+    return { cls:'ok', label:'Connected', note: ago ? `Last sync: ${ago}` : null };
+  }
+  if(c.status==='pending') return { cls:'warn', label:'Awaiting connection', note:'The sign-in wasn’t finished — connect again to complete it.' };
+  if(c.status==='error')   return { cls:'bad',  label:'Needs reconnecting', note:c.last_error || 'The platform stopped accepting our access — reconnect to resume.' };
+  return { cls:'off', label:'Disconnected', note:'Historical data is preserved. Reconnect anytime to resume syncing.' };
+}
+
+const connDetailsOpen = new Set();   // provider keys with the details panel expanded
+let connCatalogOpen = false;
+
+async function reloadConnections(){
+  try{
+    const { data: pc, error } = await sb.from('platform_connections')
+      .select('provider,status,external_account_name,connected_at,last_synced_at,last_error,connected_by')
+      .eq('practice_id', practiceId);
+    if(!error && Array.isArray(pc)) data.connections = pc;
+  }catch(_){}
+  renderConnectionsPage();
+}
+function connFlash(msg, ok=true){
+  const el = $('connFlash'); if(!el) return;
+  el.innerHTML = msg ? `<div class="wizard-flash ${ok?'ok':'err'}">${msg}</div>` : '';
+}
+// Begin (or redo) a connection — same oauth-start flow the wizard uses.
+async function startPlatformConnect(provider, btn){
+  const label = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Opening…'; }
+  try{
+    const { data: res, error } = await sb.functions.invoke('oauth-start', {
+      body: { provider, practice_id: practiceId }
+    });
+    if(error) throw error;
+    if(res?.url){ location.href = res.url; return; }
+    if(res && res.configured === false){
+      connFlash(`${esc(platformInfo(provider).title)} isn’t self-serve yet — our team wires this one up for you. Nothing else needed.`, true);
+      if(btn){ btn.disabled = false; btn.textContent = label; }
+      return;
+    }
+    throw new Error('no authorize URL returned');
+  }catch(e){
+    console.warn('[connections] oauth-start failed:', e);
+    connFlash('That didn’t open — please try again in a moment.', false);
+    if(btn){ btn.disabled = false; btn.textContent = label; }
+  }
+}
+
+function renderConnectionsPage(){
+  const list = $('connList'); if(!list) return;
+  if(!canSeeConnectionsTab() || !practiceId){ list.innerHTML=''; return; }
+  const conns = (data.connections||[]).slice()
+    .sort((a,b)=> String(a.provider).localeCompare(String(b.provider)));
+
+  // ---- connected / known sources ----
+  list.innerHTML = conns.length ? conns.map(c=>{
+    const p = platformInfo(c.provider);
+    const h = connHealth(c);
+    const open = connDetailsOpen.has(c.provider);
+    const isConn = c.status==='connected';
+    const actions = [
+      isConn ? `<button class="btn ghost sm conn-act" data-act="refresh" data-p="${c.provider}">Refresh now</button>` : '',
+      (c.status==='error' || c.status==='pending') ? `<button class="btn sm conn-act" data-act="connect" data-p="${c.provider}">Reconnect</button>` : '',
+      c.status==='revoked' ? `<button class="btn sm conn-act" data-act="connect" data-p="${c.provider}">Reconnect</button>` : '',
+      `<button class="btn ghost sm conn-act" data-act="details" data-p="${c.provider}">${open?'Hide details':'View details'}</button>`,
+      isConn ? `<button class="btn ghost sm conn-act conn-danger" data-act="disconnect" data-p="${c.provider}">Disconnect</button>` : '',
+    ].filter(Boolean).join('');
+    // details panel: account, connected-by/when, sync history + imported summary
+    let details = '';
+    if(open){
+      const srcKeys = PLATFORM_KPI_SOURCES[c.provider] || [];
+      const months = new Set((data.kpiRaw||[]).filter(r=> srcKeys.includes(r.source)).map(r=> r.period));
+      const lines = [
+        c.external_account_name ? ['Account', c.external_account_name] : null,
+        ['Connected', `${c.connected_by && me && c.connected_by===me.id ? 'by you · ' : ''}${c.connected_at ? prettyDate(c.connected_at) : '—'}`],
+        ['Last successful sync', c.last_synced_at ? `${prettyDate(c.last_synced_at)} (${connAgo(c.last_synced_at)||''})` : 'not yet — first import is queued'],
+        months.size ? ['Imported', `${months.size} month${months.size===1?'':'s'} of performance data — live in your Metrics tab`] : null,
+        c.last_error ? ['Last sync note', c.last_error] : null,
+      ].filter(Boolean);
+      details = `<div class="conn-details">${lines.map(([k,v])=>
+        `<div class="conn-detail-row"><span class="conn-detail-k">${esc(k)}</span><span class="conn-detail-v">${esc(String(v))}</span></div>`).join('')}</div>`;
+    }
+    return `<div class="conn-card">
+      <div class="conn-main">
+        <span class="conn-icon">${p.icon}</span>
+        <div class="conn-id">
+          <div class="conn-title">${esc(p.title)}</div>
+          <div class="conn-state"><span class="conn-dot ${h.cls}"></span>${esc(h.label)}${h.note && !open ? ` <span class="note">· ${esc(h.note)}</span>` : ''}</div>
+        </div>
+        ${c.external_account_name ? `<div class="conn-account note" title="Connected account">${esc(c.external_account_name)}</div>` : ''}
+      </div>
+      <div class="conn-actions">${actions}</div>
+      ${details}
+    </div>`;
+  }).join('') : `<div class="conn-empty note">No marketing platforms connected yet — add your first data source and your dashboards populate automatically.</div>`;
+
+  // ---- add-data-source catalog (already-connected platforms are hidden) ----
+  const activeKeys = new Set(conns.filter(c=> c.status!=='revoked').map(c=> c.provider));
+  const available = PLATFORM_CATALOG.filter(p=> !activeKeys.has(p.key));
+  const catalog = $('connCatalog');
+  if(catalog){
+    const group = (items, label) => items.length ? `
+      <div class="conn-cat-label">${label}</div>
+      <div class="conn-cat-grid">${items.map(p=> `
+        <div class="conn-cat-card">
+          <span class="conn-icon">${p.icon}</span>
+          <div class="conn-cat-body">
+            <div class="conn-title">${esc(p.title)}</div>
+            <p class="note">${esc(p.blurb)}</p>
+          </div>
+          <button class="btn sm conn-act" data-act="connect" data-p="${p.key}">Connect</button>
+        </div>`).join('')}</div>` : '';
+    catalog.innerHTML = available.length
+      ? group(available.filter(p=> p.dflt), 'Core platforms') + group(available.filter(p=> !p.dflt), 'More platforms')
+      : '<p class="note">Everything in the catalog is already connected. 🎉</p>';
+    catalog.classList.toggle('hidden', !connCatalogOpen);
+  }
+  const addBtn = $('connAddBtn');
+  if(addBtn){
+    addBtn.textContent = connCatalogOpen ? '− Hide catalog' : '＋ Add data source';
+    addBtn.onclick = ()=>{
+      connCatalogOpen = !connCatalogOpen;
+      addBtn.textContent = connCatalogOpen ? '− Hide catalog' : '＋ Add data source';
+      catalog?.classList.toggle('hidden', !connCatalogOpen);
+    };
+  }
+
+  // ---- action wiring ----
+  document.querySelectorAll('#connectionsPanel .conn-act').forEach(b=> b.onclick = async ()=>{
+    const provider = b.dataset.p, act = b.dataset.act;
+    if(act==='connect'){ startPlatformConnect(provider, b); return; }
+    if(act==='details'){
+      connDetailsOpen.has(provider) ? connDetailsOpen.delete(provider) : connDetailsOpen.add(provider);
+      renderConnectionsPage(); return;
+    }
+    if(act==='refresh'){
+      b.disabled = true; b.textContent = 'Refreshing…';
+      try{
+        const { data: res, error } = await sb.functions.invoke('sync-platforms', {
+          body: { practice_id: practiceId, provider }
+        });
+        if(error) throw error;
+        const rep = (res?.reports||[])[0];
+        connFlash(rep && !rep.error
+          ? `✓ ${esc(platformInfo(provider).title)} refreshed — your dashboards are up to date.`
+          : `That refresh didn’t complete${rep?.error ? ` (${esc(String(rep.error).slice(0,120))})` : ''} — it will retry automatically.`, !!(rep && !rep.error));
+      }catch(e){
+        console.warn('[connections] refresh failed:', e);
+        connFlash('That refresh didn’t complete — it will retry automatically on the next scheduled sync.', false);
+      }
+      await reloadConnections();
+      loadAll();   // pull fresh KPI rows into the dashboards too
+      return;
+    }
+    if(act==='disconnect'){
+      const t = platformInfo(provider).title;
+      if(!confirm(`Disconnect ${t}?\n\nFuture syncing stops, but every number already imported stays in your dashboards. You can reconnect anytime.`)) return;
+      b.disabled = true;
+      try{
+        const { data: res, error } = await sb.rpc('disconnect_platform', { p_practice: practiceId, p_provider: provider });
+        if(error || res?.ok === false) throw new Error(error?.message || res?.error || 'failed');
+        connFlash(`${esc(t)} disconnected — historical data preserved. Reconnect anytime.`, true);
+      }catch(e){
+        console.warn('[connections] disconnect failed:', e);
+        connFlash('Couldn’t disconnect just now — please try again.', false);
+        b.disabled = false;
+      }
+      await reloadConnections();
+      return;
+    }
+  });
+}
+
 /* ---------------- engagement timeline ----------------
    One chronological feed per practice: team-posted updates + MEANINGFUL system
    events only (deliverables delivered, milestones completed, video stage moves).
@@ -1311,6 +1659,7 @@ function render(){
     wireMarketingConnectButtons();
     if(marketingWizardOpen) renderSetupWizard();
   });
+  safe('connections manager', ()=> renderConnectionsPage());
 
   // "You are here" journey line — feature 9, currently REVERTED from the UI at
   // the owner's request. The renderer stays; it no-ops while the #youAreHere
@@ -1356,9 +1705,13 @@ function render(){
   safe('performance metrics', ()=>{
     renderKpiCharts(viewPeriod, isLive, { allMonths: allMonthsView });
     const subtitles = {spend:'total this month', reach:'unique people', impr:'times shown',
-      clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click'};
+      clicks:'link clicks', ctr:'link clicks ÷ impressions', cpm:'spend per 1,000 impressions', cpc:'spend per link click',
+      freq:'average views per person', page_engagement:'interactions this month', lpv:'landing page views',
+      page_likes:'new page likes', foll:'new followers'};
     const rangeSubs = {spend:'cumulative total', reach:'cumulative reach', impr:'cumulative impressions',
-      clicks:'cumulative link clicks', ctr:'range average', cpm:'range average', cpc:'range average'};
+      clicks:'cumulative link clicks', ctr:'range average', cpm:'range average', cpc:'range average',
+      freq:'range average', page_engagement:'cumulative total', lpv:'cumulative total',
+      page_likes:'cumulative total', foll:'cumulative total'};
     const trendVs = prev ? periodLabel(prev.period) : '';
     const trend = (cur, before, opts={})=>{
       if(before==null || cur==null || !isFinite(+before) || !isFinite(+cur) || +before===0) return '';
@@ -1374,18 +1727,19 @@ function render(){
     const metricRow = allMonthsView ? rangeSummary?.totals : latest;
     const trendRow = allMonthsView ? null : latest;
     const trendPrev = allMonthsView ? null : prev;
-    // Spend, Link Clicks and CPC already appear in the hero stats up top, so leave
-    // them out of the metric-card row to avoid duplicating the header.
-    const HIDE_METRIC_CARDS = new Set(['spend','clicks','cpc']);
-    const cards = CORE_METRICS.map(def=>{
-      if(HIDE_METRIC_CARDS.has(def.k)) return null;
+    // Prefs-driven card row: the user's chosen metrics (or the default set),
+    // in their order, with their custom labels. Cards still only render when
+    // the metric actually has a value for the selected period.
+    const cards = activeKpiCards().map(pref=>{
+      const def = metricDef(pref.k); if(!def) return null;
       const v = metricRow ? metricValue(def, metricRow) : null;
       if(v==null || (def.hideIfZero && !v)) return null;
       const bv = trendRow && trendPrev ? metricValue(def, trendPrev) : null;
+      const label = (pref.label||'').trim() || def.label;
       const info = METRIC_INFO[def.k]
         ? `<button class="metricinfo" type="button" data-metric="${def.k}" title="What is ${def.label}?" aria-label="What is ${def.label}?">ⓘ</button>` : '';
       const sub = allMonthsView ? (rangeSubs[def.k]||'') : (subtitles[def.k]||'');
-      return `<div class="card"><div class="k">${def.label}${info}</div><div class="big">${def.fmt(v)}</div>`+
+      return `<div class="card"><div class="k">${esc(label)}${info}</div><div class="big">${def.fmt(v)}</div>`+
         `<div class="tgt">${sub}</div><div class="mnote g">${cardNote}</div>${allMonthsView ? '' : trend(metricValue(def, trendRow), bv, {lowerBetter:def.lowerBetter})}</div>`;
     }).filter(Boolean);
     if(allMonthsView && rangeSummary?.totals){
@@ -1402,9 +1756,16 @@ function render(){
     $('kpiCards').querySelectorAll('.metricinfo').forEach(b=>
       b.onclick = (e)=>{ e.stopPropagation(); openMetricInfo(b.dataset.metric); });
 
-    // secondary: optional ad metrics, shown only when present
+    // customize entry point (choose / rename / reorder KPI cards)
+    const custBtn = $('kpiCustomizeBtn');
+    if(custBtn) custBtn.onclick = openKpiPrefsEditor;
+
+    // secondary: optional ad metrics, shown only when present AND not already
+    // promoted to a card by the user's dashboard prefs (no double display).
+    const promoted = new Set(activeKpiCards().map(c=> c.k));
     const optionalSource = allMonthsView ? rangeSummary?.totals : latest;
     const rows = (optionalSource ? OPTIONAL_METRICS : []).map(def=>{
+      if(promoted.has(def.k)) return null;
       const v = metricValue(def, optionalSource); if(v==null || (def.hideIfZero && !v)) return null;
       return `<div class="srow"><span class="n">${def.label}</span><span class="s g">${def.fmt(v)}</span></div>`;
     }).filter(Boolean);

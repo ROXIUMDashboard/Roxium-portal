@@ -925,3 +925,54 @@ select option{background:var(--surface2);color:var(--cream)}
 .synctable td{padding:8px 12px;font-size:12px;color:var(--cream);border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
 .synctable tr:last-child td{border-bottom:none}
 .synctable td .ssok,.synctable td .ssbad{font-size:11px}
+
+/* ============ Marketing Connections manager (self-service data sources) ============ */
+.conn-list{display:flex;flex-direction:column;gap:14px;margin-top:22px}
+.conn-empty{border:1px dashed var(--line);padding:26px;text-align:center}
+.conn-card{border:1px solid var(--line);background:var(--surface);padding:16px 18px}
+.conn-main{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.conn-icon{font-size:22px;line-height:1;flex:0 0 auto}
+.conn-id{flex:1;min-width:200px}
+.conn-title{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px}
+.conn-state{margin-top:3px;font-size:12px;letter-spacing:.04em;color:var(--cream);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.conn-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;display:inline-block}
+.conn-dot.ok{background:var(--green);box-shadow:0 0 6px rgba(123,168,122,.5)}
+.conn-dot.warn{background:var(--amber);box-shadow:0 0 6px rgba(212,162,78,.5)}
+.conn-dot.bad{background:var(--red);box-shadow:0 0 6px rgba(198,106,88,.5)}
+.conn-dot.off{background:var(--muted)}
+.conn-account{max-width:280px;text-align:right}
+.conn-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.conn-danger{color:var(--red)}
+.conn-details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:6px}
+.conn-detail-row{display:flex;gap:14px;font-size:12.5px}
+.conn-detail-k{flex:0 0 160px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;font-size:10.5px;padding-top:2px}
+.conn-detail-v{color:var(--cream)}
+.conn-catalog{margin-top:26px;border-top:1px solid var(--line);padding-top:18px}
+.conn-cat-label{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--gold);margin:16px 0 10px}
+.conn-cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.conn-cat-card{border:1px solid var(--line);background:var(--ink);padding:14px 16px;display:flex;align-items:flex-start;gap:12px}
+.conn-cat-body{flex:1}
+.conn-cat-card .conn-title{font-size:17px}
+.conn-cat-card .note{margin-top:3px;font-size:12px;line-height:1.45}
+.conn-cat-card .btn{flex:0 0 auto;align-self:center}
+#connFlash .wizard-flash{margin-top:18px}
+
+/* ============ Editable KPI dashboard (customize modal) ============ */
+#kpiPrefsCard{width:min(560px,94vw);max-height:88vh;overflow:auto;background:var(--surface);border:1px solid var(--line);padding:26px 26px 20px}
+.kpipref-title{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:24px;margin-bottom:6px}
+.kpipref-list{margin:16px 0 6px;display:flex;flex-direction:column;gap:8px}
+.kpipref-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--ink);padding:8px 10px}
+.kpipref-move{display:flex;flex-direction:column;gap:2px}
+.kpipref-btn{background:none;border:1px solid var(--line);color:var(--muted);font-size:10px;line-height:1;
+  padding:3px 6px;cursor:pointer;border-radius:2px;transition:color .15s ease,border-color .15s ease}
+.kpipref-btn:hover:not(:disabled){color:var(--gold);border-color:var(--gold-dim)}
+.kpipref-btn:disabled{opacity:.3;cursor:default}
+.kpipref-x{color:var(--red);font-size:12px;padding:6px 8px}
+.kpipref-name{flex:0 0 150px;font-size:13px;letter-spacing:.03em}
+.kpipref-rename{flex:1;background:var(--surface2);border:1px solid var(--line);color:var(--cream);
+  padding:7px 9px;font-family:'Jost';font-size:12.5px;min-width:0}
+.kpipref-rename:focus{outline:1px solid var(--gold)}
+.kpipref-add{display:flex;gap:10px;margin:14px 0 4px;align-items:center}
+.kpipref-add .picker{flex:1}
+.kpipref-foot{display:flex;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.kpipref-spacer{flex:1}
