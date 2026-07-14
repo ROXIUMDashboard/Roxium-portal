@@ -997,14 +997,16 @@ function openMarketingWizard(){
   if(isTeamView() || !data.practice) return;
   marketingWizardOpen = true;
   const modal = $('setupWizardModal');
-  if(modal){ modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); }
+  // Must remove `hidden` too — `.hidden{display:none !important}` (styles.css)
+  // overrides `.modal.open{display:flex}`, so `.open` alone leaves it invisible.
+  if(modal){ modal.classList.remove('hidden'); modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); }
   renderSetupWizard();
   $('setupWizard')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 function closeMarketingWizard(){
   marketingWizardOpen = false;
   const modal = $('setupWizardModal');
-  if(modal){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
+  if(modal){ modal.classList.remove('open'); modal.classList.add('hidden'); modal.setAttribute('aria-hidden','true'); }
   const el = $('setupWizard'); if(el) el.innerHTML = '';
 }
 function renderMarketingConnectBanner(){
@@ -1127,6 +1129,10 @@ function renderSetupWizard(){
       <button class="btn sm" id="wizardDone">Finish</button>
     </div>`;
   el.querySelectorAll('.wizard-connect').forEach(b=> b.onclick = async ()=>{
+    const label = b.textContent;                     // restore on failure so it stays retryable
+    const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
+    const oldHint = holder && holder.parentElement && holder.parentElement.querySelector('.wizard-retry');
+    if(oldHint) oldHint.remove();
     b.disabled = true; b.textContent = 'Opening…';
     try{
       const { data: res, error } = await sb.functions.invoke('oauth-start', {
@@ -1134,12 +1140,24 @@ function renderSetupWizard(){
       });
       if(error) throw error;
       if(res?.url){ location.href = res.url; return; }
-      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
-      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks.</span>';
+      // Provider genuinely not configured on the server (no secrets) — the one
+      // case where swapping the button for the "we'll handle it" note is right.
+      if(res && res.configured === false){
+        if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks.</span>';
+        return;
+      }
+      throw new Error('no authorize URL returned');
     }catch(e){
+      // Transient failure — keep the button clickable so the client can retry,
+      // instead of replacing it with a dead note.
       console.warn('[wizard] oauth-start failed:', e);
-      const holder = el.querySelector(`[data-state-for="${b.dataset.provider}"]`);
-      if(holder) holder.innerHTML = '<span class="note">Our team will connect this with you — you\'ll get a short email with exactly two clicks.</span>';
+      b.disabled = false; b.textContent = label;
+      if(holder){
+        const hint = document.createElement('p');
+        hint.className = 'note wizard-retry';
+        hint.textContent = 'That didn\'t open — please try again.';
+        holder.insertAdjacentElement('afterend', hint);
+      }
     }
   });
   const finish = async ()=>{
