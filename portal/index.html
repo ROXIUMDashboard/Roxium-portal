@@ -104,6 +104,7 @@
       <a href="#video"        class="tab" data-view="video">Video</a>
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
+      <a href="#connections"  class="tab accessonly hidden" data-view="connections">Connections</a>
       <a href="#settings"     class="tab accessonly hidden" data-view="settings">Settings</a>
       <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
@@ -149,6 +150,7 @@
         <div class="metricpickers">
           <div class="mp-field hidden" id="channelField"><span class="mp-label">Channel</span><select id="channelPicker" class="picker"></select></div>
           <div class="mp-field"><span class="mp-label">Month</span><div id="metricsPicker" class="monthsel"></div></div>
+          <button class="btn ghost sm" id="kpiCustomizeBtn" type="button" title="Choose, rename and reorder your KPI cards">⚙ Customize</button>
         </div>
       </div>
       <div id="kpiCharts" class="kpi-charts hidden"></div>
@@ -163,6 +165,27 @@
       <div class="sub">Posted by your ROXIUM team as work ships — with delivered work and completed milestones woven in.</div>
       <div id="feed"></div>
     </section>
+
+    <!-- Marketing Connections manager — self-service data sources.
+         Connect, refresh, disconnect and expand marketing platforms;
+         dashboards populate automatically from whatever is connected. -->
+    <section id="connectionsPanel" class="view accessonly hidden" data-view="connections">
+      <div class="sechead">
+        <div>
+          <h2>Marketing <em>connections</em></h2>
+          <div class="sub">Every data source powering your dashboards. Connect a platform and your numbers import automatically — refresh, disconnect or add more anytime.</div>
+        </div>
+        <button class="btn sm" id="connAddBtn" type="button">＋ Add data source</button>
+      </div>
+      <div id="connFlash"></div>
+      <div id="connList" class="conn-list"></div>
+      <div id="connCatalog" class="conn-catalog hidden"></div>
+    </section>
+
+    <!-- Editable KPI dashboard preferences -->
+    <div id="kpiPrefsModal" class="modal hidden" aria-hidden="true">
+      <div class="modalcard" id="kpiPrefsCard"></div>
+    </div>
 
     <!-- OPERATIONS DASHBOARD · team command center -->
     <section id="operationsPanel" class="view teamonly hidden" data-view="operations">

@@ -36,7 +36,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return respond({ ok: false, error: "method not allowed" }, 405);
   try {
     const { provider, practice_id } = await req.json();
-    if (!provider || !practice_id || !UUID_RE.test(String(practice_id)))
+    if (!provider || !/^[a-z][a-z0-9_]{1,30}$/.test(String(provider)) ||
+        !practice_id || !UUID_RE.test(String(practice_id)))
       return respond({ ok: false, error: "provider and practice_id required" }, 400);
 
     const admin = serviceClient();
