@@ -13,6 +13,13 @@
 # old links (e.g. already-sent emails) from the brief window that URL existed.
 /portal.html    /portal/    301
 /portal         /portal/    301
+# Standalone legal/marketing pages. Explicit 200 rewrites BEFORE the SPA
+# fallback so both the bare and trailing-slash forms serve the real page
+# instead of being swallowed by /* into the portal app.
+/privacy        /privacy/index.html    200
+/privacy/       /privacy/index.html    200
+/terms          /terms/index.html      200
+/terms/         /terms/index.html      200
 # SPA fallback: any path that is not a real static file serves the portal app
 # (HTTP 200, no redirect) so client-side routes and magic-link callbacks
 # resolve instead of 404ing.

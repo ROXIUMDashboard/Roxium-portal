@@ -19,6 +19,17 @@ if [ -f "$ROOT/_redirects" ]; then cp "$ROOT/_redirects" "$OUT/"; fi
 mkdir -p "$OUT/portal"
 cp "$ROOT/portal/index.html" "$OUT/portal/"
 
+# Standalone static pages served at their own directory-index URLs
+# (roxium.com/privacy, roxium.com/terms). Must be copied explicitly — the
+# bundle is an allow-list, and the SPA fallback would otherwise serve the
+# portal for these paths.
+for d in privacy terms; do
+  if [ -f "$ROOT/$d/index.html" ]; then
+    mkdir -p "$OUT/$d"
+    cp "$ROOT/$d/index.html" "$OUT/$d/"
+  fi
+done
+
 # Inject deploy identity into HTML (cache-bust + footer label).
 sed -i "s/BUILD_SHA/$SHORT_SHA/g" "$OUT/index.html" "$OUT/portal/index.html"
 
