@@ -1349,16 +1349,31 @@ function connAgo(ts){
   const h = Math.round(s/3600); if(h<24) return `${h} hour${h===1?'':'s'} ago`;
   const d = Math.round(s/86400); return `${d} day${d===1?'':'s'} ago`;
 }
+// Client-facing translation of raw sync errors — the UI never shows a JSON
+// blob or an HTTP status; ops still get the full string in platform_connections.
+function humanizeSyncError(raw){
+  if(!raw) return null;
+  const s = String(raw);
+  if(/RESOURCE_EXHAUSTED|quota|"code":\s*429|\b429\b/i.test(s))
+    return 'The platform is limiting data pulls right now — we retry automatically every couple of hours.';
+  if(/expired|invalid_grant|revoked|not active|reconnect|unauthorized|\b401\b/i.test(s))
+    return 'Access needs to be renewed — click Reconnect.';
+  if(/permission|forbidden|\b403\b/i.test(s))
+    return 'The connected account doesn’t have permission for this data.';
+  if(s.length > 120 || /^[\[{]/.test(s.trim()))
+    return 'The last sync hit a temporary issue — we retry automatically.';
+  return s;
+}
 // One health readout per connection: dot class + label + optional note.
 function connHealth(c){
   if(c.status==='connected'){
-    if(c.last_error) return { cls:'warn', label:'Connected — last sync had an issue', note:c.last_error };
+    if(c.last_error) return { cls:'warn', label:'Connected — last sync had an issue', note:humanizeSyncError(c.last_error) };
     if(!c.last_synced_at) return { cls:'warn', label:'Connected — first import queued', note:'Your numbers start appearing within a couple of hours.' };
     const ago = connAgo(c.last_synced_at);
     return { cls:'ok', label:'Connected', note: ago ? `Last sync: ${ago}` : null };
   }
   if(c.status==='pending') return { cls:'warn', label:'Awaiting connection', note:'The sign-in wasn’t finished — connect again to complete it.' };
-  if(c.status==='error')   return { cls:'bad',  label:'Needs reconnecting', note:c.last_error || 'The platform stopped accepting our access — reconnect to resume.' };
+  if(c.status==='error')   return { cls:'bad',  label:'Needs reconnecting', note:humanizeSyncError(c.last_error) || 'The platform stopped accepting our access — reconnect to resume.' };
   return { cls:'off', label:'Disconnected', note:'Historical data is preserved. Reconnect anytime to resume syncing.' };
 }
 
@@ -1430,7 +1445,7 @@ function renderConnectionsPage(){
         ['Connected', `${c.connected_by && me && c.connected_by===me.id ? 'by you · ' : ''}${c.connected_at ? prettyDate(c.connected_at) : '—'}`],
         ['Last successful sync', c.last_synced_at ? `${prettyDate(c.last_synced_at)} (${connAgo(c.last_synced_at)||''})` : 'not yet — first import is queued'],
         months.size ? ['Imported', `${months.size} month${months.size===1?'':'s'} of performance data — live in your Metrics tab`] : null,
-        c.last_error ? ['Last sync note', c.last_error] : null,
+        c.last_error ? ['Last sync note', humanizeSyncError(c.last_error)] : null,
       ].filter(Boolean);
       details = `<div class="conn-details">${lines.map(([k,v])=>
         `<div class="conn-detail-row"><span class="conn-detail-k">${esc(k)}</span><span class="conn-detail-v">${esc(String(v))}</span></div>`).join('')}</div>`;
