@@ -37,6 +37,8 @@ const CORE_METRICS = [
 // actually reports them (>0). A zero/absent value means "not provided" — hide the
 // card rather than render an empty "0", and the grid reflows automatically.
 const OPTIONAL_METRICS = [
+  {k:'leads',      label:'Leads',              fmt:v=>fmtNum(v), hideIfZero:true},
+  {k:'cpl',        label:'Cost per Lead',      fmt:v=>fmt$(v),  derive:m=>{const s=N(m,'spend'),l=N(m,'leads');return l?s/l:null;}, lowerBetter:true, hideIfZero:true},
   {k:'lpv',        label:'Landing Page Views', fmt:v=>fmtNum(v), hideIfZero:true},
   {k:'page_likes', label:'Page Likes',         fmt:v=>fmtNum(v), hideIfZero:true},
   {k:'foll',       label:'Followers',          fmt:v=>fmtNum(v), hideIfZero:true},
@@ -74,8 +76,10 @@ const metricDef = k => METRIC_REGISTRY.find(d=> d.k===k) || null;
 // stats, so the default row complements rather than repeats them (the old row
 // duplicated Reach top-and-bottom — Frequency now covers that slot with new
 // information instead). Users can still ADD any hero metric back deliberately.
+// Headline set for the Overview + Metrics KPI cards. Fully editable per practice
+// via the Customize modal (kpi_dashboard_prefs); this is only the default.
 const DEFAULT_KPI_CARDS = [
-  {k:'impr'}, {k:'ctr'}, {k:'cpm'}, {k:'freq'}, {k:'page_engagement'},
+  {k:'spend'}, {k:'reach'}, {k:'clicks'}, {k:'cpl'},
 ];
 let kpiPrefs = null;          // null = defaults; else ordered [{k, label?}]
 let kpiPrefsLoadedFor = '';   // `${uid}:${practiceId}` guard
@@ -932,7 +936,7 @@ function summarizeKpiRange(rows){
   const sorted = [...rows].sort((a,b)=> String(a.period).localeCompare(String(b.period)));
   const latest = sorted[sorted.length-1] || null;
   const prev = sorted.length > 1 ? sorted[sorted.length-2] : null;
-  const totals = { spend:0, reach:0, impr:0, clicks:0, cons:0, proc:0, lpv:0, page_engagement:0, page_likes:0, foll:0 };
+  const totals = { spend:0, reach:0, impr:0, clicks:0, leads:0, cons:0, proc:0, lpv:0, page_engagement:0, page_likes:0, foll:0 };
   sorted.forEach(r=>{
     for(const k of Object.keys(totals)) totals[k] = (totals[k]||0) + (N(r,k)||0);
   });
@@ -1284,12 +1288,14 @@ function renderClientOverview(cur, prev){
 
 /* ================= OVERVIEW dashboard (default client landing) =================
    A real "everything in one view" dashboard composed live from the same data the
-   detail tabs use: headline KPIs (with sparklines + range), a spend/reach chart,
+   detail tabs use: editable KPI cards (kpi_dashboard_prefs), a spend/reach chart,
    current phase, live sync, video pipeline and latest updates. The comprehensive
-   analysis lives in the dedicated tabs; this is the at-a-glance layer. */
-const OV_RANGES = [['7d',1],['30d',1],['3m',3],['6m',6],['All',999]];
-let ovRange = '6m';
-const ovSum = (rows,f)=> rows.reduce((a,r)=>{ const v=f(r); return a + (v==null?0:v); }, 0);
+   analysis lives in the dedicated tabs; this is the at-a-glance layer.
+   Month selection is the SAME state the Metrics tab uses (getSel/ALL_MONTHS). */
+// small wifi/sync glyph beside each connected source
+function ovWifi(pending){
+  return `<span class="ov-wifi ${pending?'pend':''}" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11.5a11 11 0 0 1 15 0"/><path d="M8 15a6 6 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1"/></svg></span>`;
+}
 // normalized SVG sparkline (pathLength=1 so the draw animation is length-agnostic)
 function ovSpark(values){
   const v = values.map(x=> x==null?0:x);
@@ -1336,110 +1342,148 @@ function ovBigChart(asc){
 }
 function renderOverview(reported){
   if(!$('ovKpis')) return;
-  if(isTeamView() && !previewMode){ /* team preview shows a client's overview too */ }
-  const asc = [...(reported||[])].reverse();          // oldest -> newest
-  // range window (monthly snapshots: 7d/30d map to the latest month)
-  const n = (OV_RANGES.find(r=> r[0]===ovRange)||['All',999])[1];
-  const win = asc.slice(Math.max(0, asc.length - n));
-  const prevWin = asc.slice(Math.max(0, asc.length - 2*n), Math.max(0, asc.length - n));
+  const seg = (name, fn)=>{ try{ fn(); }catch(e){ console.warn('[overview] '+name+' failed:', e); } };
+  const kpi = data.kpi || [];
+  const connected = hasMarketingConnected();
 
-  // ---- range pills ----
-  $('ovRange').innerHTML = OV_RANGES.map(([r])=>
-    `<button type="button" class="ov-range-btn${r===ovRange?' active':''}" data-r="${r}" role="tab" aria-selected="${r===ovRange}">${r}</button>`).join('');
-  $('ovRange').querySelectorAll('.ov-range-btn').forEach(b=> b.onclick = ()=>{ ovRange = b.dataset.r; renderOverview(reported); });
-
-  // ---- KPI cards ----
-  const hasLeads = asc.some(r=> N(r,'leads')!=null);
-  const kpis = [
-    { label:'Amount spent', fmt:fmt$,   per:r=>N(r,'spend'),  agg:rows=>ovSum(rows,r=>N(r,'spend')) },
-    { label:'Reach',        fmt:fmtNum, per:r=>N(r,'reach'),  agg:rows=>ovSum(rows,r=>N(r,'reach')) },
-    { label:'Link clicks',  fmt:fmtNum, per:r=>N(r,'clicks'), agg:rows=>ovSum(rows,r=>N(r,'clicks')) },
-    hasLeads
-      ? { label:'Cost per lead',  fmt:fmt$, lowerBetter:true, per:r=>{const s=N(r,'spend'),l=N(r,'leads');return l?s/l:null;}, agg:rows=>{const s=ovSum(rows,r=>N(r,'spend')),l=ovSum(rows,r=>N(r,'leads'));return l?s/l:null;} }
-      : { label:'Cost per click', fmt:fmt$, lowerBetter:true, per:r=>{const s=N(r,'spend'),c=N(r,'clicks');return c?s/c:null;}, agg:rows=>{const s=ovSum(rows,r=>N(r,'spend')),c=ovSum(rows,r=>N(r,'clicks'));return c?s/c:null;} },
-  ];
-  const anyData = asc.length>0;
-  $('ovKpis').innerHTML = kpis.map((k,i)=>{
-    const val = anyData ? k.agg(win) : null;
-    const prev = k.agg(prevWin);
-    const delta = (val!=null && prev!=null && isFinite(prev) && prev!==0) ? (val-prev)/Math.abs(prev)*100 : null;
-    const up = delta!=null && delta>0;
-    const tone = delta==null ? 'idle' : ((k.lowerBetter ? !up : up) ? 'good' : 'bad');
-    const arrow = delta==null ? '' : (up ? '▲' : '▼');
-    const deltaTxt = delta==null ? 'no prior period' : `${arrow} ${Math.abs(delta).toFixed(delta<10?1:0)}% vs prior`;
-    return `<div class="ov-kpi reveal" style="--i:${i}">
-      <div class="ov-kpi-label">${esc(k.label)}</div>
-      <div class="ov-kpi-val count-up" data-ovk="${i}">${val==null?'—':k.fmt(val)}</div>
-      <div class="ov-kpi-delta ${tone}">${deltaTxt}</div>
-      ${ovSpark(win.map(k.per))}
-    </div>`;
-  }).join('');
-  kpis.forEach((k,i)=>{
-    const val = anyData ? k.agg(win) : null;
-    dsCountUp($('ovKpis').querySelector(`[data-ovk="${i}"]`), val, v=> v==null?'—':k.fmt(v), `ovk:${practiceId}:${ovRange}:${i}`);
+  // ---- Month selector (SAME state as the Metrics tab: getSel / ALL_MONTHS) ----
+  seg('month selector', ()=>{
+    const sel = getSel();
+    const cur = (isAllMonthsSel(sel) || sel==null) ? ALL_MONTHS : String(sel);
+    const opts = `<option value="${ALL_MONTHS}"${cur===ALL_MONTHS?' selected':''}>All months</option>` +
+      reported.map(r=> `<option value="${esc(String(r.period))}"${cur===String(r.period)?' selected':''}>${esc(periodLabel(r.period))}</option>`).join('');
+    $('ovRange').innerHTML = `<label class="ov-monthlbl">Reporting</label>
+      <select class="ov-month" id="ovMonthSel" aria-label="Reporting month">${opts}</select>
+      <button class="btn ghost sm ov-cust" id="ovCustomize" type="button" title="Add, remove or reorder your KPI cards">Customize</button>`;
+    $('ovMonthSel').onchange = e=>{ setSel(e.target.value===ALL_MONTHS ? ALL_MONTHS : e.target.value); render(); };
+    if(typeof openKpiPrefsEditor==='function') $('ovCustomize').onclick = openKpiPrefsEditor;
   });
 
-  // ---- Performance chart ----
-  $('ovPerf').innerHTML = `
-    <div class="ov-card-head">
-      <div><div class="ov-eyebrow">Performance</div><h3 class="ov-card-title">Spend &amp; reach</h3></div>
-      <div class="ov-legend"><span class="ov-leg"><span class="ov-leg-dot" style="background:var(--gold)"></span>Spend</span><span class="ov-leg"><span class="ov-leg-dot" style="background:oklch(0.7 0.12 60)"></span>Reach</span></div>
-    </div>
-    ${ovBigChart(asc)}`;
+  // ---- editable KPI cards (kpi_dashboard_prefs) ----
+  seg('kpi cards', ()=>{
+    const sel = getSel();
+    const allMonths = isAllMonthsSel(sel) || sel==null;
+    const rangeSummary = summarizeKpiRange(kpi);
+    const selRow = allMonths ? rangeSummary.totals : kpi.find(r=> String(r.period)===String(sel));
+    const priorRow = (()=>{ if(allMonths) return null; const i = reported.findIndex(r=> String(r.period)===String(sel)); return i>=0 ? reported[i+1] : null; })();
+    const cards = activeKpiCards();
+    $('ovKpis').innerHTML = cards.map((card,i)=>{
+      const def = metricDef(card.k); if(!def) return '';
+      const label = card.label || def.label;
+      const val = selRow ? metricValue(def, selRow) : null;
+      const prev = priorRow ? metricValue(def, priorRow) : null;
+      const delta = (val!=null && prev!=null && isFinite(prev) && prev!==0) ? (val-prev)/Math.abs(prev)*100 : null;
+      const up = delta!=null && delta>0;
+      const tone = delta==null ? 'idle' : ((def.lowerBetter ? !up : up) ? 'good' : 'bad');
+      const sub = (val==null)
+        ? (connected ? 'No data this period' : 'Connect your marketing data')
+        : (delta!=null ? `${up?'▲':'▼'} ${Math.abs(delta).toFixed(Math.abs(delta)<10?1:0)}% vs prior`
+           : (allMonths ? `cumulative · ${rangeSummary.monthCount} mo` : 'this month'));
+      const spark = reported.slice().reverse().map(r=> metricValue(def, r));
+      const display = val==null ? def.fmt(0) : def.fmt(val);
+      return `<div class="ov-kpi">
+        <div class="ov-kpi-label">${esc(label)}</div>
+        <div class="ov-kpi-val count-up" data-ovk="${i}">${esc(display)}</div>
+        <div class="ov-kpi-delta ${tone}">${esc(sub)}</div>
+        ${ovSpark(spark)}
+      </div>`;
+    }).join('') || `<div class="ov-kpi-empty note">No KPI cards selected. <button class="ov-inline-link" id="ovCustomize2" type="button">Customize</button></div>`;
+    cards.forEach((card,i)=>{
+      const def = metricDef(card.k); if(!def) return;
+      const val = selRow ? metricValue(def, selRow) : null;
+      dsCountUp($('ovKpis').querySelector(`[data-ovk="${i}"]`), val==null?0:val, v=> def.fmt(v), `ovk:${practiceId}:${sel}:${card.k}`);
+    });
+    if($('ovCustomize2') && typeof openKpiPrefsEditor==='function') $('ovCustomize2').onclick = openKpiPrefsEditor;
+  });
 
-  // ---- Current phase ----
-  const ds = milestoneDisplayStatusMap();
-  const miles = sortedMilestones();
-  const current = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
-  const delivered = (data.deliv||[]).filter(d=> d.status==='delivered').length;
-  const pct = current && current.progress_pct!=null ? current.progress_pct
-            : (data.deliv||[]).length ? Math.round(100*delivered/data.deliv.length) : 0;
-  $('ovPhase').innerHTML = current ? `
-    <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div><span class="ov-pct">${pct}%</span></div>
-    <h3 class="ov-card-title">${esc(current.name)}</h3>
-    <div class="ov-progress"><div class="ov-progress-fill" style="width:${pct}%"></div></div>
-    <a class="ov-link" href="#roadmap">View roadmap ↗</a>` : `
-    <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div></div>
-    <h3 class="ov-card-title">Kickoff</h3>
-    <p class="note">Your roadmap appears here once milestones are set.</p>`;
+  // ---- Performance chart (spend + reach across reported months) ----
+  seg('performance chart', ()=>{
+    const asc = [...reported].reverse();
+    $('ovPerf').innerHTML = `
+      <div class="ov-card-head">
+        <div><div class="ov-eyebrow">Performance</div><h3 class="ov-card-title">Spend &amp; reach</h3></div>
+        <div class="ov-legend"><span class="ov-leg"><span class="ov-leg-dot" style="background:var(--gold)"></span>Spend</span><span class="ov-leg"><span class="ov-leg-dot" style="background:oklch(0.7 0.12 60)"></span>Reach</span></div>
+      </div>
+      ${ovBigChart(asc)}`;
+  });
 
-  // ---- Live sync ----
-  const conns = (data.connections||[]);
-  const allGreen = conns.length>0 && conns.every(c=> c.status==='connected' && !c.last_error);
-  const syncRows = conns.length ? conns.slice(0,5).map(c=>{
-    const pend = c.status!=='connected';
-    const t = pend ? (c.status==='pending'?'Pending':c.status==='error'?'Reconnect':'Off') : (connAgo(c.last_synced_at)||'syncing');
-    return `<li class="ov-sync-row"><span class="ov-sync-name"><span class="ov-sync-ico ${pend?'off':'on'}"></span>${esc(platformInfo(c.provider).title)}</span><span class="ov-sync-t ${pend?'pend':''}">${esc(t)}</span></li>`;
-  }).join('') : `<li class="ov-sync-row"><span class="note">No sources connected yet.</span><a class="ov-link" href="#connections">Connect</a></li>`;
-  $('ovSync').innerHTML = `
-    <div class="ov-card-head"><div class="ov-eyebrow">Live sync</div>
-      <span class="ov-sync-status ${allGreen?'ok':''}"><span class="ov-sync-dot2"></span>${conns.length? (allGreen?'All green':'Needs attention') : 'Not set up'}</span></div>
-    <ul class="ov-sync-list">${syncRows}</ul>`;
+  // ---- Current phase (from milestones + deliverables) ----
+  seg('current phase', ()=>{
+    const ds = milestoneDisplayStatusMap();
+    const miles = sortedMilestones();
+    const current = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
+    const delivered = (data.deliv||[]).filter(d=> d.status==='delivered').length;
+    const pct = current && current.progress_pct!=null ? current.progress_pct
+              : (data.deliv||[]).length ? Math.round(100*delivered/data.deliv.length) : 0;
+    $('ovPhase').innerHTML = current ? `
+      <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div><span class="ov-pct">${pct}%</span></div>
+      <h3 class="ov-card-title">${esc(current.name)}</h3>
+      <div class="ov-progress"><div class="ov-progress-fill" style="width:${pct}%"></div></div>
+      <a class="ov-link" href="#roadmap">View roadmap ↗</a>` : `
+      <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div></div>
+      <h3 class="ov-card-title">Kickoff</h3>
+      <p class="note">Your roadmap appears here once milestones are set.</p>`;
+  });
 
-  // ---- Video pipeline (this month) ----
-  const vids = [...(data.video||[])].sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,4);
-  const vTone = s=> (s==='posted'||s==='delivered')?'good':(s==='editing'||s==='shot')?'warn':'muted';
-  $('ovVideos').innerHTML = `
-    <div class="ov-card-head"><div><div class="ov-eyebrow">Video pipeline</div><h3 class="ov-card-title">In production</h3></div>
-      <a class="ov-link sm" href="#video">View all ›</a></div>
-    ${vids.length ? `<ul class="ov-vlist">${vids.map(v=>`
-      <li class="ov-vrow"><span class="ov-vname"><span class="ov-vico"></span>${esc(v.item||'Untitled')}</span>
-      <span class="ov-vstat ${vTone(v.stage)}">${esc(stageLabel(v.stage))}</span></li>`).join('')}</ul>`
-      : `<p class="note" style="margin-top:12px">Video items appear here once production starts.</p>`}`;
+  // ---- Live sync (from platform_connections) ----
+  seg('live sync', ()=>{
+    const conns = (data.connections||[]);
+    const allGreen = conns.length>0 && conns.every(c=> c.status==='connected' && !c.last_error);
+    const rows = conns.length ? conns.slice(0,6).map(c=>{
+      const pend = c.status!=='connected';
+      const t = pend ? (c.status==='pending'?'Pending':c.status==='error'?'Reconnect':'Off') : (connAgo(c.last_synced_at)||'syncing…');
+      return `<li class="ov-sync-row"><span class="ov-sync-name">${ovWifi(pend)}${esc(platformInfo(c.provider).title)}</span><span class="ov-sync-t ${pend?'pend':''}">${esc(t)}</span></li>`;
+    }).join('') : `<li class="ov-sync-connect"><span class="note">No marketing data connected.</span><a class="ov-link" href="#connections">Connect your marketing data</a></li>`;
+    $('ovSync').innerHTML = `
+      <div class="ov-card-head"><div class="ov-eyebrow">Live sync</div>
+        ${conns.length ? `<span class="ov-sync-status ${allGreen?'ok':''}"><span class="ov-sync-dot2"></span>${allGreen?'All green':'Needs attention'}</span>` : ''}</div>
+      <ul class="ov-sync-list">${rows}</ul>`;
+  });
 
-  // ---- Latest updates (this week) ----
-  const ev = (typeof buildEngagementTimeline==='function' ? buildEngagementTimeline() : []).slice(0,5);
-  $('ovUpdates').innerHTML = `
-    <div class="ov-card-head"><div><div class="ov-eyebrow">Latest updates</div><h3 class="ov-card-title">Recent activity</h3></div></div>
-    ${ev.length ? `<ol class="ov-timeline">${ev.map(e=>`
-      <li class="ov-tl-item"><span class="ov-tl-dot"></span>
-      <div class="ov-tl-text">${esc(e.text||'')}</div>
-      <div class="ov-tl-time">${esc(connAgo(e.t)||'')}</div></li>`).join('')}</ol>`
-      : `<p class="note" style="margin-top:12px">Updates from your ROXIUM team will appear here.</p>`}`;
+  // ---- Video pipeline (this month) — real videos only ----
+  seg('video pipeline', ()=>{
+    const vids = [...(data.video||[])].sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,5);
+    const vTone = s=> (s==='posted'||s==='delivered')?'good':(s==='editing'||s==='shot')?'warn':'muted';
+    $('ovVideos').innerHTML = `
+      <div class="ov-card-head"><div><div class="ov-eyebrow">Video pipeline</div><h3 class="ov-card-title">This month</h3></div>
+        <a class="ov-link sm" href="#video">View all →</a></div>
+      ${vids.length ? `<ul class="ov-vlist">${vids.map(v=>`
+        <li class="ov-vrow"><span class="ov-vname">${ovVideoIco()}<span class="ov-vtxt">${esc(v.item||'Untitled')}</span></span>
+        <span class="ov-vstat ${vTone(v.stage)}">${esc(stageLabelOf(v.stage))}</span></li>`).join('')}</ul>`
+        : `<p class="note ov-empty-note">No videos in production yet.</p>`}`;
+  });
 
-  // reveal the KPI cards on paint
-  if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=> $('ovKpis')?.querySelectorAll('.reveal').forEach(x=> x.classList.add('in')));
+  // ---- Latest updates (this week) — notifications + engagement events ----
+  seg('latest updates', ()=>{
+    const weekAgo = Date.now() - 7*86400000;
+    const events = [];
+    (typeof buildEngagementTimeline==='function' ? buildEngagementTimeline() : []).forEach(e=>{
+      if(e && e.t) events.push({ t:e.t, text:e.text||'' });
+    });
+    (data.notif||[]).forEach(nItem=>{
+      const txt = nItem.title || nItem.message || nItem.body;
+      if(txt) events.push({ t:nItem.created_at, text:String(txt) });
+    });
+    // de-dup by text+minute, keep this week, newest first
+    const seen = new Set();
+    const week = events.filter(e=>{
+      const ts = new Date(e.t).getTime();
+      if(!isFinite(ts) || ts < weekAgo) return false;
+      const key = (e.text||'').toLowerCase().slice(0,60) + '|' + Math.round(ts/60000);
+      if(seen.has(key)) return false; seen.add(key); return true;
+    }).sort((a,b)=> new Date(b.t)-new Date(a.t)).slice(0,6);
+    $('ovUpdates').innerHTML = `
+      <div class="ov-card-head"><div><div class="ov-eyebrow">Latest updates</div><h3 class="ov-card-title">This week</h3></div>
+        <a class="ov-link sm" href="#updates">View all →</a></div>
+      ${week.length ? `<ol class="ov-timeline">${week.map(e=>`
+        <li class="ov-tl-item"><span class="ov-tl-dot"></span>
+        <div class="ov-tl-text">${esc(e.text)}</div>
+        <div class="ov-tl-time">${esc(connAgo(e.t)||'')}</div></li>`).join('')}</ol>`
+        : `<p class="note ov-empty-note">No updates yet this week.</p>`}`;
+  });
 }
+// small video glyph for the pipeline rows
+function ovVideoIco(){ return `<span class="ov-vico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2"/><path d="M22 8l-5 4 5 4V8z"/></svg></span>`; }
 
 /* ---------------- Marketing Setup Wizard (opt-in, client) ----------------
    Never blocks the portal. Opened via the Metrics CTA or the Connections tab.

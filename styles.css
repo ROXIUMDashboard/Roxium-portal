@@ -1277,10 +1277,17 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .ovh-title{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,4vw,40px);line-height:1.05;margin-top:8px}
 .ovh-title em{font-style:italic;color:var(--gold)}
 .ovh-sub{color:var(--muted);font-size:14px;margin-top:8px;max-width:640px}
-.ovh-range{display:inline-flex;gap:2px;padding:4px;border:1px solid var(--line);border-radius:var(--r-sm);background:oklch(1 0 0 / 2%)}
-.ov-range-btn{background:none;border:none;color:var(--muted);font:inherit;font-size:12px;padding:5px 11px;border-radius:calc(var(--r-sm) - 2px);cursor:pointer;transition:color var(--dur-1),background var(--dur-1)}
-.ov-range-btn:hover{color:var(--cream)}
-.ov-range-btn.active{color:var(--cream);background:oklch(1 0 0 / 6%);border:1px solid var(--line)}
+.ovh-range{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ov-monthlbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.ov-month{background:oklch(1 0 0 / 3%);border:1px solid var(--line);color:var(--cream);font:inherit;font-size:13px;
+  padding:8px 30px 8px 12px;border-radius:var(--r-sm);cursor:pointer;
+  appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A948A' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 9px center;background-size:14px}
+.ov-month:hover{border-color:oklch(1 0 0 / 20%)}
+.ov-month:focus{outline:none;border-color:var(--gold)}
+.ov-cust{font-size:12px}
+.ov-kpi-empty{grid-column:1/-1;padding:20px;border:1px dashed var(--line);border-radius:var(--r-lg);text-align:center}
+.ov-inline-link,.ov-sync-connect .ov-link{background:none;border:none;color:var(--gold);font:inherit;cursor:pointer;text-decoration:underline}
+.ov-empty-note{margin-top:14px}
 
 /* shared card */
 .ov-card{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-xl);padding:20px;
@@ -1334,19 +1341,20 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .ov-sync-list{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:11px}
 .ov-sync-row{display:flex;align-items:center;justify-content:space-between;font-size:13px}
 .ov-sync-name{display:flex;align-items:center;gap:9px}
-.ov-sync-ico{width:7px;height:7px;border-radius:50%;background:var(--gold)}
-.ov-sync-ico.off{background:var(--muted);opacity:.5}
+.ov-wifi{display:inline-flex;color:var(--gold)}
+.ov-wifi.pend{color:var(--muted);opacity:.55}
 .ov-sync-t{font-size:12px;color:var(--muted)}
 .ov-sync-t.pend{color:var(--amber)}
+.ov-sync-connect{display:flex;flex-direction:column;gap:6px;padding:4px 0}
 
 /* videos + updates grid */
 .ov-grid-even{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}
 .ov-vlist{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
 .ov-vrow{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:11px 13px;font-size:13.5px;transition:border-color var(--dur-1)}
 .ov-vrow:hover{border-color:var(--gold-soft)}
-.ov-vname{display:flex;align-items:center;gap:9px;min-width:0}
-.ov-vname .ov-vico{width:14px;height:10px;border:1.5px solid var(--muted);border-radius:2px;flex:0 0 auto}
-.ov-vrow span.ov-vname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-vname{display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.ov-vico{display:inline-flex;color:var(--muted);flex:0 0 auto}
+.ov-vtxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-vstat{font-size:10px;letter-spacing:.1em;text-transform:uppercase;flex:0 0 auto}
 .ov-vstat.good{color:var(--gold)}.ov-vstat.warn{color:var(--amber)}.ov-vstat.muted{color:var(--muted)}
 .ov-timeline{list-style:none;margin:16px 0 0;padding:0 0 0 8px;position:relative}
