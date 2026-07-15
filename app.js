@@ -1446,7 +1446,7 @@ function renderOverview(reported){
       const sub = (val==null)
         ? (connected ? 'No data this period' : 'Connect your marketing data')
         : (delta!=null ? `${up?'▲':'▼'} ${Math.abs(delta).toFixed(Math.abs(delta)<10?1:0)}% vs prior`
-           : (allMonths ? `cumulative · ${rangeSummary.monthCount} mo` : 'this month'));
+           : (allMonths ? `cumulative · ${rangeSummary.monthCount} mo` : periodLabel(sel)));
       const spark = reported.slice().reverse().map(r=> metricValue(def, r));
       const display = val==null ? def.fmt(0) : def.fmt(val);
       return `<div class="ov-kpi">
@@ -1511,9 +1511,15 @@ function renderOverview(reported){
       <ul class="ov-sync-list">${rows}</ul>`;
   });
 
-  // ---- Video pipeline (this month) — real videos only ----
+  // ---- Video pipeline (THIS MONTH) — only videos with activity in the current
+  //      calendar month, so the "This month" label is always accurate. ----
   seg('video pipeline', ()=>{
-    const vids = [...(data.video||[])].sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,5);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthName = now.toLocaleDateString(undefined, { month:'long' });
+    const vids = [...(data.video||[])]
+      .filter(v=> v.stage_since && new Date(v.stage_since).getTime() >= monthStart)
+      .sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,5);
     const vTone = s=> (s==='posted'||s==='delivered')?'good':(s==='editing'||s==='shot')?'warn':'muted';
     $('ovVideos').innerHTML = `
       <div class="ov-card-head"><div><div class="ov-eyebrow">Video pipeline</div><h3 class="ov-card-title">This month</h3></div>
@@ -1521,7 +1527,7 @@ function renderOverview(reported){
       ${vids.length ? `<ul class="ov-vlist">${vids.map(v=>`
         <li class="ov-vrow"><span class="ov-vname">${ovVideoIco()}<span class="ov-vtxt">${esc(v.item||'Untitled')}</span></span>
         <span class="ov-vstat ${vTone(v.stage)}">${esc(stageLabelOf(v.stage))}</span></li>`).join('')}</ul>`
-        : `<p class="note ov-empty-note">No videos in production yet.</p>`}`;
+        : `<p class="note ov-empty-note">No video activity in ${esc(monthName)}. <a class="ov-link" href="#video">See the full pipeline →</a></p>`}`;
   });
 
   // ---- Latest updates (this week) — notifications + engagement events ----
