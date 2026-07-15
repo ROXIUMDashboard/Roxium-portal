@@ -2529,6 +2529,22 @@ const uiPrompt  = (title, body='', value='', placeholder='') => uiDialog({title,
 // Reusable THEMED dropdown (replaces native <select> so the whole control + popup
 // match the portal). API: mount a container, pass {options:[{value,label}], value,
 // placeholder, onChange}. Fully keyboard-accessible (Enter/Space/Arrows/Esc).
+// Position a themed dropdown popup with position:fixed so it escapes any
+// overflow:hidden ancestor (accordion bodies, cards). Flips up when there isn't
+// room below; clamps inside the viewport. Call while the popup is visible.
+function positionTselPop(btn, pop){
+  pop.style.position='fixed'; pop.style.right='auto'; pop.style.bottom='auto';
+  const r = btn.getBoundingClientRect();
+  pop.style.minWidth = r.width+'px';
+  pop.style.left = r.left+'px';
+  pop.style.top = (r.bottom+4)+'px';
+  const ph = pop.offsetHeight, pw = pop.offsetWidth;
+  let top = r.bottom+4;
+  if(top + ph > window.innerHeight-6 && r.top - ph - 4 > 6) top = r.top - ph - 4;  // flip up
+  let left = r.left;
+  if(left + pw > window.innerWidth-6) left = Math.max(6, window.innerWidth - pw - 6);
+  pop.style.top = top+'px'; pop.style.left = left+'px';
+}
 function themedSelect(mount, { options=[], value=null, placeholder='Select…', onChange }={}){
   let open=false, val=value, opts=options;
   const labelFor = v => { const o=opts.find(x=> String(x.value)===String(v)); return o? o.label : placeholder; };
@@ -2544,7 +2560,7 @@ function themedSelect(mount, { options=[], value=null, placeholder='Select…', 
       ? opts.map(o=> `<div class="tsel-opt${String(o.value)===String(val)?' sel':''}" role="option" tabindex="-1" data-v="${esc(String(o.value))}">${esc(o.label)}</div>`).join('')
       : '<div class="tsel-empty">No options</div>'; };
   const setOpen = o=>{ open=o; pop.hidden=!o; btn.setAttribute('aria-expanded', o?'true':'false'); mount.classList.toggle('open', o);
-    if(o){ (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); } };
+    if(o){ positionTselPop(btn,pop); (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); } };
   const choose = v=>{ val=v; renderVal(); renderOpts(); setOpen(false); btn.focus(); onChange&&onChange(v); };
   btn.onclick = ()=> setOpen(!open);
   btn.onkeydown = e=>{ if(['ArrowDown','Enter',' '].includes(e.key)){ e.preventDefault(); setOpen(true); } };
@@ -2580,10 +2596,12 @@ function enhanceNativeSelect(sel){
   btn.type='button'; btn.className='tsel-btn'; btn.setAttribute('aria-haspopup','listbox'); btn.setAttribute('aria-expanded','false');
   btn.innerHTML = `<span class="tsel-val"></span><span class="tsel-caret" aria-hidden="true">▾</span>`;
   const pop = document.createElement('div'); pop.className='tsel-pop'; pop.setAttribute('role','listbox'); pop.hidden=true;
-  wrap.appendChild(btn); wrap.appendChild(pop); sel._tsel = { wrap, btn, pop };
+  wrap.appendChild(btn); wrap.appendChild(pop);
   const isOpen = ()=> wrap.classList.contains('open');
   const setOpen = o=>{ wrap.classList.toggle('open',o); pop.hidden=!o; btn.setAttribute('aria-expanded',o?'true':'false');
-    if(o) (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); };
+    if(o){ positionTselPop(btn,pop); (pop.querySelector('.tsel-opt.sel')||pop.querySelector('.tsel-opt'))?.focus(); } };
+  // expose open/toggle so a wrapping row can act as a bigger click target
+  sel._tsel = { wrap, btn, pop, open:()=>setOpen(true), toggle:()=>setOpen(!isOpen()) };
   const choose = v=>{ const changed = sel.value!==v; sel.value=v; themeSync(sel); setOpen(false); btn.focus(); if(changed) sel.dispatchEvent(new Event('change',{bubbles:true})); };
   btn.onclick = ()=> setOpen(!isOpen());
   btn.onkeydown = e=>{ if(['ArrowDown','Enter',' '].includes(e.key)){ e.preventDefault(); setOpen(true); } };
@@ -2603,6 +2621,12 @@ document.addEventListener('click', e=>{
   document.querySelectorAll('.tsel-wrap.open').forEach(w=>{ if(!w.contains(e.target)){
     w.classList.remove('open'); const p=w.querySelector('.tsel-pop'); if(p)p.hidden=true; w.querySelector('.tsel-btn')?.setAttribute('aria-expanded','false'); } });
 });
+// popups are position:fixed, so close any open dropdown on scroll (it would otherwise
+// detach from its button). Capture phase catches scrolls in any container.
+window.addEventListener('scroll', ()=>{
+  document.querySelectorAll('.tsel.open').forEach(w=>{
+    w.classList.remove('open'); const p=w.querySelector('.tsel-pop'); if(p)p.hidden=true; w.querySelector('.tsel-btn')?.setAttribute('aria-expanded','false'); });
+}, true);
 
 // Client-facing metric explainer — opens the themed dialog (same look as the rest of
 // the portal, no default browser UI) describing what a metric is, why it matters, and
@@ -2866,6 +2890,14 @@ function wireTeamProgress(t){
   t.querySelectorAll('.taskrow[data-id]').forEach(row=>{
     const id = row.dataset.id;
     row.addEventListener('dblclick', e=>{ if(e.target.closest('input,select,textarea,button,.tsel-wrap')) return; openDeliverableEditor(id); });
+    // Click anywhere on the row (not an editable field, drag grip, ⓘ, ✕, or the
+    // dropdown itself) opens the status dropdown — a much larger target than the pill.
+    row.addEventListener('click', e=>{
+      if(e.detail>1) return;   // the 2nd click of a dbl-click → let the editor handle it
+      if(e.target.closest('input,textarea,button,.tsel-wrap,.pp-drag')) return;
+      const sel = row.querySelector('select.statussel');
+      if(sel && sel._tsel){ e.stopPropagation(); sel._tsel.toggle(); }
+    });
     row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=>{
       let val = inp.value.trim();
       if(inp.type === 'date') val = val || null;
