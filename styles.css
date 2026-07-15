@@ -1329,11 +1329,12 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .ov-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .ov-chart-svg .line{stroke-dasharray:1;stroke-dashoffset:1;animation:ov-draw 1.6s var(--ease-out) forwards}
 .ov-chart-svg .line.dash{animation-duration:1.6s}
-/* interactive hover: markers hidden until hovered; crosshair fades in */
-.ov-pt{opacity:0;transition:opacity var(--dur-1) var(--ease-out)}
-.ov-pt.on{opacity:1}
-.ov-pt-spend{fill:var(--gold);stroke:var(--ink);stroke-width:1.5}
-.ov-pt-reach{fill:oklch(0.7 0.12 60);stroke:var(--ink);stroke-width:1.5}
+/* data points always visible (little gold dots); enlarge + glow on hover */
+.ov-pt{transition:r var(--dur-1) var(--ease-out),filter var(--dur-1) var(--ease-out)}
+.ov-pt-spend{fill:var(--gold);stroke:var(--ink);stroke-width:1.5;r:3}
+.ov-pt-reach{fill:oklch(0.7 0.12 60);stroke:var(--ink);stroke-width:1.25;r:2.4;opacity:.85}
+.ov-pt-spend.on{r:5.5;filter:drop-shadow(0 0 5px oklch(0.82 0.14 82 / 0.7))}
+.ov-pt-reach.on{r:4.5;opacity:1}
 .ov-cross{opacity:0;transition:opacity var(--dur-1)}
 .ov-hit{cursor:crosshair}
 .ov-tip{position:absolute;z-index:5;min-width:150px;pointer-events:none;background:var(--surface2);
@@ -1452,3 +1453,51 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .tb-notif-t{font-size:13px;line-height:1.35}
 .tb-notif-w{font-size:11px;color:var(--muted);margin-top:2px}
 .tb-notif-empty{padding:16px 10px;text-align:center}
+
+/* ============================================================================
+   CLIENT ROADMAP · premium, simplified, confidence-building (read-only)
+   ========================================================================== */
+.croad{display:flex;flex-direction:column;gap:30px}
+.croad-phases{display:flex;flex-direction:column;gap:14px}
+.croad-phase{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);
+  border-radius:var(--r-xl);padding:18px 22px;transition:border-color var(--dur-2) var(--ease-out),transform var(--dur-2) var(--ease-out)}
+.croad-phase:hover{border-color:oklch(0.82 0.14 82 / 40%);transform:translateY(-1px)}
+.croad-phase.state-planned{opacity:.72}
+.croad-phase-top{display:flex;align-items:center;gap:14px}
+.croad-phase-name{flex:1;min-width:0;font-family:var(--font-display);font-weight:600;font-size:19px;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.croad-phase-pill{flex:0 0 auto;font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:4px 11px;
+  border-radius:var(--r-full);border:1px solid var(--line);color:var(--muted)}
+.croad-phase-pill.complete{color:var(--green);border-color:oklch(0.74 0.12 155 / 40%)}
+.croad-phase-pill.current{color:var(--gold);border-color:var(--gold-soft)}
+.croad-phase-pct{flex:0 0 auto;font-family:var(--font-display);font-weight:600;font-size:22px;color:var(--gold);font-variant-numeric:tabular-nums}
+.croad-bar{height:6px;background:oklch(1 0 0 / 6%);border-radius:var(--r-full);margin-top:14px;overflow:hidden}
+.croad-bar-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));
+  transform-origin:left;animation:ov-grow 1.1s var(--ease-out) forwards}
+.croad-phase-items{margin-top:16px;border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column;gap:10px}
+.croad-mi{display:flex;align-items:center;gap:11px;font-size:14px}
+.croad-mi-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--gold);background:transparent}
+.croad-mi.done .croad-mi-dot{background:var(--gold);border-color:var(--gold)}
+.croad-mi.current .croad-mi-dot{background:var(--cream);border-color:var(--cream);box-shadow:0 0 0 4px oklch(1 0 0 / 8%)}
+.croad-mi-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.croad-mi-tag{flex:0 0 auto;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.croad-mi.current .croad-mi-tag{color:var(--gold)}
+.croad-mi.done .croad-mi-tag{color:var(--green)}
+
+/* modernized milestone timeline (You are here / Up next / Complete) */
+.croad-tl-head{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.croad-tl{display:flex;flex-wrap:wrap;gap:0;margin-top:18px}
+.croad-step{flex:1;min-width:180px;position:relative;padding:0 20px 8px 0}
+.croad-step-dot{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--gold);background:var(--ink);margin-bottom:14px;position:relative;z-index:1}
+.croad-step.done .croad-step-dot{background:var(--gold)}
+.croad-step.current .croad-step-dot{background:var(--cream);border-color:var(--cream)}
+.croad-step.current .croad-step-dot::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:1px solid var(--cream);opacity:.4;animation:ov-pulse 2.2s ease-in-out infinite}
+.croad-step::before{content:'';position:absolute;top:5px;left:14px;right:6px;height:1px;background:var(--line)}
+.croad-step:last-child::before{display:none}
+.croad-step-name{font-size:14.5px;letter-spacing:-.01em}
+.croad-step.current .croad-step-name{color:var(--gold)}
+.croad-step-tag{display:inline-block;font-size:9px;letter-spacing:.22em;text-transform:uppercase;margin-top:8px;color:var(--muted)}
+.croad-step.current .croad-step-tag{color:var(--gold)}
+.croad-step.done .croad-step-tag{color:var(--green)}
+.croad-step-date{margin-top:6px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);opacity:.7}
+@media(max-width:640px){.croad-step{flex:1 1 100%;padding-right:0}.croad-step::before{display:none}}

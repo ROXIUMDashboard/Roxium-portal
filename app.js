@@ -1446,7 +1446,7 @@ function renderOverview(reported){
       const sub = (val==null)
         ? (connected ? 'No data this period' : 'Connect your marketing data')
         : (delta!=null ? `${up?'▲':'▼'} ${Math.abs(delta).toFixed(Math.abs(delta)<10?1:0)}% vs prior`
-           : (allMonths ? `cumulative · ${rangeSummary.monthCount} mo` : 'this month'));
+           : (allMonths ? `cumulative · ${rangeSummary.monthCount} mo` : periodLabel(sel)));
       const spark = reported.slice().reverse().map(r=> metricValue(def, r));
       const display = val==null ? def.fmt(0) : def.fmt(val);
       return `<div class="ov-kpi">
@@ -1511,9 +1511,15 @@ function renderOverview(reported){
       <ul class="ov-sync-list">${rows}</ul>`;
   });
 
-  // ---- Video pipeline (this month) — real videos only ----
+  // ---- Video pipeline (THIS MONTH) — only videos with activity in the current
+  //      calendar month, so the "This month" label is always accurate. ----
   seg('video pipeline', ()=>{
-    const vids = [...(data.video||[])].sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,5);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthName = now.toLocaleDateString(undefined, { month:'long' });
+    const vids = [...(data.video||[])]
+      .filter(v=> v.stage_since && new Date(v.stage_since).getTime() >= monthStart)
+      .sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,5);
     const vTone = s=> (s==='posted'||s==='delivered')?'good':(s==='editing'||s==='shot')?'warn':'muted';
     $('ovVideos').innerHTML = `
       <div class="ov-card-head"><div><div class="ov-eyebrow">Video pipeline</div><h3 class="ov-card-title">This month</h3></div>
@@ -1521,7 +1527,7 @@ function renderOverview(reported){
       ${vids.length ? `<ul class="ov-vlist">${vids.map(v=>`
         <li class="ov-vrow"><span class="ov-vname">${ovVideoIco()}<span class="ov-vtxt">${esc(v.item||'Untitled')}</span></span>
         <span class="ov-vstat ${vTone(v.stage)}">${esc(stageLabelOf(v.stage))}</span></li>`).join('')}</ul>`
-        : `<p class="note ov-empty-note">No videos in production yet.</p>`}`;
+        : `<p class="note ov-empty-note">No video activity in ${esc(monthName)}. <a class="ov-link" href="#video">See the full pipeline →</a></p>`}`;
   });
 
   // ---- Latest updates (this week) — notifications + engagement events ----
@@ -3161,27 +3167,61 @@ function renderTimeline(isTeam){
     return;
   }
   if(isTeam) renderMilestoneTeamList(wrap);
-  else renderMilestoneClientTimeline(wrap);
+  else renderClientRoadmap(wrap);
 }
-function renderMilestoneClientTimeline(wrap){
-  wrap.className = 'timeline';
+/* CLIENT roadmap — premium, simplified, confidence-building. Phase progress
+   (moving bars + %), the current phase expanded, then a modernized milestone
+   timeline (You are here / Up next / Complete). Read-only; editing is the TEAM
+   view. All live from milestones + their normalized display status. */
+function renderClientRoadmap(wrap){
+  wrap.className = 'croad';
   const ds = milestoneDisplayStatusMap();
-  wrap.innerHTML = sortedMilestones().map(m=>{
-    const st = ds.get(m.id) || m.status;
-    const tagLabel = st==='done'?'Complete':st==='current'?'You are here':'Up next';
-    let dateEl = '';
-    if(st==='done'){
-      const dd = m.completed_on || m.target_date;
-      if(dd) dateEl = `<span class="tldate-done">✓ Completed ${esc(prettyDate(dd))}</span>`;
-    } else if(m.target_date){
-      dateEl = `<span class="tldate-plan">Planned · ${esc(prettyDate(m.target_date,'month'))}</span>`;
-    }
-    const prog = m.progress_pct!=null ? `<span class="msprog">${m.progress_pct}%</span>` : '';
-    const link = m.link_url ? `<a class="mslink" href="${esc(m.link_url)}" target="_blank" rel="noopener">View link</a>` : '';
-    return `<div class="tl ${st}" data-milestone="${m.id}"><div class="dot"></div><div class="n">${esc(m.name)}</div>
-       <div class="d">${esc(m.detail||'')}</div>${prog}${link}
-       <span class="tag">${tagLabel}</span>${dateEl}</div>`;
+  const phases = milestonePhases();
+  const miles = sortedMilestones();
+
+  const phaseCards = phases.map(phase=>{
+    const items = miles.filter(m=> ((m.phase||'').trim() || MILE_PHASE_DEFAULT)===phase);
+    const done = items.filter(m=> ds.get(m.id)==='done').length;
+    const hasCurrent = items.some(m=> ds.get(m.id)==='current');
+    const pct = items.length ? Math.round(100*done/items.length) : 0;
+    const state = (items.length && done===items.length) ? 'complete' : (hasCurrent || done>0) ? 'current' : 'planned';
+    const pill = state==='complete' ? 'Complete' : state==='current' ? 'In progress' : 'Planned';
+    const expand = state==='current' ? `<div class="croad-phase-items">${items.map(m=>{
+      const st = ds.get(m.id);
+      const tag = st==='done' ? 'Done' : st==='current' ? 'In progress' : 'Up next';
+      return `<div class="croad-mi ${st}"><span class="croad-mi-dot"></span><span class="croad-mi-name">${esc(m.name)}</span><span class="croad-mi-tag">${tag}</span></div>`;
+    }).join('')}</div>` : '';
+    return `<div class="croad-phase state-${state}">
+      <div class="croad-phase-top">
+        <span class="croad-phase-name">${esc(phase)}</span>
+        <span class="croad-phase-pill ${state}">${pill}</span>
+        <span class="croad-phase-pct">${pct}%</span>
+      </div>
+      <div class="croad-bar"><div class="croad-bar-fill" style="width:${pct}%"></div></div>
+      ${expand}
+    </div>`;
   }).join('');
+
+  const steps = miles.map(m=>{
+    const st = ds.get(m.id) || m.status;
+    const tag = st==='done' ? 'Complete' : st==='current' ? 'You are here' : 'Up next';
+    let date = '';
+    if(st==='done'){ const dd = m.completed_on || m.target_date; if(dd) date = `✓ ${prettyDate(dd,'month')}`; }
+    else if(m.target_date){ date = `Planned · ${prettyDate(m.target_date,'month')}`; }
+    return `<div class="croad-step ${st}">
+      <span class="croad-step-dot"></span>
+      <div class="croad-step-name">${esc(m.name)}</div>
+      <div class="croad-step-tag">${tag}</div>
+      ${date ? `<div class="croad-step-date">${esc(date)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="croad-phases">${phaseCards}</div>
+    <div class="croad-tl-wrap">
+      <div class="croad-tl-head">Milestone timeline</div>
+      <div class="croad-tl">${steps}</div>
+    </div>`;
 }
 function renderMilestoneTeamList(wrap){
   wrap.className = 'mslist';
