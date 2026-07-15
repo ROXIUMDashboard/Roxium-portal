@@ -1351,8 +1351,10 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 /* current phase */
 .ov-pct{font-size:12px;color:var(--gold)}
 .ov-progress{height:6px;border-radius:var(--r-full);background:oklch(1 0 0 / 6%);overflow:hidden;margin-top:14px}
-.ov-progress-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));width:0;animation:ov-grow 1.1s var(--ease-out) forwards}
-@keyframes ov-grow{from{transform:scaleX(0);transform-origin:left}to{transform:none}}
+.ov-progress-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));transform-origin:left center;animation:ov-grow 1.1s var(--ease-out) forwards}
+/* transform-origin must live on the element (a keyframe-only origin is ignored →
+   the bar would scale from its center). Fills left→right like a real progress bar. */
+@keyframes ov-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 .ov-link{display:inline-flex;align-items:center;gap:5px;margin-top:16px;font-size:12px;color:var(--gold);text-decoration:none}
 .ov-link:hover{filter:brightness(1.12)}
 .ov-link.sm{margin-top:0;color:var(--muted)}
@@ -1501,6 +1503,18 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 /* ============================================================================
    PROJECT PROGRESS (client) · numbered phase cards + status-icon deliverables
    ========================================================================== */
+/* Milestone hero — compact themed summary above the phases */
+.pp-hero{margin-bottom:26px}
+.pp-hero-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.pp-hero-card{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:15px 18px;display:flex;flex-direction:column;gap:8px;transition:border-color var(--dur-1) var(--ease-out)}
+.pp-hero-card:hover{border-color:var(--gold-soft)}
+.pp-hero-k{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.pp-hero-v{font-family:var(--font-display);font-weight:600;font-size:18px;letter-spacing:-.01em;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-hero-v.gold{color:var(--gold);display:flex;align-items:baseline;gap:7px;font-size:27px;font-variant-numeric:tabular-nums}
+.pp-hero-sub{font-family:var(--font-sans);font-size:10.5px;font-weight:400;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pp-hero .pp-tl{margin-top:22px}
+@media(max-width:720px){.pp-hero-row{grid-template-columns:1fr}}
 .pp{display:flex;flex-direction:column;gap:14px}
 .pp-phase{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-xl);
   padding:18px 22px 20px;transition:border-color var(--dur-2) var(--ease-out)}
@@ -1521,7 +1535,7 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-caret{flex:0 0 auto;color:var(--muted);transition:transform var(--dur-2) var(--ease-out);font-size:12px}
 .pp-phase.collapsed .pp-caret{transform:rotate(-90deg)}
 .pp-bar{height:6px;background:oklch(1 0 0 / 6%);border-radius:var(--r-full);margin-top:14px;overflow:hidden}
-.pp-bar-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));animation:ov-grow 1.1s var(--ease-out) forwards}
+.pp-bar-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));transform-origin:left center;animation:ov-grow 1.1s var(--ease-out) forwards}
 /* smooth accordion (grid-rows 0fr↔1fr) */
 .pp-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur-3) var(--ease-out),margin-top var(--dur-3) var(--ease-out);margin-top:14px}
 .pp-phase.collapsed .pp-body{grid-template-rows:0fr;margin-top:0}
@@ -1530,9 +1544,11 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
   background:oklch(1 0 0 / 2%);padding:11px 14px;transition:border-color var(--dur-1)}
 .pp-item:hover{border-color:var(--gold-soft)}
 .pp-item-l{display:flex;align-items:center;gap:11px;min-width:0}
-.pp-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pp-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream);font-weight:500}
+.pp-item-name.note{color:var(--muted);font-weight:400}
 .pp-item-stat{flex:0 0 auto;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
-.pp-item-stat.done{color:var(--gold)}.pp-item-stat.prog{color:var(--amber)}.pp-item-stat.plan{color:var(--muted)}.pp-item-stat.attn{color:var(--red)}
+.pp-item-stat.done{color:var(--gold)}.pp-item-stat.prog{color:var(--amber)}.pp-item-stat.plan{color:var(--muted)}.pp-item-stat.attn{color:var(--red)}.pp-item-stat.sched{color:var(--amber)}
+.pp-ico.sched{border:1.5px solid var(--amber);color:var(--amber)}
 /* status icons */
 .pp-ico{flex:0 0 auto;width:20px;height:20px;display:grid;place-items:center;border-radius:50%}
 .pp-ico.done{color:var(--gold);border:1.5px solid var(--gold-soft)}
@@ -1561,8 +1577,9 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-step.done .pp-step-tag{color:var(--green)}
 .pp-foot{display:flex;align-items:center;gap:9px;margin-top:24px;padding:14px 18px;border:1px solid var(--line);border-radius:var(--r-lg);
   background:oklch(1 0 0 / 2%);font-size:13px;color:var(--muted)}
-.pp-foot b{color:var(--cream);font-weight:500}
+.pp-foot b{color:var(--cream);font-weight:600}
 .pp-foot-ico{color:var(--gold)}
+.pp-foot.done{color:var(--green)}.pp-foot.done .pp-foot-ico{color:var(--green)}.pp-foot.done b{color:var(--cream)}
 @media(max-width:640px){.pp-step{flex:1 1 100%;padding-right:0}.pp-step::before{display:none}.pp-phase-name{font-size:17px}}
 
 /* ---- TEAM (editable) Project Progress ---- */
@@ -1603,9 +1620,11 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-item.taskover{border-color:var(--gold);box-shadow:0 -2px 0 var(--gold) inset}
 .pp-mile.over{border-color:var(--gold)}
 /* folded-in editable milestones */
-.pp-mile-sec{margin-top:30px}
+.pp-mile-sec{margin-top:4px;margin-bottom:6px}
 .pp-mile-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .pp-mile-title{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+/* section label between the milestones block and the phase deliverables */
+.pp-sec-head{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:30px 0 14px}
 .pp-mile-list{display:flex;flex-direction:column;gap:8px}
 .pp-mile{cursor:default}
 .pp-mile-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
