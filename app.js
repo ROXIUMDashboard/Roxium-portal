@@ -318,6 +318,44 @@ function teamWorkspace(){
   if(v === 'controls') return 'controls';
   return 'clients';
 }
+// Top-bar title + subtitle per view (replaces the big hero heading as the
+// primary "where am I" cue in the sidebar shell).
+const PAGE_META = {
+  roadmap:{t:'Roadmap', s:'Every milestone, where you stand, and what happens next'},
+  deliverables:{t:'Progress', s:'Deliverables, grouped by phase'},
+  video:{t:'Video', s:'Your production pipeline, stage by stage'},
+  metrics:{t:'Performance', s:'Live marketing KPIs against target'},
+  updates:{t:'Updates', s:'The latest from your ROXIUM team'},
+  connections:{t:'Connections', s:'Every data source powering your dashboards'},
+  access:{t:'Invite team', s:'Add colleagues to this practice'},
+  operations:{t:'Operations', s:'Client health, delivery and attention at a glance'},
+  controls:{t:'Team Controls', s:'Clients, access, approvals and reporting'},
+  team:{t:'Client Controls', s:'Controls for the practice you have open'},
+};
+function updatePageHeader(name){
+  const meta = PAGE_META[name] || { t:'ROXIUM', s:'' };
+  const titleEl = $('pageTitle'), subEl = $('pageSub');
+  if(titleEl) titleEl.textContent = meta.t;
+  if(subEl){
+    // client views carry the open practice name so a team member always knows
+    // whose portal they're looking at.
+    const isClientView = CLIENT_PORTAL_VIEWS.includes(name) && name!=='team';
+    const pname = (isClientView && data.practice) ? data.practice.name : '';
+    subEl.textContent = pname ? `${pname} · ${meta.s}` : meta.s;
+  }
+}
+function closeSidebarDrawer(){
+  document.getElementById('app')?.classList.remove('sb-open');
+  const scrim = $('sbScrim'); if(scrim){ scrim.classList.remove('show'); scrim.classList.add('hidden'); }
+  $('sbToggle')?.setAttribute('aria-expanded','false');
+}
+function toggleSidebarDrawer(){
+  const app = document.getElementById('app'); if(!app) return;
+  const open = app.classList.toggle('sb-open');
+  const scrim = $('sbScrim');
+  if(scrim){ scrim.classList.toggle('hidden', !open); requestAnimationFrame(()=> scrim.classList.toggle('show', open)); }
+  $('sbToggle')?.setAttribute('aria-expanded', open? 'true':'false');
+}
 function showView(name){
   if(name === 'admin') name = 'controls';
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
@@ -327,6 +365,9 @@ function showView(name){
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
+  document.querySelectorAll('.sb-link').forEach(l=> l.classList.toggle('active', l.dataset.view===name));
+  updatePageHeader(name);
+  closeSidebarDrawer();            // navigating closes the mobile drawer
   syncChrome();
   // Charts built while their tab was hidden have a zero-size canvas — resize once the
   // Metrics tab is actually visible so the live graph shows without a manual month switch.
@@ -356,19 +397,25 @@ function syncChrome(){
     t.classList.toggle('active', active);
   });
   $('btnPreview').classList.toggle('hidden', !realTeam || globalTeam);
-  $('practiceSwitcher').classList.toggle('hidden', !realTeam || ws!=='clients');
+  // Client picker lives permanently in the top bar for team members — it's how
+  // they enter a client's portal from anywhere (the old "Clients" top-nav tab is
+  // gone; the sidebar Client Portal group appears once a practice is selected).
+  $('practiceSwitcher').classList.toggle('hidden', !realTeam);
   document.querySelector('.hero')?.classList.toggle('hidden', globalTeam);
-  $('tabnav').classList.toggle('hidden', globalTeam);
-  document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
-  document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
-  document.querySelector('.tab[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
-  document.querySelector('section[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
-  TEAM_ONLY_VIEWS.forEach(v=>{
-    const tab = document.querySelector(`.tab[data-view="${v}"]`);
-    if(tab) tab.classList.toggle('hidden', !teamView);
-    const panel = document.querySelector(`section[data-view="${v}"]`);
-    if(panel) panel.classList.toggle('hidden', !teamView);
-  });
+  $('tabnav')?.classList.toggle('hidden', globalTeam);
+  // toggle a view's tab AND its sidebar link together
+  const navToggle = (view, hide)=>{
+    document.querySelector(`.tab[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+    document.querySelector(`.sb-link[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+    document.querySelector(`section[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+  };
+  navToggle('access', !canSeeAccessTab());
+  navToggle('connections', !canSeeConnectionsTab());
+  TEAM_ONLY_VIEWS.forEach(v=> navToggle(v, !teamView));
+  // sidebar groups: Operations for real team members; Client Portal whenever a
+  // practice is open (client, or team viewing/previewing a client).
+  $('sbOpsGroup')?.classList.toggle('hidden', !realTeam);
+  $('sbClientGroup')?.classList.toggle('hidden', !(practiceId || (me && me.role==='client')));
   if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
 }
@@ -378,6 +425,9 @@ window.addEventListener('hashchange', ()=>{
   if(pendingDeepLink && practiceId) requestAnimationFrame(()=> applyDeepLinkFocus());
 });
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
+// Sidebar drawer (mobile): toggle button + scrim tap to close.
+$('sbToggle')?.addEventListener('click', toggleSidebarDrawer);
+$('sbScrim')?.addEventListener('click', closeSidebarDrawer);
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];

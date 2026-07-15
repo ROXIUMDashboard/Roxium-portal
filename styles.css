@@ -1119,3 +1119,87 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 /* ---- modals: fade the overlay, pop the card ---- */
 .modal{transition:opacity var(--dur-2) var(--ease-out)}
 .modal.open .modalcard,.modal.open .modalcard-wide{animation:ds-pop var(--dur-3) var(--ease-spring) both}
+
+/* ============================================================================
+   APP SHELL · fixed left sidebar + top utility bar  (Phase B)
+   The sidebar drives the SAME hash router as before (showView). Old .tabs and
+   .teamtopnav stay in the DOM but hidden, so router tab-sync + teamnav handlers
+   keep working. Content shifts right via padding-left — no markup moved.
+   ========================================================================== */
+:root{--sb-w:250px}
+.app-shell{padding-left:var(--sb-w);min-height:100vh;transition:padding-left var(--dur-3) var(--ease-out)}
+.tabs{display:none !important}            /* replaced by the sidebar */
+.teamtopnav{display:none !important}      /* replaced by the sidebar Operations group */
+
+/* ---- sidebar ---- */
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:var(--sb-w);z-index:var(--z-overlay);
+  background:var(--surface);border-right:1px solid var(--line-soft);
+  display:flex;flex-direction:column;padding:18px 14px;gap:10px;
+  transition:transform var(--dur-3) var(--ease-out)}
+.sb-brand{display:flex;align-items:center;gap:11px;padding:6px 8px 14px;text-decoration:none;border-bottom:1px solid var(--line-soft)}
+.sb-logo{flex:0 0 auto;width:34px;height:34px;border-radius:var(--r-md);display:grid;place-items:center;
+  background:linear-gradient(150deg,var(--gold),var(--gold-dim));color:var(--ink);
+  font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px}
+.sb-brandtext{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+.sb-brandtext .mark{font-size:13px;letter-spacing:.34em;color:var(--cream)}
+.sb-brandtext .mark b{color:var(--gold)}
+.sb-brandsub{font-size:10px;letter-spacing:.06em;color:var(--muted);margin-top:3px;white-space:nowrap}
+.sb-nav{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:18px;padding-top:6px}
+.sb-group{display:flex;flex-direction:column;gap:2px}
+.sb-group-label{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);padding:0 10px 6px}
+.sb-link{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:var(--r-md);
+  color:var(--muted);text-decoration:none;font-size:13.5px;letter-spacing:.01em;position:relative;
+  transition:background var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out)}
+.sb-link::before{content:'';flex:0 0 auto;width:17px;height:17px;background:currentColor;opacity:.85;
+  -webkit-mask:var(--i,none) center/contain no-repeat;mask:var(--i,none) center/contain no-repeat}
+.sb-link:hover{background:var(--surface2);color:var(--cream)}
+.sb-link.active{background:var(--gold-soft);color:var(--gold)}
+.sb-link.active::before{opacity:1}
+.sb-link.active::after{content:'';position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:var(--r-full);background:var(--gold)}
+.sb-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-foot{display:flex;align-items:center;gap:9px;padding:11px 10px;border-top:1px solid var(--line-soft);
+  font-size:11px;color:var(--muted)}
+.sb-sync-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 0 3px rgba(123,168,122,.16)}
+.sb-foot-txt{display:flex;flex-direction:column;line-height:1.3;color:var(--cream);font-size:11.5px}
+.sb-foot-sub{color:var(--muted);font-size:10px}
+/* nav icons (mask so they inherit link color) */
+.sb-link[data-i="roadmap"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='6' cy='19' r='2'/><circle cx='18' cy='5' r='2'/><path d='M8 19h6a3 3 0 0 0 3-3V8'/></svg>")}
+.sb-link[data-i="progress"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 11l3 3L22 4'/><path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/></svg>")}
+.sb-link[data-i="video"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='5' width='15' height='14' rx='2'/><path d='M22 8l-5 4 5 4V8z'/></svg>")}
+.sb-link[data-i="metrics"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3v18h18'/><path d='M7 14l4-4 3 3 5-6'/></svg>")}
+.sb-link[data-i="updates"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9'/><path d='M13.7 21a2 2 0 0 1-3.4 0'/></svg>")}
+.sb-link[data-i="plug"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6'/></svg>")}
+.sb-link[data-i="invite"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M19 8v6M22 11h-6'/></svg>")}
+.sb-link[data-i="ops"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='9' rx='1'/><rect x='14' y='3' width='7' height='5' rx='1'/><rect x='14' y='12' width='7' height='9' rx='1'/><rect x='3' y='16' width='7' height='5' rx='1'/></svg>")}
+.sb-link[data-i="controls"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='4' y1='21' x2='4' y2='14'/><line x1='4' y1='10' x2='4' y2='3'/><line x1='12' y1='21' x2='12' y2='12'/><line x1='12' y1='8' x2='12' y2='3'/><line x1='20' y1='21' x2='20' y2='16'/><line x1='20' y1='12' x2='20' y2='3'/><line x1='1' y1='14' x2='7' y2='14'/><line x1='9' y1='8' x2='15' y2='8'/><line x1='17' y1='16' x2='23' y2='16'/></svg>")}
+.sb-link[data-i="wrench"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2 2.6-2.6z'/></svg>")}
+
+/* ---- top utility bar ---- */
+.topbar{position:sticky;top:0;z-index:var(--z-header);background:rgba(15,14,19,.86);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line-soft)}
+@supports not (backdrop-filter:blur(8px)){.topbar{background:#0F0E13}}
+.topbar-inner{display:flex;align-items:center;gap:14px;height:60px;padding:0 26px;max-width:1320px;margin:0 auto}
+.tb-titles{flex:1;min-width:0}
+.tb-title{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px;color:var(--cream);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-sub{font-size:11px;letter-spacing:.02em;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-right{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.sb-toggle{display:none;flex-direction:column;gap:4px;background:none;border:none;cursor:pointer;padding:6px}
+.sb-toggle span{display:block;width:20px;height:2px;background:var(--cream);border-radius:2px;transition:transform var(--dur-2) var(--ease-out),opacity var(--dur-1)}
+.sb-scrim{position:fixed;inset:0;background:rgba(8,7,10,.6);z-index:calc(var(--z-overlay) - 1);opacity:0;transition:opacity var(--dur-2)}
+.sb-scrim.show{opacity:1}
+
+/* content max-width alignment with the topbar */
+.app-shell>.wrap,.app-shell .app-content{max-width:1320px}
+/* the shell owns the outer gutter now; the hero loses its heavy top padding */
+.app-shell .hero{padding:26px 0 26px}
+
+/* ---- responsive: sidebar becomes an off-canvas drawer ---- */
+@media(max-width:900px){
+  .app-shell{padding-left:0}
+  .sidebar{transform:translateX(-100%);box-shadow:var(--shadow-lg)}
+  .app-shell.sb-open .sidebar{transform:none}
+  .sb-toggle{display:flex}
+  .sb-scrim:not(.hidden){display:block}
+}
+@media(min-width:901px){.sb-scrim{display:none}}
