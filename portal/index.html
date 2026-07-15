@@ -45,10 +45,48 @@
 </div>
 
 <!-- ============ APP ============ -->
-<div id="app" class="hidden">
-  <header><div class="wrap bar">
-    <div class="mark">ROX<b>I</b>UM</div>
-    <div class="right">
+<div id="app" class="hidden app-shell">
+
+  <!-- ===== Left sidebar app shell (drives the same hash router) ===== -->
+  <aside id="sidebar" class="sidebar" aria-label="Primary navigation">
+    <a href="#roadmap" class="sb-brand" id="sbBrand">
+      <span class="sb-logo">R</span>
+      <span class="sb-brandtext"><b class="mark">ROX<b>I</b>UM</b><span class="sb-brandsub">Practice growth portal</span></span>
+    </a>
+    <nav class="sb-nav">
+      <div class="sb-group" id="sbClientGroup">
+        <div class="sb-group-label">Client Portal</div>
+        <a href="#overview"     class="sb-link" data-view="overview"     data-i="overview"><span class="sb-txt">Overview</span></a>
+        <a href="#roadmap"      class="sb-link" data-view="roadmap"      data-i="roadmap"><span class="sb-txt">Roadmap</span></a>
+        <a href="#deliverables" class="sb-link" data-view="deliverables" data-i="progress"><span class="sb-txt">Progress</span></a>
+        <a href="#video"        class="sb-link" data-view="video"        data-i="video"><span class="sb-txt">Video</span></a>
+        <a href="#metrics"      class="sb-link" data-view="metrics"      data-i="metrics"><span class="sb-txt">Metrics</span></a>
+        <a href="#updates"      class="sb-link" data-view="updates"      data-i="updates"><span class="sb-txt">Updates</span></a>
+        <a href="#connections"  class="sb-link accessonly hidden" data-view="connections" data-i="plug"><span class="sb-txt">Connections</span></a>
+        <a href="#access"       class="sb-link accessonly hidden" data-view="access"      data-i="invite"><span class="sb-txt">Invite team</span></a>
+      </div>
+      <div class="sb-group teamonly hidden" id="sbOpsGroup">
+        <div class="sb-group-label">Operations</div>
+        <a href="#operations" class="sb-link" data-view="operations" data-i="ops"><span class="sb-txt">Operations</span></a>
+        <a href="#controls"   class="sb-link" data-view="controls"   data-i="controls"><span class="sb-txt">Team Controls</span></a>
+        <a href="#team"       class="sb-link" data-view="team"       data-i="wrench"><span class="sb-txt">Client Controls</span></a>
+      </div>
+    </nav>
+    <div class="sb-foot" id="sbFoot" title="Reporting sync status">
+      <span class="sb-sync-dot"></span>
+      <span class="sb-foot-txt">Live sync<span class="sb-foot-sub" id="sbSyncSub">all sources connected</span></span>
+    </div>
+  </aside>
+  <div id="sbScrim" class="sb-scrim hidden" aria-hidden="true"></div>
+
+  <!-- ===== Top utility bar ===== -->
+  <header class="topbar"><div class="topbar-inner">
+    <button id="sbToggle" class="sb-toggle" aria-label="Toggle navigation" aria-expanded="false" type="button"><span></span><span></span><span></span></button>
+    <div class="tb-titles">
+      <div class="tb-title" id="pageTitle">ROXIUM</div>
+      <div class="tb-sub" id="pageSub"></div>
+    </div>
+    <div class="tb-right">
       <div id="practiceSwitcher" class="switcher hidden">
         <button type="button" id="practiceSwitcherBtn" class="switcher-btn picker" aria-haspopup="listbox" aria-expanded="false">
           <span class="switcher-btn-label" id="practiceCurrentName">Select client…</span>
@@ -65,8 +103,9 @@
     </div>
   </div></header>
 
-  <!-- Team workspace · primary navigation (internal Roxium employees) -->
-  <nav id="teamTopNav" class="teamtopnav teamonly hidden" aria-label="Team workspace">
+  <!-- Legacy top nav kept in DOM (hidden) so the router's tab-sync code and any
+       teamnav handlers keep working; the sidebar above is the visible nav. -->
+  <nav id="teamTopNav" class="teamtopnav teamonly hidden" aria-label="Team workspace" hidden>
     <div class="wrap teamtopnav-inner">
       <a href="#operations" class="teamtop" data-teamnav="operations">Operations Dashboard</a>
       <a href="#roadmap" class="teamtop" data-teamnav="clients">Clients</a>
@@ -77,24 +116,14 @@
   <div id="notifyBar" class="notifybar hidden"></div>
 
   <div class="wrap">
-    <div class="hero">
-      <div class="eyebrow">Live Performance & Delivery</div>
-      <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
-      <div class="updated" id="updated"></div>
-      <div class="stats" id="heroStats"></div>
-    </div>
-
-    <!-- Answer-first Overview: what changed / needs you / what's next.
-         Client portal only; derived live from KPI + delivery + connection data. -->
-    <div id="clientOverview" class="client-overview hidden" aria-label="Your overview"></div>
-
     <!-- Marketing Setup Wizard — opened on demand (never blocks the portal). -->
     <div id="setupWizardModal" class="modal wizard-modal hidden" aria-hidden="true">
       <div id="setupWizard" class="wizard modalcard modalcard-wide"></div>
     </div>
 
-    <!-- Tabbed navigation (hash-routed) -->
-    <nav class="tabs" id="tabnav">
+    <!-- Legacy tab nav kept in DOM (hidden) so router tab-sync keeps working. -->
+    <nav class="tabs" id="tabnav" hidden>
+      <a href="#overview"     class="tab" data-view="overview">Overview</a>
       <a href="#roadmap"      class="tab" data-view="roadmap">Roadmap</a>
       <a href="#deliverables" class="tab" data-view="deliverables">Progress</a>
       <a href="#video"        class="tab" data-view="video">Video</a>
@@ -104,6 +133,19 @@
       <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
+
+    <!-- OVERVIEW · default client landing — answer-first summary + headline KPIs -->
+    <section class="view" data-view="overview">
+      <div class="ov-hero">
+        <div class="eyebrow">Live Performance &amp; Delivery</div>
+        <h1 id="heroTitle" class="ov-h1">Where you are, <em>exactly.</em></h1>
+        <div class="updated" id="updated"></div>
+      </div>
+      <div class="stats" id="heroStats"></div>
+      <!-- what changed / needs you / what's next — derived live from KPI +
+           delivery + connection data. -->
+      <div id="clientOverview" class="client-overview hidden" aria-label="Your overview"></div>
+    </section>
 
     <!-- Milestone timeline -->
     <section class="view" data-view="roadmap">

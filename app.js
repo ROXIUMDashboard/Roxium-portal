@@ -237,12 +237,14 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','connections','access','team','controls'];
+const VIEWS = ['overview','operations','roadmap','deliverables','video','metrics','updates','connections','access','team','controls'];
 const TEAM_ONLY_VIEWS = ['operations','team','controls'];
-const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','connections','access','team'];
+const CLIENT_PORTAL_VIEWS = ['overview','roadmap','deliverables','video','metrics','updates','connections','access','team'];
+// Default client landing (sidebar shell): the answer-first Overview.
+const CLIENT_HOME = 'overview';
 const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
-let lastClientView = 'roadmap';
+let lastClientView = CLIENT_HOME;
 let lastAdminTab = localStorage.getItem('lastAdminTab') || 'clients';
 function activateAdminTab(name){
   name = name || 'clients';
@@ -275,7 +277,7 @@ function currentView(){
   let h = hashParts().view;
   if(h === 'admin') h = 'controls';   // legacy hash alias
   if(VIEWS.includes(h)) return h;
-  return (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
+  return (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
 }
 let pendingDeepLink = null;   // { view, delivId, videoId, phase, milestoneId }
 function captureDeepLinkFromHash(){
@@ -318,15 +320,57 @@ function teamWorkspace(){
   if(v === 'controls') return 'controls';
   return 'clients';
 }
+// Top-bar title + subtitle per view (replaces the big hero heading as the
+// primary "where am I" cue in the sidebar shell).
+const PAGE_META = {
+  overview:{t:'Overview', s:'What changed, what needs you, and what\'s next'},
+  roadmap:{t:'Roadmap', s:'Every milestone, where you stand, and what happens next'},
+  deliverables:{t:'Progress', s:'Deliverables, grouped by phase'},
+  video:{t:'Video', s:'Your production pipeline, stage by stage'},
+  metrics:{t:'Performance', s:'Live marketing KPIs against target'},
+  updates:{t:'Updates', s:'The latest from your ROXIUM team'},
+  connections:{t:'Connections', s:'Every data source powering your dashboards'},
+  access:{t:'Invite team', s:'Add colleagues to this practice'},
+  operations:{t:'Operations', s:'Client health, delivery and attention at a glance'},
+  controls:{t:'Team Controls', s:'Clients, access, approvals and reporting'},
+  team:{t:'Client Controls', s:'Controls for the practice you have open'},
+};
+function updatePageHeader(name){
+  const meta = PAGE_META[name] || { t:'ROXIUM', s:'' };
+  const titleEl = $('pageTitle'), subEl = $('pageSub');
+  if(titleEl) titleEl.textContent = meta.t;
+  if(subEl){
+    // client views carry the open practice name so a team member always knows
+    // whose portal they're looking at.
+    const isClientView = CLIENT_PORTAL_VIEWS.includes(name) && name!=='team';
+    const pname = (isClientView && data.practice) ? data.practice.name : '';
+    subEl.textContent = pname ? `${pname} · ${meta.s}` : meta.s;
+  }
+}
+function closeSidebarDrawer(){
+  document.getElementById('app')?.classList.remove('sb-open');
+  const scrim = $('sbScrim'); if(scrim){ scrim.classList.remove('show'); scrim.classList.add('hidden'); }
+  $('sbToggle')?.setAttribute('aria-expanded','false');
+}
+function toggleSidebarDrawer(){
+  const app = document.getElementById('app'); if(!app) return;
+  const open = app.classList.toggle('sb-open');
+  const scrim = $('sbScrim');
+  if(scrim){ scrim.classList.toggle('hidden', !open); requestAnimationFrame(()=> scrim.classList.toggle('show', open)); }
+  $('sbToggle')?.setAttribute('aria-expanded', open? 'true':'false');
+}
 function showView(name){
   if(name === 'admin') name = 'controls';
-  if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
-  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
-  if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
-  if(name === 'connections' && !canSeeConnectionsTab()) name = 'roadmap';
+  if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
+  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = CLIENT_HOME;
+  if(name === 'access' && !canSeeAccessTab()) name = CLIENT_HOME;
+  if(name === 'connections' && !canSeeConnectionsTab()) name = CLIENT_HOME;
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
+  document.querySelectorAll('.sb-link').forEach(l=> l.classList.toggle('active', l.dataset.view===name));
+  updatePageHeader(name);
+  closeSidebarDrawer();            // navigating closes the mobile drawer
   syncChrome();
   // Charts built while their tab was hidden have a zero-size canvas — resize once the
   // Metrics tab is actually visible so the live graph shows without a manual month switch.
@@ -356,21 +400,28 @@ function syncChrome(){
     t.classList.toggle('active', active);
   });
   $('btnPreview').classList.toggle('hidden', !realTeam || globalTeam);
-  $('practiceSwitcher').classList.toggle('hidden', !realTeam || ws!=='clients');
-  document.querySelector('.hero')?.classList.toggle('hidden', globalTeam);
-  $('tabnav').classList.toggle('hidden', globalTeam);
-  document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
-  document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
-  document.querySelector('.tab[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
-  document.querySelector('section[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
-  TEAM_ONLY_VIEWS.forEach(v=>{
-    const tab = document.querySelector(`.tab[data-view="${v}"]`);
-    if(tab) tab.classList.toggle('hidden', !teamView);
-    const panel = document.querySelector(`section[data-view="${v}"]`);
-    if(panel) panel.classList.toggle('hidden', !teamView);
-  });
-  if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
-  if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
+  // Client picker lives permanently in the top bar for team members — it's how
+  // they enter a client's portal from anywhere (the old "Clients" top-nav tab is
+  // gone; the sidebar Client Portal group appears once a practice is selected).
+  $('practiceSwitcher').classList.toggle('hidden', !realTeam);
+  $('tabnav')?.classList.toggle('hidden', globalTeam);
+  // toggle a view's tab AND its sidebar link together
+  const navToggle = (view, hide)=>{
+    document.querySelector(`.tab[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+    document.querySelector(`.sb-link[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+    document.querySelector(`section[data-view="${view}"]`)?.classList.toggle('hidden', hide);
+  };
+  // Overview is a client view (router-managed); show it whenever a practice is open.
+  navToggle('overview', !(practiceId || (me && me.role==='client')));
+  navToggle('access', !canSeeAccessTab());
+  navToggle('connections', !canSeeConnectionsTab());
+  TEAM_ONLY_VIEWS.forEach(v=> navToggle(v, !teamView));
+  // sidebar groups: Operations for real team members; Client Portal whenever a
+  // practice is open (client, or team viewing/previewing a client).
+  $('sbOpsGroup')?.classList.toggle('hidden', !realTeam);
+  $('sbClientGroup')?.classList.toggle('hidden', !(practiceId || (me && me.role==='client')));
+  if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#'+CLIENT_HOME;
+  if(!canSeeAccessTab() && currentView()==='access') location.hash = '#'+CLIENT_HOME;
 }
 window.addEventListener('hashchange', ()=>{
   captureDeepLinkFromHash();
@@ -378,6 +429,9 @@ window.addEventListener('hashchange', ()=>{
   if(pendingDeepLink && practiceId) requestAnimationFrame(()=> applyDeepLinkFocus());
 });
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
+// Sidebar drawer (mobile): toggle button + scrim tap to close.
+$('sbToggle')?.addEventListener('click', toggleSidebarDrawer);
+$('sbScrim')?.addEventListener('click', closeSidebarDrawer);
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -865,6 +919,37 @@ function aggregateOpsDailyByDay(rows, viewPeriod, isLive){
   });
 }
 const prefersReducedMotion = ()=> { try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){ return false; } };
+
+/* ---------------- motion engine (Phase A) ----------------------------------
+   Small, GPU-friendly helpers shared across the app. All are reduced-motion
+   safe: when the user opts out they set the final state instantly. Presentation
+   only — nothing here changes data or control flow. */
+
+// Count a numeric tile from its previous painted value to the new one. Keyed so
+// re-renders with an UNCHANGED value don't re-animate (no flicker on refresh).
+const _countState = {};
+function dsCountUp(el, to, fmt, key){
+  if(!el) return;
+  const prev = _countState[key];
+  _countState[key] = to;
+  if(prefersReducedMotion() || to==null || prev===to || typeof to!=='number' || !isFinite(to)){
+    el.textContent = fmt(to); return;
+  }
+  const from = (typeof prev==='number' && isFinite(prev)) ? prev : 0;
+  const dur = 620, t0 = performance.now();
+  (function tick(now){
+    const p = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);           // easeOutCubic
+    el.textContent = fmt(from + (to - from) * eased);
+    if(p < 1) requestAnimationFrame(tick);
+    else el.textContent = fmt(to);
+  })(performance.now());
+}
+
+// Section entrance is handled in CSS by the `viewin` keyframe on `.view.active`
+// (replays on each navigation) — no JS needed. A shared IntersectionObserver for
+// scroll-reveal lands in the landing-page pass, where content is static and won't
+// re-render (the portal re-renders too often for scroll-reveal without flicker).
 function buildInvestChartOptions(highlightIdx, en){
   const cream='#F2EDE3', muted='#9A948A', line='rgba(201,168,76,.12)';
   const clicksOnly = en.clicks && !en.spend && !en.reach && !en.impr;
@@ -1759,14 +1844,20 @@ function render(){
   const mNote = allMonthsView
     ? (rangeSummary && rangeSummary.monthCount ? `across ${rangeSummary.monthCount} month${rangeSummary.monthCount===1?'':'s'}` : 'awaiting data')
     : (latest ? monthNote(latest.period, isLive) : 'awaiting data');
+  // raw + fmt let the tile count up to its value; the deliverables tile is a
+  // ratio string, so it stays static (rendered via `static`).
   const heroes = [
-    {v: fmt$(hv('spend')),   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: mNote},
-    {v: fmtNum(hv('reach')), l:'Reach',         cls: hv('reach')!=null?'g':'i', note: heroSource? `people reached ${mNote}`:'awaiting data'},
-    {v: fmtNum(hv('clicks')),l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: mNote},
-    {v: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
+    {raw: hv('spend'),  fmt: fmt$,   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: mNote},
+    {raw: hv('reach'),  fmt: fmtNum, l:'Reach',         cls: hv('reach')!=null?'g':'i', note: heroSource? `people reached ${mNote}`:'awaiting data'},
+    {raw: hv('clicks'), fmt: fmtNum, l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: mNote},
+    {static: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
   ];
-  $('heroStats').innerHTML = heroes.map(h=>
-    `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
+  $('heroStats').innerHTML = heroes.map((h,i)=>
+    `<div class="stat"><div class="v count-up" data-hi="${i}">${h.static!=null? esc(h.static) : (h.raw==null?'—':h.fmt(h.raw))}</div><div class="l">${esc(h.l)}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${esc(h.note)}</div></div>`).join('');
+  heroes.forEach((h,i)=>{
+    if(h.static!=null) return;
+    dsCountUp($('heroStats').querySelector(`.v[data-hi="${i}"]`), h.raw, v=> v==null?'—':h.fmt(v), `hero:${practiceId}:${i}`);
+  });
 
   // Answer-first Overview (client portal): what changed / needs you / next.
   // Always uses the two newest reported months (independent of the month picker),
@@ -5152,7 +5243,7 @@ $('btnResetData').onclick = async ()=>{
     }});
     // clients
     (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
-      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#roadmap'; loadAll(); } }));
+      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#'+CLIENT_HOME; loadAll(); } }));
     return cmds;
   }
   function draw(q){
