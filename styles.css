@@ -1210,9 +1210,21 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 .sb-toggle:hover{color:var(--cream);background:oklch(1 0 0 / 4%)}
 .sb-toggle-arrow{transition:transform var(--dur-2) var(--ease-out);transform-origin:12px 12px}
 .app-shell.sb-collapsed .sb-toggle-arrow{transform:scaleX(-1)}   /* arrow flips when collapsed */
+/* Collapse control mounted ON the sidebar (top-right of the brand row) so the close
+   action lives on the sidebar itself, not stranded in the topbar next to the page. */
+.sb-collapse{position:absolute;top:15px;right:12px;display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;background:none;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
+  color:var(--muted);transition:color var(--dur-1),background var(--dur-1),border-color var(--dur-1)}
+.sb-collapse:hover{color:var(--cream);border-color:var(--gold-soft);background:oklch(1 0 0 / 4%)}
 /* Desktop slide open/close */
 .app-shell.sb-collapsed{padding-left:0}
 .app-shell.sb-collapsed .sidebar{transform:translateX(-100%)}
+/* Desktop: the topbar toggle is only the RE-OPEN control for a collapsed sidebar;
+   while the sidebar is open, collapsing is done from #sbCollapse on the sidebar. */
+@media(min-width:901px){
+  .sb-toggle{display:none}
+  .app-shell.sb-collapsed .sb-toggle{display:inline-flex}
+}
 .sb-scrim{position:fixed;inset:0;background:rgba(8,7,10,.6);z-index:calc(var(--z-overlay) - 1);opacity:0;transition:opacity var(--dur-2)}
 .sb-scrim.show{opacity:1}
 
@@ -1230,6 +1242,7 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
   .sidebar{transform:translateX(-100%);box-shadow:var(--shadow-lg)}
   .app-shell.sb-open .sidebar{transform:none}
   .sb-toggle{display:flex}
+  .sb-collapse{display:none}   /* mobile uses the topbar hamburger + scrim to close */
   .sb-scrim:not(.hidden){display:block}
 }
 @media(min-width:901px){.sb-scrim{display:none}}
@@ -1633,3 +1646,83 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-mile-tag{flex:0 0 auto;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .pp-mile-tag.done{color:var(--green)}.pp-mile-tag.current{color:var(--gold)}
 .pp-mile-edit{flex:0 0 auto}
+
+/* ===== Video Pipeline (stage groups + filter chips) ===== */
+.vp-root{display:block}
+.vp-filters{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-bottom:22px}
+.vp-chip{display:inline-flex;align-items:center;gap:8px;background:var(--surface);background-image:var(--glass);
+  border:1px solid var(--line);border-radius:var(--r-full);color:var(--cream);font-family:var(--font-sans);
+  font-size:12.5px;padding:7px 14px;cursor:pointer;transition:border-color var(--dur-1),background var(--dur-1),color var(--dur-1)}
+.vp-chip:hover{border-color:var(--gold-soft)}
+.vp-chip.on{border-color:var(--gold);color:var(--gold);background:oklch(0.82 0.14 82 / 7%)}
+.vp-chip-n{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-left:2px}
+.vp-chip.on .vp-chip-n{color:var(--gold)}
+.vp-clear{background:none;border:none;color:var(--gold);font-family:var(--font-sans);font-size:11.5px;
+  letter-spacing:.02em;cursor:pointer;padding:6px 10px;margin-left:2px;opacity:.85;transition:opacity var(--dur-1)}
+.vp-clear:hover{opacity:1;text-decoration:underline}
+.vp-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.vp-dot.plan{background:oklch(1 0 0 / 24%)}
+.vp-dot.sched{background:var(--amber)}
+.vp-dot.prog{background:var(--gold)}
+.vp-dot.done{background:var(--green)}
+.vp{display:flex;flex-direction:column;gap:12px}
+.vp-stage{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-xl);
+  transition:border-color var(--dur-2) var(--ease-out)}
+.vp-stage:hover{border-color:oklch(0.82 0.14 82 / 30%)}
+.vp-stage.dropstage.over{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-soft) inset}
+.vp-stage-head{display:flex;align-items:center;gap:12px;width:100%;background:none;border:none;cursor:pointer;
+  color:var(--cream);text-align:left;padding:15px 18px}
+.vp-stage-name{flex:1;min-width:0;font-family:var(--font-display);font-weight:600;font-size:17px;letter-spacing:-.01em;color:var(--cream)}
+.vp-stage-n{flex:0 0 auto;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;
+  min-width:24px;text-align:center;border:1px solid var(--line);border-radius:var(--r-full);padding:2px 10px}
+.vp-caret{flex:0 0 auto;color:var(--muted);font-size:12px;transition:transform var(--dur-2) var(--ease-out)}
+.vp-stage.collapsed .vp-caret{transform:rotate(-90deg)}
+.vp-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur-3) var(--ease-out)}
+.vp-stage.collapsed .vp-body{grid-template-rows:0fr}
+.vp-body-inner{overflow:hidden;min-height:0;display:flex;flex-direction:column;gap:7px;padding:0 12px 12px}
+.vp-item{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);
+  border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:10px 13px;transition:border-color var(--dur-1)}
+.vp-item:hover{border-color:var(--gold-soft)}
+.vp-item[data-vid]{cursor:pointer}
+.vp-item-l{display:flex;align-items:center;gap:11px;min-width:0;flex:1}
+.vp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream);font-weight:500}
+.vp-item-r{display:flex;align-items:center;gap:9px;flex:0 0 auto}
+.vp-date{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.vp-flag{flex:0 0 auto;color:var(--gold);font-size:12px}
+.vp-flag.client{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.vp-act{display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid var(--line);border-radius:var(--r-sm);
+  color:var(--muted);background:none;cursor:pointer;font-size:12px;text-decoration:none;transition:border-color var(--dur-1),color var(--dur-1)}
+.vp-act:hover{border-color:var(--gold);color:var(--gold)}
+.vp-info{background:none;border:1px solid var(--line);border-radius:50%;width:24px;height:24px;color:var(--muted);
+  cursor:pointer;font-size:12px;flex:0 0 auto;transition:border-color var(--dur-1),color var(--dur-1)}
+.vp-info:hover{border-color:var(--gold-soft);color:var(--gold)}
+.vp-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:4px;flex:0 0 auto;transition:color var(--dur-1)}
+.vp-del:hover{color:var(--red)}
+.vp-item-r .tsel-wrap{min-width:150px}
+.vp-add{align-self:flex-start;background:none;border:1px dashed var(--line);border-radius:var(--r-md);color:var(--muted);
+  cursor:pointer;padding:8px 14px;font-size:12px;transition:border-color var(--dur-1),color var(--dur-1)}
+.vp-add:hover{border-color:var(--gold-soft);color:var(--gold)}
+.vp-empty{padding:8px 2px;font-size:12.5px}
+.vp-item.dragging{opacity:.4}
+.vp-item-edit .pp-drag{cursor:grab}
+.vp-item.warn{border-color:oklch(0.79 0.13 66 / 40%)}
+.vp-item.overdue{border-color:oklch(0.66 0.19 25 / 45%)}
+.vp-owner{flex:0 0 auto;font-size:10px;letter-spacing:.06em;color:var(--muted);border:1px solid var(--line);
+  border-radius:var(--r-full);padding:1px 8px;text-transform:uppercase}
+.vp-cc{flex:0 0 auto;font-size:11px;color:var(--muted);white-space:nowrap}
+@media(max-width:640px){
+  .vp-item{flex-wrap:wrap}
+  .vp-item-r{flex-wrap:wrap;gap:7px}
+  .vp-item-r .tsel-wrap{min-width:120px}
+}
+/* Internal video comment thread (in the detail modal) */
+.vc-list{display:flex;flex-direction:column;gap:8px;margin:2px 0 12px}
+.vc-row{border:1px solid var(--line);border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:9px 12px}
+.vc-head{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.vc-author{font-size:12px;font-weight:600;color:var(--cream)}
+.vc-date{font-size:10.5px;color:var(--muted);flex:1}
+.vc-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:2px 4px;transition:color var(--dur-1)}
+.vc-del:hover{color:var(--red)}
+.vc-body{font-size:13px;color:var(--cream);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.vc-add{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.vc-add .btn{flex:0 0 auto}
