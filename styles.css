@@ -1727,6 +1727,38 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
   .vp-item-r{flex-wrap:wrap;gap:7px}
   .vp-item-r .tsel-wrap{min-width:120px}
 }
+
+/* ===== Updates — "What's New" center ===== */
+.up-sec{margin-bottom:26px}
+.up-sec-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.up-sec-head>span:first-child{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold)}
+.up-sec-n{font-size:11px;color:var(--muted)}
+.up-list{display:flex;flex-direction:column;gap:9px}
+.up-item{display:flex;align-items:center;gap:14px;background:var(--surface);background-image:var(--glass);
+  border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;transition:border-color var(--dur-1) var(--ease-out)}
+.up-item:hover{border-color:var(--gold-soft)}
+.up-item.pinned{border-color:var(--gold-soft);background:oklch(0.82 0.14 82 / 4%)}
+.up-ico{flex:0 0 auto;width:38px;height:38px;display:grid;place-items:center;border-radius:var(--r-md);
+  border:1px solid var(--line);background:oklch(1 0 0 / 3%);color:var(--muted)}
+.up-ico-good{color:var(--green);border-color:oklch(0.74 0.12 155 / 35%)}
+.up-ico-gold{color:var(--gold);border-color:var(--gold-soft)}
+.up-ico-muted{color:var(--muted)}
+.up-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.up-text{color:var(--cream);font-weight:500;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.up-meta{font-size:11.5px;color:var(--muted)}
+.up-time{flex:0 0 auto;font-size:11.5px;color:var(--muted);white-space:nowrap}
+.up-actions{flex:0 0 auto;display:flex;align-items:center;gap:4px;opacity:0;transition:opacity var(--dur-1)}
+.up-item:hover .up-actions,.up-item.pinned .up-actions{opacity:1}
+.up-pin,.up-edit,.up-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:5px;border-radius:var(--r-sm);transition:color var(--dur-1),background var(--dur-1)}
+.up-pin:hover,.up-edit:hover{color:var(--gold);background:oklch(1 0 0 / 5%)}
+.up-pin.on{color:var(--gold)}
+.up-del:hover{color:var(--red);background:oklch(1 0 0 / 5%)}
+@media(max-width:640px){.up-actions{opacity:1}.up-text{white-space:normal}}
+
+/* Sidebar "new updates" count badge */
+.sb-count{margin-left:auto;flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;
+  border-radius:var(--r-full);background:var(--gold);color:var(--ink);font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+
 /* Internal video comment thread (in the detail modal) */
 .vc-list{display:flex;flex-direction:column;gap:8px;margin:2px 0 12px}
 .vc-row{border:1px solid var(--line);border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:9px 12px}

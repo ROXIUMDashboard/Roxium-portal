@@ -50,7 +50,7 @@
 
   <!-- ===== Left sidebar app shell (drives the same hash router) ===== -->
   <aside id="sidebar" class="sidebar" aria-label="Primary navigation">
-    <a href="#roadmap" class="sb-brand" id="sbBrand">
+    <a href="#overview" class="sb-brand" id="sbBrand">
       <span class="sb-logo">R</span>
       <span class="sb-brandtext"><b class="mark">ROX<b>I</b>UM</b><span class="sb-brandsub">Practice growth portal</span></span>
     </a>
@@ -65,7 +65,7 @@
         <a href="#deliverables" class="sb-link" data-view="deliverables" data-i="progress"><span class="sb-txt">Progress</span></a>
         <a href="#video"        class="sb-link" data-view="video"        data-i="video"><span class="sb-txt">Video</span></a>
         <a href="#metrics"      class="sb-link" data-view="metrics"      data-i="metrics"><span class="sb-txt">Metrics</span></a>
-        <a href="#updates"      class="sb-link" data-view="updates"      data-i="updates"><span class="sb-txt">Updates</span></a>
+        <a href="#updates"      class="sb-link" data-view="updates"      data-i="updates"><span class="sb-txt">Updates</span><span class="sb-count hidden" id="sbUpdCount"></span></a>
         <a href="#connections"  class="sb-link accessonly hidden" data-view="connections" data-i="plug"><span class="sb-txt">Connections</span></a>
         <a href="#access"       class="sb-link accessonly hidden" data-view="access"      data-i="invite"><span class="sb-txt">Invite team</span></a>
       </div>
@@ -252,8 +252,13 @@
 
     <!-- Activity feed -->
     <section class="view" data-view="updates">
-      <h2>Latest <em>updates</em></h2>
-      <div class="sub">Posted by your ROXIUM team as work ships — with delivered work and completed milestones woven in.</div>
+      <div class="sechead">
+        <div>
+          <h2>What's <em>new</em></h2>
+          <div class="sub" id="updSub">Today, yesterday, and this week's highlights — everything important, at a glance.</div>
+        </div>
+        <button class="btn ghost sm" id="updHistBtn" type="button">View history</button>
+      </div>
       <div id="feed"></div>
     </section>
 
