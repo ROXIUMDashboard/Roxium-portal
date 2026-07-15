@@ -812,6 +812,16 @@ async function loadAll(){
       .eq('practice_id', practiceId);
     if(!pcErr && Array.isArray(pc)) data.connections = pc;
   }catch(_){ /* pre-migration DB */ }
+  // Internal video comment threads (team-only; RLS returns nothing to clients).
+  // Fetched separately so a pre-migration DB can't reject the main load.
+  data.vcomments = [];
+  if(isTeamView()){
+    try{
+      const { data: vc, error: vcErr } = await sb.from('video_comments')
+        .select('*').eq('practice_id', practiceId).order('created_at');
+      if(!vcErr && Array.isArray(vc)) data.vcomments = vc;
+    }catch(_){ /* pre-migration DB */ }
+  }
   try{ await loadKpiPrefs(); }catch(_){ /* defaults render fine */ }
   render();
   if(isTeamView() && currentView()==='operations') loadOperationsData(true);
@@ -3257,14 +3267,18 @@ function videoRow(v, isTeam){
   if(isTeam){
     const ageChip = sla ? `<span class="agechip ${sla}" title="${daysIn(v.stage_since)} days in this stage">${daysIn(v.stage_since)}d</span>` : '';
     const flag = v.blocked ? `<span class="vp-flag" title="${esc(v.blocked_reason||'Waiting on practice')}">⚑</span>` : '';
+    const owner = v.owner_seat ? `<span class="vp-owner" title="Assignee">${esc(v.owner_seat)}</span>` : '';
+    const nComments = (data.vcomments||[]).filter(c=> c.video_id===v.id).length;
+    const commentChip = nComments ? `<span class="vp-cc" title="${nComments} internal comment${nComments===1?'':'s'}">💬 ${nComments}</span>` : '';
     return `<div class="vp-item vp-item-edit ${v.blocked?'blocked':''} ${sla}" draggable="true" data-vid="${v.id}">
       <span class="vp-item-l">
         <span class="pp-drag" title="Drag to another stage">⋮⋮</span>
         <span class="vp-dot ${stageTone(v.stage)}"></span>
         <span class="vp-name"${v.description?` title="${esc(v.description)}"`:''}>${esc(v.item)}</span>
-        ${flag}
+        ${flag}${owner}
       </span>
       <span class="vp-item-r">
+        ${commentChip}
         ${dateStr?`<span class="vp-date">${esc(dateStr)}</span>`:''}
         ${ageChip}${videoPerfCell(v)}${actions}
         <button class="vp-info" type="button" data-open="${v.id}" title="Open details">ⓘ</button>
@@ -3423,6 +3437,14 @@ function openVideoDetail(id){
     `<div class="histrow"><span class="hstage">${stageLabel(h.stage)}</span><span class="hdate">${fmtHistTime(h.moved_at)}</span><button class="histdel" data-hid="${h.id}" title="Delete">✕</button></div>`).join('')
     : '<div class="note">No history yet.</div>';
 
+  // Internal comment thread (team-only). Never shown to clients.
+  const comments = (data.vcomments||[]).filter(c=> c.video_id===id).sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+  const commentRows = comments.length ? comments.map(c=>
+    `<div class="vc-row" data-cid="${c.id}">
+      <div class="vc-head"><span class="vc-author">${esc(c.author_name||'Team')}</span><span class="vc-date">${fmtHistTime(c.created_at)}</span><button class="vc-del" data-cid="${c.id}" title="Delete comment">✕</button></div>
+      <div class="vc-body">${esc(c.body)}</div></div>`).join('')
+    : '<div class="note">No comments yet — start the thread below.</div>';
+
   const m = $('modal');
   m.innerHTML = `<div class="modalcard">
     <div class="modalhead"><h3 style="margin:0">${esc(v.item)}</h3><button class="modalx" id="mClose">✕</button></div>
@@ -3433,8 +3455,10 @@ function openVideoDetail(id){
       <label class="mlabel">Description (what this asset is — shown on hover)</label>
       <textarea class="cellinput mfield mtextarea" id="mDesc" rows="2" placeholder="e.g. 3-min educational video on facelift recovery timeline">${esc(v.description||'')}</textarea>
 
-      <label class="mlabel">Current stage</label>
-      <div class="mstage">${stageLabel(v.stage)} · ${daysIn(v.stage_since)} days in stage</div>
+      <div class="mform-row">
+        <div><label class="mlabel">Assignee (owner seat)</label><input class="cellinput mfield" id="mOwner" value="${esc(v.owner_seat||'')}" placeholder="e.g. AL"></div>
+        <div><label class="mlabel">Current stage</label><div class="mstage">${stageLabel(v.stage)} · ${daysIn(v.stage_since)}d in stage</div></div>
+      </div>
 
       <label class="mlabel">Date entered ${stageLabel(v.stage)} (auto-set on move — edit to schedule ahead or correct)</label>
       <input type="date" class="dateedit mfield" id="mStageDate" value="${(v.stage_since||'').slice(0,10)}">
@@ -3447,6 +3471,13 @@ function openVideoDetail(id){
 
       <label class="mlabel">Stage history</label>
       <div class="histbox">${histRows}</div>
+
+      <label class="mlabel">Internal comments <span class="note">(team-only — never shown to the client)</span></label>
+      <div class="vc-list">${commentRows}</div>
+      <div class="vc-add">
+        <textarea class="cellinput mfield mtextarea" id="mComment" rows="2" placeholder="Add an internal note…"></textarea>
+        <button class="btn sm" id="mAddComment" type="button">Post comment</button>
+      </div>
     </div>
     <div class="modalfoot">
       <button class="btn" id="mSave">Save changes</button>
@@ -3475,11 +3506,32 @@ function openVideoDetail(id){
     };
   });
 
+  // internal comments: add + delete (team-only; RLS enforces it too)
+  $('mAddComment').onclick = async ()=>{
+    const body = $('mComment').value.trim(); if(!body){ $('mComment').focus(); return; }
+    $('mAddComment').disabled = true;
+    const { error } = await sb.from('video_comments').insert({
+      video_id: id, practice_id: practiceId, author_id: (me&&me.id)||null,
+      author_name: (me && me.full_name) || 'ROXIUM team', body,
+    });
+    $('mAddComment').disabled = false;
+    if(error){ $('mMsg').textContent = /relation .* does not exist/i.test(error.message) ? 'Run the video-comments migration first.' : error.message; return; }
+    await loadAll(); openVideoDetail(id);   // reopen so the thread refreshes
+  };
+  m.querySelectorAll('.vc-del').forEach(b=> b.onclick = async e=>{
+    e.stopPropagation();
+    if(!await uiConfirm('Delete this comment?', '', { danger:true, confirmLabel:'Delete' })) return;
+    const { error } = await sb.from('video_comments').delete().eq('id', b.dataset.cid);
+    if(error){ uiAlert('Delete failed', esc(error.message)); return; }
+    await loadAll(); openVideoDetail(id);
+  });
+
   $('mSave').onclick = async ()=>{
     const stageDate = $('mStageDate').value; // yyyy-mm-dd or ''
     const patch = {
       item: $('mName').value.trim()||v.item,
       description: $('mDesc').value.trim()||null,
+      owner_seat: $('mOwner').value.trim()||null,
       stage_since: stageDate ? new Date(stageDate+'T12:00:00').toISOString() : v.stage_since,
       blocked_reason: $('mBlock').value.trim()||null,
       blocked: !!$('mBlock').value.trim(),

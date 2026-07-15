@@ -1707,8 +1707,22 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .vp-item-edit .pp-drag{cursor:grab}
 .vp-item.warn{border-color:oklch(0.79 0.13 66 / 40%)}
 .vp-item.overdue{border-color:oklch(0.66 0.19 25 / 45%)}
+.vp-owner{flex:0 0 auto;font-size:10px;letter-spacing:.06em;color:var(--muted);border:1px solid var(--line);
+  border-radius:var(--r-full);padding:1px 8px;text-transform:uppercase}
+.vp-cc{flex:0 0 auto;font-size:11px;color:var(--muted);white-space:nowrap}
 @media(max-width:640px){
   .vp-item{flex-wrap:wrap}
   .vp-item-r{flex-wrap:wrap;gap:7px}
   .vp-item-r .tsel-wrap{min-width:120px}
 }
+/* Internal video comment thread (in the detail modal) */
+.vc-list{display:flex;flex-direction:column;gap:8px;margin:2px 0 12px}
+.vc-row{border:1px solid var(--line);border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:9px 12px}
+.vc-head{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.vc-author{font-size:12px;font-weight:600;color:var(--cream)}
+.vc-date{font-size:10.5px;color:var(--muted);flex:1}
+.vc-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:2px 4px;transition:color var(--dur-1)}
+.vc-del:hover{color:var(--red)}
+.vc-body{font-size:13px;color:var(--cream);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.vc-add{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.vc-add .btn{flex:0 0 auto}
