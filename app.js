@@ -1292,9 +1292,9 @@ function renderClientOverview(cur, prev){
    current phase, live sync, video pipeline and latest updates. The comprehensive
    analysis lives in the dedicated tabs; this is the at-a-glance layer.
    Month selection is the SAME state the Metrics tab uses (getSel/ALL_MONTHS). */
-// small wifi/sync glyph beside each connected source
-function ovWifi(pending){
-  return `<span class="ov-wifi ${pending?'pend':''}" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11.5a11 11 0 0 1 15 0"/><path d="M8 15a6 6 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1"/></svg></span>`;
+// small wifi/sync glyph beside each source, coloured by connection-state tone
+function ovWifi(tone){
+  return `<span class="ov-wifi tone-${tone||'muted'}" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11.5a11 11 0 0 1 15 0"/><path d="M8 15a6 6 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1"/></svg></span>`;
 }
 // normalized SVG sparkline (pathLength=1 so the draw animation is length-agnostic)
 function ovSpark(values){
@@ -1396,16 +1396,8 @@ function renderOverview(reported){
     if($('ovCustomize2') && typeof openKpiPrefsEditor==='function') $('ovCustomize2').onclick = openKpiPrefsEditor;
   });
 
-  // ---- Performance chart (spend + reach across reported months) ----
-  seg('performance chart', ()=>{
-    const asc = [...reported].reverse();
-    $('ovPerf').innerHTML = `
-      <div class="ov-card-head">
-        <div><div class="ov-eyebrow">Performance</div><h3 class="ov-card-title">Spend &amp; reach</h3></div>
-        <div class="ov-legend"><span class="ov-leg"><span class="ov-leg-dot" style="background:var(--gold)"></span>Spend</span><span class="ov-leg"><span class="ov-leg-dot" style="background:oklch(0.7 0.12 60)"></span>Reach</span></div>
-      </div>
-      ${ovBigChart(asc)}`;
-  });
+  // Performance chart intentionally lives on the Metrics page only (Overview stays
+  // executive/at-a-glance — "how are things going?"; Metrics answers "why?").
 
   // ---- Current phase (from milestones + deliverables) ----
   seg('current phase', ()=>{
@@ -1425,14 +1417,16 @@ function renderOverview(reported){
       <p class="note">Your roadmap appears here once milestones are set.</p>`;
   });
 
-  // ---- Live sync (from platform_connections) ----
+  // ---- Live sync (from platform_connections) — rich per-source state ----
   seg('live sync', ()=>{
     const conns = (data.connections||[]);
-    const allGreen = conns.length>0 && conns.every(c=> c.status==='connected' && !c.last_error);
+    const allGreen = conns.length>0 && conns.every(c=> connStateModel(c).key==='connected');
     const rows = conns.length ? conns.slice(0,6).map(c=>{
-      const pend = c.status!=='connected';
-      const t = pend ? (c.status==='pending'?'Pending':c.status==='error'?'Reconnect':'Off') : (connAgo(c.last_synced_at)||'syncing…');
-      return `<li class="ov-sync-row"><span class="ov-sync-name">${ovWifi(pend)}${esc(platformInfo(c.provider).title)}</span><span class="ov-sync-t ${pend?'pend':''}">${esc(t)}</span></li>`;
+      const m = connStateModel(c);
+      // connected → show last-sync time; every other state → show the state label
+      const right = m.key==='connected' ? (connAgo(c.last_synced_at)||'synced') : m.label;
+      return `<li class="ov-sync-row"><span class="ov-sync-name">${ovWifi(m.tone)}${esc(platformInfo(c.provider).title)}</span>
+        <span class="ov-sync-t tone-${m.tone}">${esc(right)}</span></li>`;
     }).join('') : `<li class="ov-sync-connect"><span class="note">No marketing data connected.</span><a class="ov-link" href="#connections">Connect your marketing data</a></li>`;
     $('ovSync').innerHTML = `
       <div class="ov-card-head"><div class="ov-eyebrow">Live sync</div>
@@ -1811,6 +1805,62 @@ function connHealth(c){
   if(c.status==='error')   return { cls:'bad',  label:'Needs reconnecting', note:humanizeSyncError(c.last_error) || 'The platform stopped accepting our access — reconnect to resume.' };
   return { cls:'off', label:'Disconnected', note:'Historical data is preserved. Reconnect anytime to resume syncing.' };
 }
+// Richer connection-state model (label + intuitive colour tone), derived purely
+// from the live platform_connections row. Shared by the Overview Live Sync card,
+// the sidebar sync footer, and (later) the Connections page. Tones:
+//   ok=green · syncing=yellow · approval=orange · muted=grey · bad=red
+function connStateModel(c){
+  const s = c && c.status;
+  if(s==='connected'){
+    if(c.last_error)       return { key:'failed',  label:'Connection issue',   tone:'bad' };
+    if(!c.last_synced_at)  return { key:'syncing',  label:'Syncing',            tone:'syncing' };
+    return                        { key:'connected',label:'Connected',          tone:'ok' };
+  }
+  if(s==='syncing')  return { key:'syncing',  label:'Syncing',            tone:'syncing' };
+  if(s==='approval') return { key:'approval', label:'Pending approval',    tone:'approval' };
+  if(s==='pending')  return { key:'pending',  label:'Pending connection',  tone:'muted' };   // started, never finished — never hidden
+  if(s==='error')    return { key:'failed',   label:'Connection failed',   tone:'bad' };
+  if(s==='revoked' || s==='disconnected') return { key:'disconnected', label:'Disconnected', tone:'muted' };
+  return { key:'notused', label:'Not used', tone:'muted' };
+}
+// Finer relative time for the sync footer ("1h 43m ago", "17m ago", "just now").
+function syncAgo(ts){
+  if(!ts) return null;
+  const s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+  if(!isFinite(s) || s < 0) return null;
+  if(s < 45) return 'just now';
+  const m = Math.floor(s/60); if(m < 60) return `${m}m ago`;
+  const h = Math.floor(s/3600), rm = Math.floor((s%3600)/60);
+  if(h < 24) return rm ? `${h}h ${rm}m ago` : `${h}h ago`;
+  const d = Math.floor(s/86400); return `${d}d ago`;
+}
+// Intelligent sidebar Live Sync footer — reflects what's ACTUALLY happening:
+// last successful sync, how many sources connected, syncing / failed / pending.
+function renderSidebarSync(){
+  const foot = $('sbFoot'); if(!foot) return;
+  const sub = $('sbSyncSub');
+  const dot = foot.querySelector('.sb-sync-dot');
+  const conns = (data.connections||[]);
+  const setDot = tone => { if(dot) dot.className = 'sb-sync-dot dot-'+tone; };
+  if(!practiceId || !conns.length){
+    if(sub) sub.textContent = 'No sources connected';
+    setDot('muted'); return;
+  }
+  const states = conns.map(connStateModel);
+  const total = conns.length;
+  const connectedCount = states.filter(s=> s.key==='connected').length;
+  const lastSync = conns.map(c=> c.last_synced_at).filter(Boolean).sort().pop() || null;
+  let status, tone;
+  if(states.some(s=> s.key==='failed')){ status = 'Connection failed'; tone = 'bad'; }
+  else if(states.some(s=> s.key==='syncing')){ status = 'Sync in progress'; tone = 'syncing'; }
+  else if(states.some(s=> s.key==='approval')){ status = 'Pending approval'; tone = 'approval'; }
+  else if(connectedCount === total){ status = 'All sources green'; tone = 'ok'; }
+  else if(connectedCount > 0){ status = `${connectedCount} of ${total} sources connected`; tone = 'syncing'; }
+  else { status = 'Pending connection'; tone = 'muted'; }
+  const when = lastSync ? `Last updated ${syncAgo(lastSync)} • ` : '';
+  if(sub) sub.textContent = when + status;
+  setDot(tone);
+}
 
 const connDetailsOpen = new Set();   // provider keys with the details panel expanded
 let connCatalogOpen = false;
@@ -2040,6 +2090,7 @@ function render(){
   renderBanner();
   renderWhoami();                                          // refresh top-bar identity (practice name loads late)
   $('tbNotifDot')?.classList.toggle('hidden', !(data.notif||[]).length);
+  safe('sidebar sync', ()=> renderSidebarSync());          // intelligent Live Sync footer
   // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
   const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));
   const latestPeriod = reported.length? reported[0].period : null;
