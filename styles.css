@@ -1595,7 +1595,9 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-caret-btn{background:none;border:none;cursor:pointer;color:var(--muted);padding:4px;flex:0 0 auto;font-size:11px}
 .pp-caret-btn .pp-caret{transition:transform var(--dur-2) var(--ease-out)}
 .pp-phase.collapsed .pp-caret-btn .pp-caret{transform:rotate(-90deg)}
-.pp-item-edit{gap:10px}
+.pp-item-edit{gap:10px;cursor:pointer}          /* row is a big click target for the status dropdown */
+.pp-item-edit input,.pp-item-edit .pp-name-input{cursor:text}
+.pp-item-edit .pp-drag{cursor:grab}
 .pp-item-edit .pp-item-l{flex:1}
 .pp-item-r{display:flex;align-items:center;gap:7px;flex:0 0 auto}
 .pp-name-input{flex:1;min-width:0;background:transparent;border:1px solid transparent;border-radius:var(--r-sm);color:var(--cream);
