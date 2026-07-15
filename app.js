@@ -607,9 +607,56 @@ function displayName(){
   if(n) return n;
   return authEmail ? authEmail.split('@')[0] : 'Account';
 }
+function initialsOf(name){
+  const p = String(name||'').trim().split(/\s+/).filter(Boolean);
+  if(!p.length) return 'R';
+  return (p[0][0] + (p.length>1 ? p[p.length-1][0] : '')).toUpperCase();
+}
 function renderWhoami(){
   if(!me) return;
-  $('whoami').textContent = displayName() + ' · ' + (previewMode ? 'client preview' : me.role);
+  const name = displayName();
+  $('whoami').textContent = name;
+  const sub = previewMode ? 'Client preview' : (me.role==='team' ? 'ROXIUM team' : (data.practice?.name || 'Client'));
+  $('tbUserSub') && ($('tbUserSub').textContent = sub);
+  $('tbUserAvatar') && ($('tbUserAvatar').textContent = initialsOf(name));
+  $('tbPopName') && ($('tbPopName').textContent = name);
+  $('tbPopEmail') && ($('tbPopEmail').textContent = authEmail || '');
+}
+// Top-bar interactions: search (opens the command palette), export (print),
+// notifications dropdown, and the user menu. Idempotent — safe to call once.
+let _topbarWired = false;
+function wireTopbar(){
+  if(_topbarWired) return; _topbarWired = true;
+  const closeAllPops = (except)=>{
+    [['tbNotifPop','tbNotif'],['tbUserPop','tbUser']].forEach(([pop,btn])=>{
+      if(pop===except) return;
+      $(pop)?.classList.add('hidden'); $(btn)?.setAttribute('aria-expanded','false');
+    });
+  };
+  const togglePop = (pop,btn)=>{
+    const el = $(pop); if(!el) return;
+    const willOpen = el.classList.contains('hidden');
+    closeAllPops(willOpen ? pop : null);
+    el.classList.toggle('hidden', !willOpen);
+    $(btn)?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    return willOpen;
+  };
+  $('tbSearch')?.addEventListener('click', ()=> window.roxOpenPalette && window.roxOpenPalette());
+  $('tbExport')?.addEventListener('click', ()=>{ try{ window.print(); }catch(_){} });
+  $('tbNotif')?.addEventListener('click', e=>{ e.stopPropagation(); if(togglePop('tbNotifPop','tbNotif')) renderNotifPop(); });
+  $('tbUser')?.addEventListener('click', e=>{ e.stopPropagation(); togglePop('tbUserPop','tbUser'); });
+  $('tbEditName')?.addEventListener('click', ()=>{ closeAllPops(); editMyName(); });
+  document.addEventListener('click', ()=> closeAllPops());
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeAllPops(); });
+}
+function renderNotifPop(){
+  const el = $('tbNotifPop'); if(!el) return;
+  const items = (data.notif||[]).slice(0,6);
+  el.innerHTML = `<div class="tb-pop-head"><span>Notifications</span>${items.length?`<span class="tb-pop-count">${items.length}</span>`:''}</div>
+    ${items.length ? items.map(nItem=>{
+      const txt = nItem.title || nItem.message || nItem.body || 'Update';
+      return `<div class="tb-notif-item"><span class="tb-notif-tdot"></span><div><div class="tb-notif-t">${esc(String(txt))}</div><div class="tb-notif-w">${esc(connAgo(nItem.created_at)||'')}</div></div></div>`;
+    }).join('') : `<div class="tb-notif-empty note">You're all caught up.</div>`}`;
 }
 async function editMyName(){
   if(!me) return;
@@ -683,9 +730,7 @@ async function afterLogin(){
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   renderWhoami();
-  $('whoami').classList.add('editable');
-  $('whoami').title = 'Click to edit your name';
-  $('whoami').onclick = editMyName;
+  wireTopbar();
   if(me.role === 'team') await initOpsAttentionState();
 
   if(me.role === 'team'){
@@ -1235,6 +1280,165 @@ function renderClientOverview(cur, prev){
       ${overviewCol('What\'s next', ov.next)}
     </div>`;
   el.querySelectorAll('.ov-cta').forEach(b=> b.onclick = ()=>{ location.hash = '#' + b.dataset.ovview; });
+}
+
+/* ================= OVERVIEW dashboard (default client landing) =================
+   A real "everything in one view" dashboard composed live from the same data the
+   detail tabs use: headline KPIs (with sparklines + range), a spend/reach chart,
+   current phase, live sync, video pipeline and latest updates. The comprehensive
+   analysis lives in the dedicated tabs; this is the at-a-glance layer. */
+const OV_RANGES = [['7d',1],['30d',1],['3m',3],['6m',6],['All',999]];
+let ovRange = '6m';
+const ovSum = (rows,f)=> rows.reduce((a,r)=>{ const v=f(r); return a + (v==null?0:v); }, 0);
+// normalized SVG sparkline (pathLength=1 so the draw animation is length-agnostic)
+function ovSpark(values){
+  const v = values.map(x=> x==null?0:x);
+  if(v.length < 2) return '';
+  const w=240,h=42, mn=Math.min(...v), mx=Math.max(...v), span=(mx-mn)||1, step=w/(v.length-1);
+  const pts = v.map((x,i)=> `${(i*step).toFixed(1)},${(h-((x-mn)/span)*(h-6)-3).toFixed(1)}`);
+  const line = `M ${pts.join(' L ')}`;
+  return `<svg class="ov-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <defs><linearGradient id="ovsg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="var(--gold)" stop-opacity="0.35"/><stop offset="100%" stop-color="var(--gold)" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path class="area" d="${line} L ${w},${h} L 0,${h} Z" fill="url(#ovsg)"/>
+    <path class="line" pathLength="1" d="${line}" fill="none" stroke="var(--gold)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+// dual-series area chart (spend + reach) for the big Performance card
+function ovBigChart(asc){
+  const rows = asc.slice(-12);
+  const w=640,h=240, pad=16;
+  if(rows.length < 2) return `<div class="ov-chart-empty note">Your performance chart appears once two or more months are reported.</div>`;
+  const series = (key)=>{
+    const raw = rows.map(r=> N(r,key)); const nums = raw.map(x=> x==null?0:x);
+    const mn=Math.min(...nums), mx=Math.max(...nums), span=(mx-mn)||1, step=w/(nums.length-1);
+    return nums.map((x,i)=> `${(i*step).toFixed(1)},${(h-((x-mn)/span)*(h-2*pad)-pad).toFixed(1)}`);
+  };
+  const spend=series('spend'), reach=series('reach');
+  const p1=`M ${spend.join(' L ')}`, p2=`M ${reach.join(' L ')}`;
+  const labels = rows.map(r=> periodLabel(r.period).slice(0,3));
+  const grid = [0.25,0.5,0.75].map(y=> `<line x1="0" x2="${w}" y1="${(h*y).toFixed(0)}" y2="${(h*y).toFixed(0)}" stroke="oklch(1 0 0 / 0.05)" stroke-dasharray="3 4"/>`).join('');
+  return `<div class="ov-chart">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="ov-chart-svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="ova1" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--gold)" stop-opacity="0"/></linearGradient>
+        <linearGradient id="ova2" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="oklch(0.7 0.12 60)" stop-opacity="0.22"/><stop offset="100%" stop-color="oklch(0.7 0.12 60)" stop-opacity="0"/></linearGradient>
+      </defs>
+      ${grid}
+      <path class="area" d="${p1} L ${w},${h} L 0,${h} Z" fill="url(#ova1)"/>
+      <path class="line" pathLength="1" d="${p1}" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path class="area" d="${p2} L ${w},${h} L 0,${h} Z" fill="url(#ova2)"/>
+      <path class="line dash" pathLength="1" d="${p2}" fill="none" stroke="oklch(0.7 0.12 60)" stroke-width="1.5" stroke-dasharray="4 4" stroke-linecap="round"/>
+    </svg>
+    <div class="ov-chart-x">${labels.map(l=> `<span>${esc(l)}</span>`).join('')}</div>
+  </div>`;
+}
+function renderOverview(reported){
+  if(!$('ovKpis')) return;
+  if(isTeamView() && !previewMode){ /* team preview shows a client's overview too */ }
+  const asc = [...(reported||[])].reverse();          // oldest -> newest
+  // range window (monthly snapshots: 7d/30d map to the latest month)
+  const n = (OV_RANGES.find(r=> r[0]===ovRange)||['All',999])[1];
+  const win = asc.slice(Math.max(0, asc.length - n));
+  const prevWin = asc.slice(Math.max(0, asc.length - 2*n), Math.max(0, asc.length - n));
+
+  // ---- range pills ----
+  $('ovRange').innerHTML = OV_RANGES.map(([r])=>
+    `<button type="button" class="ov-range-btn${r===ovRange?' active':''}" data-r="${r}" role="tab" aria-selected="${r===ovRange}">${r}</button>`).join('');
+  $('ovRange').querySelectorAll('.ov-range-btn').forEach(b=> b.onclick = ()=>{ ovRange = b.dataset.r; renderOverview(reported); });
+
+  // ---- KPI cards ----
+  const hasLeads = asc.some(r=> N(r,'leads')!=null);
+  const kpis = [
+    { label:'Amount spent', fmt:fmt$,   per:r=>N(r,'spend'),  agg:rows=>ovSum(rows,r=>N(r,'spend')) },
+    { label:'Reach',        fmt:fmtNum, per:r=>N(r,'reach'),  agg:rows=>ovSum(rows,r=>N(r,'reach')) },
+    { label:'Link clicks',  fmt:fmtNum, per:r=>N(r,'clicks'), agg:rows=>ovSum(rows,r=>N(r,'clicks')) },
+    hasLeads
+      ? { label:'Cost per lead',  fmt:fmt$, lowerBetter:true, per:r=>{const s=N(r,'spend'),l=N(r,'leads');return l?s/l:null;}, agg:rows=>{const s=ovSum(rows,r=>N(r,'spend')),l=ovSum(rows,r=>N(r,'leads'));return l?s/l:null;} }
+      : { label:'Cost per click', fmt:fmt$, lowerBetter:true, per:r=>{const s=N(r,'spend'),c=N(r,'clicks');return c?s/c:null;}, agg:rows=>{const s=ovSum(rows,r=>N(r,'spend')),c=ovSum(rows,r=>N(r,'clicks'));return c?s/c:null;} },
+  ];
+  const anyData = asc.length>0;
+  $('ovKpis').innerHTML = kpis.map((k,i)=>{
+    const val = anyData ? k.agg(win) : null;
+    const prev = k.agg(prevWin);
+    const delta = (val!=null && prev!=null && isFinite(prev) && prev!==0) ? (val-prev)/Math.abs(prev)*100 : null;
+    const up = delta!=null && delta>0;
+    const tone = delta==null ? 'idle' : ((k.lowerBetter ? !up : up) ? 'good' : 'bad');
+    const arrow = delta==null ? '' : (up ? '▲' : '▼');
+    const deltaTxt = delta==null ? 'no prior period' : `${arrow} ${Math.abs(delta).toFixed(delta<10?1:0)}% vs prior`;
+    return `<div class="ov-kpi reveal" style="--i:${i}">
+      <div class="ov-kpi-label">${esc(k.label)}</div>
+      <div class="ov-kpi-val count-up" data-ovk="${i}">${val==null?'—':k.fmt(val)}</div>
+      <div class="ov-kpi-delta ${tone}">${deltaTxt}</div>
+      ${ovSpark(win.map(k.per))}
+    </div>`;
+  }).join('');
+  kpis.forEach((k,i)=>{
+    const val = anyData ? k.agg(win) : null;
+    dsCountUp($('ovKpis').querySelector(`[data-ovk="${i}"]`), val, v=> v==null?'—':k.fmt(v), `ovk:${practiceId}:${ovRange}:${i}`);
+  });
+
+  // ---- Performance chart ----
+  $('ovPerf').innerHTML = `
+    <div class="ov-card-head">
+      <div><div class="ov-eyebrow">Performance</div><h3 class="ov-card-title">Spend &amp; reach</h3></div>
+      <div class="ov-legend"><span class="ov-leg"><span class="ov-leg-dot" style="background:var(--gold)"></span>Spend</span><span class="ov-leg"><span class="ov-leg-dot" style="background:oklch(0.7 0.12 60)"></span>Reach</span></div>
+    </div>
+    ${ovBigChart(asc)}`;
+
+  // ---- Current phase ----
+  const ds = milestoneDisplayStatusMap();
+  const miles = sortedMilestones();
+  const current = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
+  const delivered = (data.deliv||[]).filter(d=> d.status==='delivered').length;
+  const pct = current && current.progress_pct!=null ? current.progress_pct
+            : (data.deliv||[]).length ? Math.round(100*delivered/data.deliv.length) : 0;
+  $('ovPhase').innerHTML = current ? `
+    <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div><span class="ov-pct">${pct}%</span></div>
+    <h3 class="ov-card-title">${esc(current.name)}</h3>
+    <div class="ov-progress"><div class="ov-progress-fill" style="width:${pct}%"></div></div>
+    <a class="ov-link" href="#roadmap">View roadmap ↗</a>` : `
+    <div class="ov-card-head"><div class="ov-eyebrow">Current phase</div></div>
+    <h3 class="ov-card-title">Kickoff</h3>
+    <p class="note">Your roadmap appears here once milestones are set.</p>`;
+
+  // ---- Live sync ----
+  const conns = (data.connections||[]);
+  const allGreen = conns.length>0 && conns.every(c=> c.status==='connected' && !c.last_error);
+  const syncRows = conns.length ? conns.slice(0,5).map(c=>{
+    const pend = c.status!=='connected';
+    const t = pend ? (c.status==='pending'?'Pending':c.status==='error'?'Reconnect':'Off') : (connAgo(c.last_synced_at)||'syncing');
+    return `<li class="ov-sync-row"><span class="ov-sync-name"><span class="ov-sync-ico ${pend?'off':'on'}"></span>${esc(platformInfo(c.provider).title)}</span><span class="ov-sync-t ${pend?'pend':''}">${esc(t)}</span></li>`;
+  }).join('') : `<li class="ov-sync-row"><span class="note">No sources connected yet.</span><a class="ov-link" href="#connections">Connect</a></li>`;
+  $('ovSync').innerHTML = `
+    <div class="ov-card-head"><div class="ov-eyebrow">Live sync</div>
+      <span class="ov-sync-status ${allGreen?'ok':''}"><span class="ov-sync-dot2"></span>${conns.length? (allGreen?'All green':'Needs attention') : 'Not set up'}</span></div>
+    <ul class="ov-sync-list">${syncRows}</ul>`;
+
+  // ---- Video pipeline (this month) ----
+  const vids = [...(data.video||[])].sort((a,b)=> new Date(b.stage_since||0)-new Date(a.stage_since||0)).slice(0,4);
+  const vTone = s=> (s==='posted'||s==='delivered')?'good':(s==='editing'||s==='shot')?'warn':'muted';
+  $('ovVideos').innerHTML = `
+    <div class="ov-card-head"><div><div class="ov-eyebrow">Video pipeline</div><h3 class="ov-card-title">In production</h3></div>
+      <a class="ov-link sm" href="#video">View all ›</a></div>
+    ${vids.length ? `<ul class="ov-vlist">${vids.map(v=>`
+      <li class="ov-vrow"><span class="ov-vname"><span class="ov-vico"></span>${esc(v.item||'Untitled')}</span>
+      <span class="ov-vstat ${vTone(v.stage)}">${esc(stageLabel(v.stage))}</span></li>`).join('')}</ul>`
+      : `<p class="note" style="margin-top:12px">Video items appear here once production starts.</p>`}`;
+
+  // ---- Latest updates (this week) ----
+  const ev = (typeof buildEngagementTimeline==='function' ? buildEngagementTimeline() : []).slice(0,5);
+  $('ovUpdates').innerHTML = `
+    <div class="ov-card-head"><div><div class="ov-eyebrow">Latest updates</div><h3 class="ov-card-title">Recent activity</h3></div></div>
+    ${ev.length ? `<ol class="ov-timeline">${ev.map(e=>`
+      <li class="ov-tl-item"><span class="ov-tl-dot"></span>
+      <div class="ov-tl-text">${esc(e.text||'')}</div>
+      <div class="ov-tl-time">${esc(connAgo(e.t)||'')}</div></li>`).join('')}</ol>`
+      : `<p class="note" style="margin-top:12px">Updates from your ROXIUM team will appear here.</p>`}`;
+
+  // reveal the KPI cards on paint
+  if(typeof requestAnimationFrame==='function') requestAnimationFrame(()=> $('ovKpis')?.querySelectorAll('.reveal').forEach(x=> x.classList.add('in')));
 }
 
 /* ---------------- Marketing Setup Wizard (opt-in, client) ----------------
@@ -1790,7 +1994,8 @@ function buildEngagementTimeline(){
 /* ---------------- render ---------------- */
 function render(){
   renderBanner();
-  $('heroTitle').innerHTML = esc(data.practice ? data.practice.name : 'Your practice') + ': where you are, <em>exactly.</em>';
+  renderWhoami();                                          // refresh top-bar identity (practice name loads late)
+  $('tbNotifDot')?.classList.toggle('hidden', !(data.notif||[]).length);
   // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
   const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));
   const latestPeriod = reported.length? reported[0].period : null;
@@ -1836,33 +2041,10 @@ function render(){
 
   // hero stats — real ad metrics (spend / reach / link clicks) + project progress
   const delivered = data.deliv.filter(x=>x.status==='delivered').length;
-  // Hero source: the viewed month, or the all-months TOTALS when in the range view —
-  // otherwise the cards read null in All-Months and wrongly show "awaiting data".
-  const heroSource = allMonthsView ? (rangeSummary && rangeSummary.monthCount ? rangeSummary.totals : null) : latest;
-  const hv = (k)=> heroSource ? N(heroSource,k) : null;
-  // sublabel: 'this month'/'in March' for a single month, or 'across N months' for the range.
-  const mNote = allMonthsView
-    ? (rangeSummary && rangeSummary.monthCount ? `across ${rangeSummary.monthCount} month${rangeSummary.monthCount===1?'':'s'}` : 'awaiting data')
-    : (latest ? monthNote(latest.period, isLive) : 'awaiting data');
-  // raw + fmt let the tile count up to its value; the deliverables tile is a
-  // ratio string, so it stays static (rendered via `static`).
-  const heroes = [
-    {raw: hv('spend'),  fmt: fmt$,   l:'Amount Spent',  cls: hv('spend')!=null?'g':'i', note: mNote},
-    {raw: hv('reach'),  fmt: fmtNum, l:'Reach',         cls: hv('reach')!=null?'g':'i', note: heroSource? `people reached ${mNote}`:'awaiting data'},
-    {raw: hv('clicks'), fmt: fmtNum, l:'Link Clicks',   cls: hv('clicks')!=null?'g':'i', note: mNote},
-    {static: data.deliv.length? `${delivered}/${data.deliv.length}`:'—', l:'Deliverables shipped', cls: delivered? 'g':'i', note:'project progress'},
-  ];
-  $('heroStats').innerHTML = heroes.map((h,i)=>
-    `<div class="stat"><div class="v count-up" data-hi="${i}">${h.static!=null? esc(h.static) : (h.raw==null?'—':h.fmt(h.raw))}</div><div class="l">${esc(h.l)}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${esc(h.note)}</div></div>`).join('');
-  heroes.forEach((h,i)=>{
-    if(h.static!=null) return;
-    dsCountUp($('heroStats').querySelector(`.v[data-hi="${i}"]`), h.raw, v=> v==null?'—':h.fmt(v), `hero:${practiceId}:${i}`);
-  });
-
-  // Answer-first Overview (client portal): what changed / needs you / next.
-  // Always uses the two newest reported months (independent of the month picker),
-  // so the summary reflects the freshest performance even in the All-Months view.
-  safe('client overview', ()=> renderClientOverview(reported[0]||null, reported[1]||null));
+  // OVERVIEW dashboard (default client landing): KPI cards + performance chart +
+  // current phase + live sync + video pipeline + latest updates — all composed
+  // live from the same data the detail tabs use.
+  safe('overview dashboard', ()=> renderOverview(reported));
 
   // Marketing connection prompt (single in-context surface on Metrics) + opt-in wizard.
   // The redundant global banner and the standalone Settings tab were folded into the
@@ -5231,19 +5413,24 @@ $('btnResetData').onclick = async ()=>{
   }
   function commands(){
     const cmds = [];
-    // views (global team surfaces + the open practice's tabs)
-    cmds.push({ k:'view', label:'Operations Dashboard', run:()=>{ location.hash='#operations'; } });
-    cmds.push({ k:'view', label:'Team Controls', run:()=>{ location.hash='#controls'; } });
-    [['roadmap','Roadmap'],['deliverables','Progress / deliverables'],['video','Video pipeline'],['metrics','Metrics'],['updates','Timeline / updates'],['team','Team panel']]
+    const team = me && me.role === 'team';
+    // client portal views (available to everyone)
+    [['overview','Overview'],['roadmap','Roadmap'],['deliverables','Progress / deliverables'],['video','Video pipeline'],['metrics','Metrics'],['updates','Timeline / updates']]
       .forEach(([v,l])=> cmds.push({ k:'view', label:l, run:()=>{ location.hash='#'+v; } }));
-    // actions
-    cmds.push({ k:'action', label:'Sync now — pull all reporting sources', run:async ()=>{
-      try{ await invokeSyncFn({ action:'sync', trigger:'manual' }); await loadSheetSources(); if(currentView()==='operations') loadOperationsData(true); if(practiceId) loadAll(); }
-      catch(e){ uiAlert('Sync failed', esc(e?.message||String(e))); }
-    }});
-    // clients
-    (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
-      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#'+CLIENT_HOME; loadAll(); } }));
+    if(canSeeConnectionsTab()) cmds.push({ k:'view', label:'Connections', run:()=>{ location.hash='#connections'; } });
+    if(canSeeAccessTab()) cmds.push({ k:'view', label:'Invite team', run:()=>{ location.hash='#access'; } });
+    if(team){
+      // global team surfaces + actions + client switcher
+      cmds.push({ k:'view', label:'Operations Dashboard', run:()=>{ location.hash='#operations'; } });
+      cmds.push({ k:'view', label:'Team Controls', run:()=>{ location.hash='#controls'; } });
+      cmds.push({ k:'view', label:'Client Controls', run:()=>{ location.hash='#team'; } });
+      cmds.push({ k:'action', label:'Sync now — pull all reporting sources', run:async ()=>{
+        try{ await invokeSyncFn({ action:'sync', trigger:'manual' }); await loadSheetSources(); if(currentView()==='operations') loadOperationsData(true); if(practiceId) loadAll(); }
+        catch(e){ uiAlert('Sync failed', esc(e?.message||String(e))); }
+      }});
+      (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
+        run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#'+CLIENT_HOME; loadAll(); } }));
+    }
     return cmds;
   }
   function draw(q){
@@ -5260,7 +5447,7 @@ $('btnResetData').onclick = async ()=>{
     paint(items);
   }
   function openPal(){
-    if(!me || me.role!=='team') return;
+    if(!me) return;                 // available to clients + team (role-scoped commands)
     if(!el) buildDom();
     open = true;
     el.classList.remove('hidden');
@@ -5269,6 +5456,7 @@ $('btnResetData').onclick = async ()=>{
     setTimeout(()=> input.focus(), 0);
   }
   function close(){ if(!el) return; open = false; el.classList.add('hidden'); }
+  window.roxOpenPalette = openPal;   // top-bar Search button opens it too
   window.addEventListener('keydown', e=>{
     if((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase()==='k'){
       e.preventDefault();
