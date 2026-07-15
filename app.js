@@ -237,12 +237,14 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','connections','access','team','controls'];
+const VIEWS = ['overview','operations','roadmap','deliverables','video','metrics','updates','connections','access','team','controls'];
 const TEAM_ONLY_VIEWS = ['operations','team','controls'];
-const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','connections','access','team'];
+const CLIENT_PORTAL_VIEWS = ['overview','roadmap','deliverables','video','metrics','updates','connections','access','team'];
+// Default client landing (sidebar shell): the answer-first Overview.
+const CLIENT_HOME = 'overview';
 const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
-let lastClientView = 'roadmap';
+let lastClientView = CLIENT_HOME;
 let lastAdminTab = localStorage.getItem('lastAdminTab') || 'clients';
 function activateAdminTab(name){
   name = name || 'clients';
@@ -275,7 +277,7 @@ function currentView(){
   let h = hashParts().view;
   if(h === 'admin') h = 'controls';   // legacy hash alias
   if(VIEWS.includes(h)) return h;
-  return (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
+  return (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
 }
 let pendingDeepLink = null;   // { view, delivId, videoId, phase, milestoneId }
 function captureDeepLinkFromHash(){
@@ -321,6 +323,7 @@ function teamWorkspace(){
 // Top-bar title + subtitle per view (replaces the big hero heading as the
 // primary "where am I" cue in the sidebar shell).
 const PAGE_META = {
+  overview:{t:'Overview', s:'What changed, what needs you, and what\'s next'},
   roadmap:{t:'Roadmap', s:'Every milestone, where you stand, and what happens next'},
   deliverables:{t:'Progress', s:'Deliverables, grouped by phase'},
   video:{t:'Video', s:'Your production pipeline, stage by stage'},
@@ -358,10 +361,10 @@ function toggleSidebarDrawer(){
 }
 function showView(name){
   if(name === 'admin') name = 'controls';
-  if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
-  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
-  if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
-  if(name === 'connections' && !canSeeConnectionsTab()) name = 'roadmap';
+  if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
+  if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = CLIENT_HOME;
+  if(name === 'access' && !canSeeAccessTab()) name = CLIENT_HOME;
+  if(name === 'connections' && !canSeeConnectionsTab()) name = CLIENT_HOME;
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
@@ -401,7 +404,6 @@ function syncChrome(){
   // they enter a client's portal from anywhere (the old "Clients" top-nav tab is
   // gone; the sidebar Client Portal group appears once a practice is selected).
   $('practiceSwitcher').classList.toggle('hidden', !realTeam);
-  document.querySelector('.hero')?.classList.toggle('hidden', globalTeam);
   $('tabnav')?.classList.toggle('hidden', globalTeam);
   // toggle a view's tab AND its sidebar link together
   const navToggle = (view, hide)=>{
@@ -409,6 +411,8 @@ function syncChrome(){
     document.querySelector(`.sb-link[data-view="${view}"]`)?.classList.toggle('hidden', hide);
     document.querySelector(`section[data-view="${view}"]`)?.classList.toggle('hidden', hide);
   };
+  // Overview is a client view (router-managed); show it whenever a practice is open.
+  navToggle('overview', !(practiceId || (me && me.role==='client')));
   navToggle('access', !canSeeAccessTab());
   navToggle('connections', !canSeeConnectionsTab());
   TEAM_ONLY_VIEWS.forEach(v=> navToggle(v, !teamView));
@@ -416,8 +420,8 @@ function syncChrome(){
   // practice is open (client, or team viewing/previewing a client).
   $('sbOpsGroup')?.classList.toggle('hidden', !realTeam);
   $('sbClientGroup')?.classList.toggle('hidden', !(practiceId || (me && me.role==='client')));
-  if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#roadmap';
-  if(!canSeeAccessTab() && currentView()==='access') location.hash = '#roadmap';
+  if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#'+CLIENT_HOME;
+  if(!canSeeAccessTab() && currentView()==='access') location.hash = '#'+CLIENT_HOME;
 }
 window.addEventListener('hashchange', ()=>{
   captureDeepLinkFromHash();
@@ -5239,7 +5243,7 @@ $('btnResetData').onclick = async ()=>{
     }});
     // clients
     (practicesList||[]).forEach(p=> cmds.push({ k:'client', label:p.name, note: p.id===practiceId? 'current' : 'open client',
-      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#roadmap'; loadAll(); } }));
+      run:()=>{ practiceId = p.id; updateSwitcherLabel(); if(!CLIENT_PORTAL_VIEWS.includes(currentView())) location.hash='#'+CLIENT_HOME; loadAll(); } }));
     return cmds;
   }
   function draw(q){

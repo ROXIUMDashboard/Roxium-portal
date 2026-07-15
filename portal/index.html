@@ -56,6 +56,7 @@
     <nav class="sb-nav">
       <div class="sb-group" id="sbClientGroup">
         <div class="sb-group-label">Client Portal</div>
+        <a href="#overview"     class="sb-link" data-view="overview"     data-i="overview"><span class="sb-txt">Overview</span></a>
         <a href="#roadmap"      class="sb-link" data-view="roadmap"      data-i="roadmap"><span class="sb-txt">Roadmap</span></a>
         <a href="#deliverables" class="sb-link" data-view="deliverables" data-i="progress"><span class="sb-txt">Progress</span></a>
         <a href="#video"        class="sb-link" data-view="video"        data-i="video"><span class="sb-txt">Video</span></a>
@@ -115,24 +116,14 @@
   <div id="notifyBar" class="notifybar hidden"></div>
 
   <div class="wrap">
-    <div class="hero">
-      <div class="eyebrow">Live Performance & Delivery</div>
-      <h1 id="heroTitle">Where you are, <em>exactly.</em></h1>
-      <div class="updated" id="updated"></div>
-      <div class="stats" id="heroStats"></div>
-    </div>
-
-    <!-- Answer-first Overview: what changed / needs you / what's next.
-         Client portal only; derived live from KPI + delivery + connection data. -->
-    <div id="clientOverview" class="client-overview hidden" aria-label="Your overview"></div>
-
     <!-- Marketing Setup Wizard — opened on demand (never blocks the portal). -->
     <div id="setupWizardModal" class="modal wizard-modal hidden" aria-hidden="true">
       <div id="setupWizard" class="wizard modalcard modalcard-wide"></div>
     </div>
 
-    <!-- Tabbed navigation (hash-routed) -->
-    <nav class="tabs" id="tabnav">
+    <!-- Legacy tab nav kept in DOM (hidden) so router tab-sync keeps working. -->
+    <nav class="tabs" id="tabnav" hidden>
+      <a href="#overview"     class="tab" data-view="overview">Overview</a>
       <a href="#roadmap"      class="tab" data-view="roadmap">Roadmap</a>
       <a href="#deliverables" class="tab" data-view="deliverables">Progress</a>
       <a href="#video"        class="tab" data-view="video">Video</a>
@@ -142,6 +133,19 @@
       <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
+
+    <!-- OVERVIEW · default client landing — answer-first summary + headline KPIs -->
+    <section class="view" data-view="overview">
+      <div class="ov-hero">
+        <div class="eyebrow">Live Performance &amp; Delivery</div>
+        <h1 id="heroTitle" class="ov-h1">Where you are, <em>exactly.</em></h1>
+        <div class="updated" id="updated"></div>
+      </div>
+      <div class="stats" id="heroStats"></div>
+      <!-- what changed / needs you / what's next — derived live from KPI +
+           delivery + connection data. -->
+      <div id="clientOverview" class="client-overview hidden" aria-label="Your overview"></div>
+    </section>
 
     <!-- Milestone timeline -->
     <section class="view" data-view="roadmap">

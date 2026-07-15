@@ -1164,6 +1164,7 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 .sb-foot-txt{display:flex;flex-direction:column;line-height:1.3;color:var(--cream);font-size:11.5px}
 .sb-foot-sub{color:var(--muted);font-size:10px}
 /* nav icons (mask so they inherit link color) */
+.sb-link[data-i="overview"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1'/><rect x='14' y='3' width='7' height='7' rx='1'/><rect x='14' y='14' width='7' height='7' rx='1'/><rect x='3' y='14' width='7' height='7' rx='1'/></svg>")}
 .sb-link[data-i="roadmap"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='6' cy='19' r='2'/><circle cx='18' cy='5' r='2'/><path d='M8 19h6a3 3 0 0 0 3-3V8'/></svg>")}
 .sb-link[data-i="progress"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 11l3 3L22 4'/><path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/></svg>")}
 .sb-link[data-i="video"]{--i:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='5' width='15' height='14' rx='2'/><path d='M22 8l-5 4 5 4V8z'/></svg>")}
@@ -1191,8 +1192,11 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 
 /* content max-width alignment with the topbar */
 .app-shell>.wrap,.app-shell .app-content{max-width:1320px}
-/* the shell owns the outer gutter now; the hero loses its heavy top padding */
-.app-shell .hero{padding:26px 0 26px}
+/* Overview page hero (only place the big serif statement lives now) */
+.ov-hero{padding:10px 0 6px}
+.ov-hero .updated{margin-top:10px}
+.ov-h1{font-size:clamp(30px,4vw,44px)}
+#heroStats{margin-top:26px}
 
 /* ---- responsive: sidebar becomes an off-canvas drawer ---- */
 @media(max-width:900px){
