@@ -75,15 +75,6 @@
   </nav>
 
   <div id="notifyBar" class="notifybar hidden"></div>
-  <div id="mktConnectBanner" class="mkt-connect-banner hidden" role="region" aria-label="Marketing connection reminder">
-    <div class="mkt-connect-banner-inner">
-      <p><strong>Marketing data is not connected yet.</strong> Connect your advertising platforms to unlock live KPI reporting.</p>
-      <div class="mkt-connect-banner-actions">
-        <button type="button" class="btn sm btn-connect-marketing">Connect Marketing</button>
-        <button type="button" class="btn ghost sm" id="mktBannerDismiss" aria-label="Dismiss reminder">Dismiss</button>
-      </div>
-    </div>
-  </div>
 
   <div class="wrap">
     <div class="hero">
@@ -106,7 +97,6 @@
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
       <a href="#connections"  class="tab accessonly hidden" data-view="connections">Connections</a>
-      <a href="#settings"     class="tab accessonly hidden" data-view="settings">Settings</a>
       <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
@@ -345,16 +335,6 @@
           <span class="note" id="syncNowMsg">Manual/debug — “Deploy setup” on a client also runs this. Sync runs automatically every 2 hours.</span>
         </div>
       </div>
-    </section>
-
-    <!-- CLIENT OWNER · settings -->
-    <section id="settingsPanel" class="view accessonly hidden" data-view="settings">
-      <h2>Settings</h2>
-      <div class="sub">Manage how your practice connects to ROXIUM.</div>
-      <h3>Marketing Connections</h3>
-      <p class="note" style="margin-top:-2px">Connect Meta, Google, and other platforms with your own logins. ROXIUM only reads your performance data — you can disconnect anytime.</p>
-      <div id="settingsMktStatus" class="settings-mkt-status"></div>
-      <button type="button" class="btn btn-connect-marketing" style="margin-top:12px">Connect Marketing</button>
     </section>
 
     <!-- CLIENT OWNER · invite their own team (not global admin) -->

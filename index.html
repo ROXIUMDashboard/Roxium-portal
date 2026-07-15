@@ -51,7 +51,24 @@ header{border-bottom:1px solid var(--line);position:sticky;top:0;background:#0F0
 .bar{display:flex;align-items:center;justify-content:space-between;height:64px}
 .nav{display:flex;align-items:center;gap:26px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 .nav a:hover{color:var(--gold)}
-@media(max-width:820px){.nav .navlink{display:none}}
+.navtoggle{display:none;background:none;border:0;cursor:pointer;flex-direction:column;gap:5px;padding:6px}
+.navtoggle span{display:block;width:22px;height:2px;background:var(--cream);transition:transform .2s ease,opacity .2s ease}
+.mobile-menu{display:none}
+@media(max-width:820px){
+  .nav{display:none}
+  .navtoggle{display:flex}
+  .navtoggle.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+  .navtoggle.open span:nth-child(2){opacity:0}
+  .navtoggle.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+  .mobile-menu{position:absolute;top:64px;left:0;right:0;background:var(--ink);border-bottom:1px solid var(--line);
+    flex-direction:column;padding:8px 28px 18px;opacity:0;transform:translateY(-8px);pointer-events:none;transition:opacity .2s ease,transform .2s ease}
+  .mobile-menu.open{display:flex;opacity:1;transform:none;pointer-events:auto}
+  .mobile-menu a{padding:13px 0;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+  .mobile-menu a:last-child{border-bottom:none}
+  .mobile-menu a:hover{color:var(--gold)}
+  .mobile-menu .mm-cta{color:var(--gold)}
+}
+@media(max-width:600px){ .tier .time{position:static;display:block;margin-top:8px} }
 
 section{padding:76px 0;border-bottom:1px solid var(--line)}
 .sectionhead{max-width:720px;margin-bottom:44px}
@@ -140,6 +157,7 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
 
 <header><div class="wrap bar">
   <a class="mark" href="#top">ROX<b>I</b>UM</a>
+  <button class="navtoggle" id="navToggle" type="button" aria-label="Menu" aria-expanded="false"><span></span><span></span><span></span></button>
   <nav class="nav">
     <a class="navlink" href="#why">Why ROXIUM</a>
     <a class="navlink" href="#platform">Platform</a>
@@ -148,7 +166,16 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
     <a class="btn ghost sm" href="/portal/">Client sign in</a>
     <a class="btn sm" href="#demo">Book a demo</a>
   </nav>
-</div></header>
+  </div>
+  <nav class="mobile-menu" id="mobileMenu">
+    <a href="#why">Why ROXIUM</a>
+    <a href="#platform">Platform</a>
+    <a href="#tour">Tour</a>
+    <a href="#onboarding">Onboarding</a>
+    <a href="/portal/">Client sign in</a>
+    <a href="#demo" class="mm-cta">Book a demo</a>
+  </nav>
+</header>
 
 <!-- ============ HERO ============ -->
 <section id="top"><div class="wrap hero-grid">
@@ -401,6 +428,19 @@ function tour(client){
   vc.classList.toggle('on',client); vt.classList.toggle('on',!client);
 }
 tc.onclick=()=>tour(true); tt.onclick=()=>tour(false);
+
+// Mobile nav menu
+(function(){
+  var nt=document.getElementById('navToggle'), mm=document.getElementById('mobileMenu');
+  if(!nt||!mm) return;
+  function close(){ mm.classList.remove('open'); nt.classList.remove('open'); nt.setAttribute('aria-expanded','false'); }
+  nt.addEventListener('click', function(){
+    var open = mm.classList.toggle('open');
+    nt.classList.toggle('open', open);
+    nt.setAttribute('aria-expanded', String(open));
+  });
+  mm.querySelectorAll('a').forEach(function(a){ a.addEventListener('click', close); });
+})();
 
 // Hero month toggle — All months vs single month
 const DATA={

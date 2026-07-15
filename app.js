@@ -237,9 +237,9 @@ function safe(label, fn){
 }
 
 /* ---------------- tabbed views (hash router) ---------------- */
-const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','connections','settings','access','team','controls'];
+const VIEWS = ['operations','roadmap','deliverables','video','metrics','updates','connections','access','team','controls'];
 const TEAM_ONLY_VIEWS = ['operations','team','controls'];
-const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','connections','settings','access','team'];
+const CLIENT_PORTAL_VIEWS = ['roadmap','deliverables','video','metrics','updates','connections','access','team'];
 const GLOBAL_TEAM_VIEWS = ['operations','controls'];
 // remember the last client-side view and the last Team Controls sub-tab for smooth nav
 let lastClientView = 'roadmap';
@@ -253,7 +253,6 @@ function activateAdminTab(name){
 }
 function isPracticeOwner(){ return !!(myMembership && myMembership.role === 'owner'); }
 function canSeeAccessTab(){ return me && me.role === 'client' && isPracticeOwner() && !previewMode; }
-function canSeeSettingsTab(){ return canSeeAccessTab(); }
 // Connections manager: practice owners manage their own data sources; the team
 // sees it via Preview-as-client (a real client-eye view of the same page).
 function canSeeConnectionsTab(){ return canSeeAccessTab() || (me && me.role === 'team' && previewMode); }
@@ -324,7 +323,6 @@ function showView(name){
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : 'roadmap';
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = 'roadmap';
   if(name === 'access' && !canSeeAccessTab()) name = 'roadmap';
-  if(name === 'settings' && !canSeeSettingsTab()) name = 'roadmap';
   if(name === 'connections' && !canSeeConnectionsTab()) name = 'roadmap';
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
@@ -343,7 +341,6 @@ function showView(name){
     if(pid) refreshOnboardChecklist(pid);
   }
   if(name==='access') loadClientAccessRoster();
-  if(name==='settings') renderSettingsMarketing();
   if(name==='connections') renderConnectionsPage();
 }
 // Chrome visibility: Operations + Team Controls are global team screens; Clients = per-practice portal.
@@ -364,8 +361,6 @@ function syncChrome(){
   $('tabnav').classList.toggle('hidden', globalTeam);
   document.querySelector('.tab[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
   document.querySelector('section[data-view="access"]')?.classList.toggle('hidden', !canSeeAccessTab());
-  document.querySelector('.tab[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
-  document.querySelector('section[data-view="settings"]')?.classList.toggle('hidden', !canSeeSettingsTab());
   document.querySelector('.tab[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
   document.querySelector('section[data-view="connections"]')?.classList.toggle('hidden', !canSeeConnectionsTab());
   TEAM_ONLY_VIEWS.forEach(v=>{
@@ -1036,8 +1031,9 @@ const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
 /* ---------------- Marketing Setup Wizard (opt-in, client) ----------------
-   Never blocks the portal. Opened only via Connect Marketing CTAs or Settings.
-   Completes only when the user clicks Finish — Skip closes without marking done. */
+   Never blocks the portal. Opened via the Metrics CTA or the Connections tab.
+   Finish marks it done; "Continue without connecting" persists a declined flag
+   so the CTA stops nagging (the Connections tab still lets them connect later). */
 const WIZARD_PROVIDERS = [
   { key:'meta',   title:'Facebook & Instagram',
     body:'Your ads, reach, and engagement across Facebook and Instagram — connected in one click with your Facebook login.' },
@@ -1045,7 +1041,16 @@ const WIZARD_PROVIDERS = [
     body:'Your Google Ads performance and website analytics — connected with your Google login.' },
 ];
 let marketingWizardOpen = false;
-const mktBannerDismissKey = ()=> practiceId ? `roxium_mkt_banner_dismiss_${practiceId}` : '';
+// Persisted opt-out: "Continue without connecting" records a declined flag so the
+// in-context prompt stops nagging. The Connections tab is always available to
+// connect later, so declining hides the CTA without hiding the capability.
+const mktDeclinedKey = ()=> practiceId ? `roxium_mkt_declined_${practiceId}` : '';
+function marketingDeclined(){
+  try{ return localStorage.getItem(mktDeclinedKey()) === '1'; }catch(_){ return false; }
+}
+function setMarketingDeclined(v){
+  try{ v ? localStorage.setItem(mktDeclinedKey(),'1') : localStorage.removeItem(mktDeclinedKey()); }catch(_){}
+}
 function hasMarketingConnected(){
   const conns = data.connections || [];
   if(conns.some(c=> c.status === 'connected')) return true;
@@ -1056,7 +1061,7 @@ function hasMarketingConnected(){
   });
 }
 function marketingOnboardingSettled(){
-  return !!(data.practice?.wizard_completed_at) || hasMarketingConnected();
+  return !!(data.practice?.wizard_completed_at) || hasMarketingConnected() || marketingDeclined();
 }
 function shouldPromptMarketingConnect(){
   return !isTeamView() && data.practice && !marketingOnboardingSettled();
@@ -1077,26 +1082,6 @@ function closeMarketingWizard(){
   if(modal){ modal.classList.remove('open'); modal.classList.add('hidden'); modal.setAttribute('aria-hidden','true'); }
   const el = $('setupWizard'); if(el) el.innerHTML = '';
 }
-function renderMarketingConnectBanner(){
-  const bar = $('mktConnectBanner'); if(!bar) return;
-  if(!shouldPromptMarketingConnect()){
-    bar.classList.add('hidden');
-    if(hasMarketingConnected()){
-      try{ sessionStorage.removeItem(mktBannerDismissKey()); }catch(_){}
-    }
-    return;
-  }
-  let dismissed = false;
-  try{ dismissed = sessionStorage.getItem(mktBannerDismissKey()) === '1'; }catch(_){}
-  bar.classList.toggle('hidden', dismissed);
-  if(!bar._dismissWired){
-    bar._dismissWired = true;
-    $('mktBannerDismiss')?.addEventListener('click', ()=>{
-      try{ sessionStorage.setItem(mktBannerDismissKey(), '1'); }catch(_){}
-      bar.classList.add('hidden');
-    });
-  }
-}
 function renderMarketingMetricsCta(){
   const el = $('mktMetricsCta'); if(!el) return;
   if(!shouldPromptMarketingConnect()){
@@ -1116,24 +1101,6 @@ function renderMarketingMetricsCta(){
       <p class="note mkt-cta-time">Estimated setup time: 2–5 minutes.</p>
       <button type="button" class="btn btn-connect-marketing">Connect Marketing</button>
     </div>`;
-}
-function renderSettingsMarketing(){
-  const el = $('settingsMktStatus'); if(!el || !canSeeSettingsTab()) return;
-  if(marketingOnboardingSettled()){
-    const conns = (data.connections||[]).filter(c=> c.status==='connected');
-    el.innerHTML = conns.length
-      ? `<p class="note ssok">${conns.length} platform${conns.length===1?'':'s'} connected${data.practice?.wizard_completed_at ? ' · setup complete' : ''}.</p>`
-      : `<p class="note ssok">Marketing data is flowing · setup complete.</p>`;
-  } else {
-    const lines = WIZARD_PROVIDERS.map(p=>{
-      const c = (data.connections||[]).find(x=> x.provider===p.key);
-      const st = c?.status==='connected' ? '✓ Connected' : 'Not connected';
-      return `<div class="settings-mkt-row"><span>${esc(p.title)}</span><span class="note">${st}</span></div>`;
-    }).join('');
-    el.innerHTML = `<div class="settings-mkt-rows">${lines}</div>
-      <p class="note" style="margin-top:10px">Your progress is saved if you exit — click <b>Connect Marketing</b> to continue.</p>`;
-  }
-  wireMarketingConnectButtons();
 }
 function wireMarketingConnectButtons(){
   document.querySelectorAll('.btn-connect-marketing').forEach(btn=>{
@@ -1229,13 +1196,16 @@ function renderSetupWizard(){
     }
   });
   const finish = async ()=>{
+    setMarketingDeclined(false);   // finishing supersedes any prior opt-out
     try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
     if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
     try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
     closeMarketingWizard();
     render();
   };
-  $('wizardSkip').onclick = ()=> closeMarketingWizard();
+  // "Continue without connecting" is a real opt-out: persist it so the CTA stops
+  // nagging on every visit. The Connections tab still lets them connect later.
+  $('wizardSkip').onclick = ()=>{ setMarketingDeclined(true); closeMarketingWizard(); render(); };
   $('wizardDone').onclick = finish;
   $('wizardClose').onclick = ()=> closeMarketingWizard();
 }
@@ -1325,22 +1295,25 @@ function renderKpiPrefsEditor(){
    auth config (COMPOSIO_<KEY>_AUTH_CONFIG_ID secret). No page redesign.
    Connected platforms disappear from "Add data source" until disconnected;
    disconnecting stops future syncs but preserves every imported KPI row. */
+// `mono` = a 1–2 letter monogram rendered as a gold-lettered badge — no emojis,
+// consistent with the portal's Cormorant/gold aesthetic.
 const PLATFORM_CATALOG = [
-  { key:'meta',               title:'Meta Ads',                icon:'📘', blurb:'Facebook & Instagram advertising — spend, reach, impressions and link clicks.', dflt:true },
-  { key:'facebook_insights',  title:'Facebook Insights',       icon:'👥', blurb:'Organic Facebook page performance and audience growth.', dflt:true },
-  { key:'instagram_insights', title:'Instagram Insights',      icon:'📸', blurb:'Organic Instagram reach, profile activity and engagement.', dflt:true },
-  { key:'google',             title:'Google Ads',              icon:'🔍', blurb:'Search & display campaigns — cost, impressions and clicks.', dflt:true },
-  { key:'google_analytics',   title:'Google Analytics',        icon:'📈', blurb:'Website sessions, traffic sources and on-site conversions.', dflt:true },
-  { key:'youtube',            title:'YouTube Analytics',       icon:'▶️', blurb:'Channel views, watch time and subscriber growth.', dflt:true },
-  { key:'microsoft_ads',      title:'Microsoft Ads',           icon:'🪟', blurb:'Bing search campaign performance.', dflt:true },
-  { key:'tiktok',             title:'TikTok Ads',              icon:'🎵', blurb:'TikTok campaign spend and performance.' },
-  { key:'linkedin_ads',       title:'LinkedIn Ads',            icon:'💼', blurb:'LinkedIn campaign performance.' },
-  { key:'gbp',                title:'Google Business Profile', icon:'📍', blurb:'Local search views, calls and direction requests.' },
-  { key:'callrail',           title:'CallRail',                icon:'📞', blurb:'Call tracking and marketing attribution.' },
-  { key:'hubspot',            title:'HubSpot',                 icon:'🧲', blurb:'CRM contacts and lead pipeline.' },
+  { key:'meta',               title:'Meta Ads',                mono:'M',  blurb:'Facebook & Instagram advertising — spend, reach, impressions and link clicks.', dflt:true },
+  { key:'facebook_insights',  title:'Facebook Insights',       mono:'FB', blurb:'Organic Facebook page performance and audience growth.', dflt:true },
+  { key:'instagram_insights', title:'Instagram Insights',      mono:'IG', blurb:'Organic Instagram reach, profile activity and engagement.', dflt:true },
+  { key:'google',             title:'Google Ads',              mono:'G',  blurb:'Search & display campaigns — cost, impressions and clicks.', dflt:true },
+  { key:'google_analytics',   title:'Google Analytics',        mono:'GA', blurb:'Website sessions, traffic sources and on-site conversions.', dflt:true },
+  { key:'youtube',            title:'YouTube Analytics',       mono:'YT', blurb:'Channel views, watch time and subscriber growth.', dflt:true },
+  { key:'microsoft_ads',      title:'Microsoft Ads',           mono:'MS', blurb:'Bing search campaign performance.', dflt:true },
+  { key:'tiktok',             title:'TikTok Ads',              mono:'TT', blurb:'TikTok campaign spend and performance.' },
+  { key:'linkedin_ads',       title:'LinkedIn Ads',            mono:'Li', blurb:'LinkedIn campaign performance.' },
+  { key:'gbp',                title:'Google Business Profile', mono:'GB', blurb:'Local search views, calls and direction requests.' },
+  { key:'callrail',           title:'CallRail',                mono:'CR', blurb:'Call tracking and marketing attribution.' },
+  { key:'hubspot',            title:'HubSpot',                 mono:'HS', blurb:'CRM contacts and lead pipeline.' },
 ];
 const platformInfo = key => PLATFORM_CATALOG.find(p=> p.key===key)
-  || { key, title:key.replace(/_/g,' ').replace(/\b\w/g, c=> c.toUpperCase()), icon:'🔗', blurb:'' };
+  || { key, title:key.replace(/_/g,' ').replace(/\b\w/g, c=> c.toUpperCase()),
+       mono:(key||'?').replace(/[^a-z0-9]/gi,'').slice(0,2).toUpperCase(), blurb:'' };
 // kpi source keys written by each connector's ingestion (for the import summary)
 const PLATFORM_KPI_SOURCES = { meta:['marketing'], google:['google_ads'] };
 
@@ -1456,7 +1429,7 @@ function renderConnectionsPage(){
     }
     return `<div class="conn-card">
       <div class="conn-main">
-        <span class="conn-icon">${p.icon}</span>
+        <span class="conn-mono">${esc(p.mono)}</span>
         <div class="conn-id">
           <div class="conn-title">${esc(p.title)}</div>
           <div class="conn-state"><span class="conn-dot ${h.cls}"></span>${esc(h.label)}${h.note && !open ? ` <span class="note">· ${esc(h.note)}</span>` : ''}</div>
@@ -1477,7 +1450,7 @@ function renderConnectionsPage(){
       <div class="conn-cat-label">${label}</div>
       <div class="conn-cat-grid">${items.map(p=> `
         <div class="conn-cat-card">
-          <span class="conn-icon">${p.icon}</span>
+          <span class="conn-mono">${esc(p.mono)}</span>
           <div class="conn-cat-body">
             <div class="conn-title">${esc(p.title)}</div>
             <p class="note">${esc(p.blurb)}</p>
@@ -1486,7 +1459,7 @@ function renderConnectionsPage(){
         </div>`).join('')}</div>` : '';
     catalog.innerHTML = available.length
       ? group(available.filter(p=> p.dflt), 'Core platforms') + group(available.filter(p=> !p.dflt), 'More platforms')
-      : '<p class="note">Everything in the catalog is already connected. 🎉</p>';
+      : '<p class="note">Every available platform is connected.</p>';
     catalog.classList.toggle('hidden', !connCatalogOpen);
   }
   const addBtn = $('connAddBtn');
@@ -1670,11 +1643,11 @@ function render(){
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
 
-  // Marketing connection prompts + opt-in wizard (never blocks the portal)
+  // Marketing connection prompt (single in-context surface on Metrics) + opt-in wizard.
+  // The redundant global banner and the standalone Settings tab were folded into the
+  // Connections page — one place to connect, one CTA to prompt it.
   safe('marketing connect', ()=>{
-    renderMarketingConnectBanner();
     renderMarketingMetricsCta();
-    renderSettingsMarketing();
     wireMarketingConnectButtons();
     if(marketingWizardOpen) renderSetupWizard();
   });
