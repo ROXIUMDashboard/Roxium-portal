@@ -2237,8 +2237,9 @@ function updIconSvg(ic, tone){
   return `<span class="up-ico up-ico-${tone||'muted'}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${UPD_ICON[ic]||UPD_ICON.update}</svg></span>`;
 }
 function updToneOf(ev){
-  if(ev.ic==='delivered'||ev.ic==='video'||ev.kind==='deliverable') return 'good';
-  if(ev.ic==='milestone'||ev.ic==='sync'||ev.ic==='connection'||ev.kind==='milestone') return 'gold';
+  if(ev.ic==='video') return 'amber';                                    // videos → yellow
+  if(ev.ic==='delivered'||ev.kind==='deliverable') return 'good';        // delivered → green
+  if(ev.ic==='milestone'||ev.ic==='sync'||ev.ic==='connection'||ev.kind==='milestone') return 'orange'; // other pivotal → orange
   return 'muted';
 }
 function relTime(t){
@@ -2264,20 +2265,34 @@ function renderUpdates(isTeam){
   };
   const pinned  = all.filter(e=> e.pinned);
   const rest    = all.filter(e=> !e.pinned);
-  const today   = rest.filter(e=> bucket(e)==='today');
-  const yest    = rest.filter(e=> bucket(e)==='yesterday');
-  let   week    = rest.filter(e=> bucket(e)==='week');
+  let today   = rest.filter(e=> bucket(e)==='today');
+  let yest    = rest.filter(e=> bucket(e)==='yesterday');
+  let week    = rest.filter(e=> bucket(e)==='week');
   const earlier = rest.filter(e=> bucket(e)==='earlier');
-  // Simple view keeps "This week" to the 5 things a client would care about most.
-  if(!updatesHistory) week = week.filter(e=> e.important).slice(0,5);
+  // Simple view stays concise — the latest few per section (This week is important-
+  // only). History shows everything, grouped, including Earlier.
+  if(!updatesHistory){
+    today = today.slice(0,5);
+    yest  = yest.slice(0,5);
+    week  = week.filter(e=> e.important).slice(0,5);
+  }
 
+  // Where does this update live? Clicking a row jumps there.
+  const navFor = ev=>{
+    if(ev.ic==='video') return '#video';
+    if(ev.kind==='deliverable'||ev.ic==='delivered'||ev.kind==='milestone'||ev.ic==='milestone') return '#deliverables';
+    if(ev.ic==='connection') return '#connections';
+    if(ev.ic==='sync') return '#metrics';
+    return '';
+  };
   const row = ev=>{
     const tone = updToneOf(ev);
+    const nav = navFor(ev);
     const actions = (isTeam && ev.fid) ? `<span class="up-actions">
         <button class="up-pin${ev.pinned?' on':''}" type="button" data-fid="${ev.fid}" data-pin="${ev.pinned?1:0}" title="${ev.pinned?'Unpin':'Pin to top'}">${ev.pinned?'★':'☆'}</button>
         <button class="up-edit" type="button" data-fid="${ev.fid}" title="Edit">✎</button>
         <button class="up-del" type="button" data-fid="${ev.fid}" title="Delete">✕</button></span>` : '';
-    return `<div class="up-item${ev.pinned?' pinned':''}" data-fid="${ev.fid||''}">
+    return `<div class="up-item${ev.pinned?' pinned':''}${nav?' up-nav':''}" data-fid="${ev.fid||''}" data-nav="${nav}">
       ${updIconSvg(ev.ic, tone)}
       <span class="up-body"><span class="up-text">${esc(ev.text)}</span>${ev.meta?`<span class="up-meta">${esc(ev.meta)}${ev.edited?' · edited':''}</span>`:''}</span>
       <span class="up-time">${esc(relTime(ev.t))}</span>
@@ -2288,14 +2303,27 @@ function renderUpdates(isTeam){
     <div class="up-sec-head"><span>${label}</span><span class="up-sec-n">${items.length} item${items.length===1?'':'s'}</span></div>
     <div class="up-list">${items.map(row).join('')}</div></div>` : '';
 
-  let html = '';
+  // Team can post their own update / comment straight from the feed.
+  const compose = isTeam ? `<div class="up-compose">
+      <input class="up-compose-input" id="upNew" type="text" placeholder="Post an update the client will see…" autocomplete="off">
+      <button class="btn sm" id="upPost" type="button">Post</button>
+    </div>` : '';
+
+  let html = compose;
   if(pinned.length) html += section('Pinned', pinned);
   html += section('Today', today);
   html += section('Yesterday', yest);
   html += section('This week', week);
   if(updatesHistory) html += section('Earlier', earlier);
-  if(!html) html = '<p class="note">No updates yet — activity appears here as work ships.</p>';
+  if(!pinned.length && !today.length && !yest.length && !week.length && !(updatesHistory&&earlier.length))
+    html += '<p class="note">No updates yet — activity appears here as work ships.</p>';
   host.innerHTML = html;
+
+  // click a row → jump to where that update lives (ignore the action buttons)
+  host.querySelectorAll('.up-item.up-nav').forEach(r=> r.addEventListener('click', e=>{
+    if(e.target.closest('button')) return;
+    if(r.dataset.nav) location.hash = r.dataset.nav;
+  }));
 
   if(isTeam){
     host.querySelectorAll('.up-edit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
@@ -2305,7 +2333,16 @@ function renderUpdates(isTeam){
       if(error) uiAlert('Delete failed', esc(error.message)); else loadAll();
     });
     host.querySelectorAll('.up-pin').forEach(b=> b.onclick = ()=> togglePinUpdate(b.dataset.fid, b.dataset.pin==='1'));
+    const post = $('upPost'); if(post) post.onclick = postUpdateFromFeed;
+    const inp = $('upNew'); if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); postUpdateFromFeed(); } });
   }
+}
+async function postUpdateFromFeed(){
+  const inp = $('upNew'); if(!inp) return;
+  const msg = inp.value.trim(); if(!msg) return;
+  const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: (me&&me.full_name)||'ROXIUM', source:'portal' });
+  if(error){ uiAlert('Post failed', esc(error.message)); return; }
+  inp.value=''; loadAll();
 }
 async function togglePinUpdate(id, isPinned){
   const { error } = await sb.from('activity').update({ pinned: !isPinned }).eq('id', id);
@@ -2318,11 +2355,20 @@ function markUpdatesSeen(){ try{ localStorage.setItem(updatesSeenKey(), String(D
 function renderUpdatesBadge(){
   const el = $('sbUpdCount'); if(!el) return;
   let seen = 0; try{ seen = +localStorage.getItem(updatesSeenKey()) || 0; }catch(_){ }
-  // First ever visit for this practice: baseline to now so we don't flag old history.
-  if(!seen){ seen = Date.now(); try{ localStorage.setItem(updatesSeenKey(), String(seen)); }catch(_){ } }
-  const n = buildEngagementTimeline(120).filter(e=> e.important && new Date(e.t).getTime() > seen).length;
+  // Count important updates the user hasn't seen — but never look back more than a
+  // week, so a fresh visitor gets a sensible "new this week" number (not the whole
+  // history) and it clears to 0 the moment they open Updates.
+  const floor = Math.max(seen, Date.now() - 7*86400000);
+  const n = buildEngagementTimeline(120).filter(e=> e.important && new Date(e.t).getTime() > floor).length;
   el.textContent = n > 9 ? '9+' : String(n);
   el.classList.toggle('hidden', n<=0);
+}
+/* ---- Connections warning badge — flags failing marketing connections (client) ---- */
+function renderConnBadge(){
+  const el = $('sbConnCount'); if(!el) return;
+  const bad = (data.connections||[]).filter(c=> c.status==='error' || c.status==='revoked' || c.last_error).length;
+  el.textContent = String(bad);
+  el.classList.toggle('hidden', bad<=0);
 }
 $('updHistBtn')?.addEventListener('click', ()=>{
   updatesHistory = !updatesHistory;
@@ -2491,6 +2537,7 @@ function render(){
   // feed (team can edit/delete each posted update)
   safe('updates feed', ()=> renderUpdates(isTeamView()));
   safe('updates badge', ()=> renderUpdatesBadge());
+  safe('connections badge', ()=> renderConnBadge());
 
   // team panel + controls only when team AND not previewing as client
   safe('team panel', ()=>{
