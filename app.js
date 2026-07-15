@@ -363,6 +363,17 @@ function toggleSidebarDrawer(){
   if(scrim){ scrim.classList.toggle('hidden', !open); requestAnimationFrame(()=> scrim.classList.toggle('show', open)); }
   $('sbToggle')?.setAttribute('aria-expanded', open? 'true':'false');
 }
+// Desktop: slide the sidebar open/closed and remember the choice. Mobile: drawer.
+function toggleSidebar(){
+  if(window.matchMedia('(max-width:900px)').matches){ toggleSidebarDrawer(); return; }
+  const app = document.getElementById('app'); if(!app) return;
+  const collapsed = app.classList.toggle('sb-collapsed');
+  try{ localStorage.setItem('roxium_sb_collapsed', collapsed ? '1' : '0'); }catch(_){}
+  $('sbToggle')?.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+}
+function applySidebarPref(){
+  try{ if(localStorage.getItem('roxium_sb_collapsed')==='1') document.getElementById('app')?.classList.add('sb-collapsed'); }catch(_){}
+}
 function showView(name){
   if(name === 'admin') name = 'controls';
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
@@ -433,9 +444,10 @@ window.addEventListener('hashchange', ()=>{
   if(pendingDeepLink && practiceId) requestAnimationFrame(()=> applyDeepLinkFocus());
 });
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
-// Sidebar drawer (mobile): toggle button + scrim tap to close.
-$('sbToggle')?.addEventListener('click', toggleSidebarDrawer);
+// Sidebar toggle: desktop collapse (remembered) / mobile drawer; scrim closes drawer.
+$('sbToggle')?.addEventListener('click', toggleSidebar);
 $('sbScrim')?.addEventListener('click', closeSidebarDrawer);
+applySidebarPref();
 
 /* ---------------- searchable client switcher (team) ---------------- */
 let practicesList = [];
@@ -1292,6 +1304,7 @@ function renderClientOverview(cur, prev){
    current phase, live sync, video pipeline and latest updates. The comprehensive
    analysis lives in the dedicated tabs; this is the at-a-glance layer.
    Month selection is the SAME state the Metrics tab uses (getSel/ALL_MONTHS). */
+let ovMonthApi = null;   // themed month dropdown instance (Overview)
 // small wifi/sync glyph beside each source, coloured by connection-state tone
 function ovWifi(tone){
   return `<span class="ov-wifi tone-${tone||'muted'}" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11.5a11 11 0 0 1 15 0"/><path d="M8 15a6 6 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1"/></svg></span>`;
@@ -1311,34 +1324,83 @@ function ovSpark(values){
     <path class="line" pathLength="1" d="${line}" fill="none" stroke="var(--gold)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
 }
-// dual-series area chart (spend + reach) for the big Performance card
+// Interactive dual-series area chart (spend + reach) for the Performance card.
+// Uniform-scaled SVG (markers stay circular); hover reveals exact values.
 function ovBigChart(asc){
   const rows = asc.slice(-12);
-  const w=640,h=240, pad=16;
+  const w=640,h=240, pad=20;
   if(rows.length < 2) return `<div class="ov-chart-empty note">Your performance chart appears once two or more months are reported.</div>`;
-  const series = (key)=>{
-    const raw = rows.map(r=> N(r,key)); const nums = raw.map(x=> x==null?0:x);
-    const mn=Math.min(...nums), mx=Math.max(...nums), span=(mx-mn)||1, step=w/(nums.length-1);
-    return nums.map((x,i)=> `${(i*step).toFixed(1)},${(h-((x-mn)/span)*(h-2*pad)-pad).toFixed(1)}`);
+  const xs = i=> (rows.length===1 ? w/2 : (i/(rows.length-1))*w);
+  const norm = (key)=>{
+    const nums = rows.map(r=>{ const v=N(r,key); return v==null?0:v; });
+    const mx=Math.max(...nums,1), mn=Math.min(...nums,0), span=(mx-mn)||1;
+    return nums.map(v=> h - ((v-mn)/span)*(h-2*pad) - pad);
   };
-  const spend=series('spend'), reach=series('reach');
-  const p1=`M ${spend.join(' L ')}`, p2=`M ${reach.join(' L ')}`;
-  const labels = rows.map(r=> periodLabel(r.period).slice(0,3));
+  const sy=norm('spend'), ry=norm('reach');
+  const path = ys => 'M ' + ys.map((y,i)=> `${xs(i).toFixed(1)},${y.toFixed(1)}`).join(' L ');
+  const p1=path(sy), p2=path(ry);
   const grid = [0.25,0.5,0.75].map(y=> `<line x1="0" x2="${w}" y1="${(h*y).toFixed(0)}" y2="${(h*y).toFixed(0)}" stroke="oklch(1 0 0 / 0.05)" stroke-dasharray="3 4"/>`).join('');
-  return `<div class="ov-chart">
-    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="ov-chart-svg" aria-hidden="true">
+  const band = w/rows.length;
+  const pts = rows.map((r,i)=>
+    `<circle class="ov-pt ov-pt-spend" data-i="${i}" cx="${xs(i).toFixed(1)}" cy="${sy[i].toFixed(1)}" r="4"/>`+
+    `<circle class="ov-pt ov-pt-reach" data-i="${i}" cx="${xs(i).toFixed(1)}" cy="${ry[i].toFixed(1)}" r="3.5"/>`).join('');
+  const hits = rows.map((r,i)=> `<rect class="ov-hit" data-i="${i}" x="${(xs(i)-band/2).toFixed(1)}" y="0" width="${band.toFixed(1)}" height="${h}" fill="transparent"/>`).join('');
+  const labels = rows.map(r=> periodLabel(r.period).slice(0,3));
+  return `<div class="ov-chart" data-chart>
+    <svg viewBox="0 0 ${w} ${h}" class="ov-chart-svg" role="img" aria-label="Spend and reach over time">
       <defs>
         <linearGradient id="ova1" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--gold)" stop-opacity="0"/></linearGradient>
         <linearGradient id="ova2" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="oklch(0.7 0.12 60)" stop-opacity="0.22"/><stop offset="100%" stop-color="oklch(0.7 0.12 60)" stop-opacity="0"/></linearGradient>
       </defs>
       ${grid}
+      <line class="ov-cross" x1="0" y1="0" x2="0" y2="${h}" stroke="oklch(0.82 0.14 82 / 0.25)" stroke-width="1"/>
       <path class="area" d="${p1} L ${w},${h} L 0,${h} Z" fill="url(#ova1)"/>
       <path class="line" pathLength="1" d="${p1}" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path class="area" d="${p2} L ${w},${h} L 0,${h} Z" fill="url(#ova2)"/>
       <path class="line dash" pathLength="1" d="${p2}" fill="none" stroke="oklch(0.7 0.12 60)" stroke-width="1.5" stroke-dasharray="4 4" stroke-linecap="round"/>
+      ${pts}
+      ${hits}
     </svg>
+    <div class="ov-tip" hidden></div>
     <div class="ov-chart-x">${labels.map(l=> `<span>${esc(l)}</span>`).join('')}</div>
   </div>`;
+}
+// Wire hover interactions on the Performance chart (tooltip + crosshair + markers).
+function wireOvChart(chart, rows){
+  if(!chart || !rows || rows.length<2) return;
+  const tip = chart.querySelector('.ov-tip');
+  const cross = chart.querySelector('.ov-cross');
+  const TIP_METRICS = [['spend','Spend'],['reach','Reach'],['clicks','Link clicks'],['cpc','CPC'],['ctr','CTR']];
+  const show = i=>{
+    const r = rows[i]; if(!r) return;
+    chart.querySelectorAll('.ov-pt').forEach(p=> p.classList.toggle('on', +p.dataset.i===i));
+    const mk = chart.querySelector(`.ov-pt-spend[data-i="${i}"]`);
+    const cx = mk && mk.getAttribute('cx');
+    if(cross && cx!=null){ cross.setAttribute('x1',cx); cross.setAttribute('x2',cx); cross.style.opacity=1; }
+    const body = TIP_METRICS.map(([k,l])=>{ const d=metricDef(k); const v=d?metricValue(d,r):N(r,k);
+      return v==null ? '' : `<div class="ov-tip-row"><span>${esc(l)}</span><span>${esc(d?d.fmt(v):String(v))}</span></div>`; }).join('');
+    const prev = rows[i-1];
+    let mom = '';
+    if(prev){ const cs=N(r,'spend'), ps=N(prev,'spend'); if(cs!=null && ps){ const p=((cs-ps)/Math.abs(ps))*100;
+      mom = `<div class="ov-tip-mom ${p>=0?'up':'down'}">${p>=0?'▲':'▼'} ${Math.abs(p).toFixed(0)}% from ${esc(periodLabel(prev.period))}</div>`; } }
+    tip.innerHTML = `<div class="ov-tip-title">${esc(periodLabel(r.period))}</div>${body}${mom}`;
+    tip.hidden = false;
+    // position over the spend marker, clamped inside the chart
+    const cr = chart.getBoundingClientRect(), mr = mk.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = (mr.left - cr.left) - tw/2;
+    left = Math.max(6, Math.min(cr.width - tw - 6, left));
+    let top = (mr.top - cr.top) - th - 14;
+    if(top < 4) top = (mr.top - cr.top) + 16;
+    tip.style.left = left+'px'; tip.style.top = top+'px';
+  };
+  const hide = ()=>{ if(tip) tip.hidden = true; if(cross) cross.style.opacity=0; chart.querySelectorAll('.ov-pt.on').forEach(p=> p.classList.remove('on')); };
+  chart.querySelectorAll('.ov-hit').forEach(rect=>{
+    const i = +rect.dataset.i;
+    rect.addEventListener('mouseenter', ()=> show(i));
+    rect.addEventListener('mousemove', ()=> show(i));
+  });
+  chart.addEventListener('mouseleave', hide);
 }
 function renderOverview(reported){
   if(!$('ovKpis')) return;
@@ -1346,17 +1408,23 @@ function renderOverview(reported){
   const kpi = data.kpi || [];
   const connected = hasMarketingConnected();
 
-  // ---- Month selector (SAME state as the Metrics tab: getSel / ALL_MONTHS) ----
+  // ---- Month selector (themed component; SAME state as Metrics: getSel/ALL_MONTHS) ----
   seg('month selector', ()=>{
+    const host = $('ovRange'); if(!host) return;
     const sel = getSel();
     const cur = (isAllMonthsSel(sel) || sel==null) ? ALL_MONTHS : String(sel);
-    const opts = `<option value="${ALL_MONTHS}"${cur===ALL_MONTHS?' selected':''}>All months</option>` +
-      reported.map(r=> `<option value="${esc(String(r.period))}"${cur===String(r.period)?' selected':''}>${esc(periodLabel(r.period))}</option>`).join('');
-    $('ovRange').innerHTML = `<label class="ov-monthlbl">Reporting</label>
-      <select class="ov-month" id="ovMonthSel" aria-label="Reporting month">${opts}</select>
-      <button class="btn ghost sm ov-cust" id="ovCustomize" type="button" title="Add, remove or reorder your KPI cards">Customize</button>`;
-    $('ovMonthSel').onchange = e=>{ setSel(e.target.value===ALL_MONTHS ? ALL_MONTHS : e.target.value); render(); };
-    if(typeof openKpiPrefsEditor==='function') $('ovCustomize').onclick = openKpiPrefsEditor;
+    const opts = [{ value:ALL_MONTHS, label:'All months' }]
+      .concat(reported.map(r=> ({ value:String(r.period), label:periodLabel(r.period) })));
+    if(!host.querySelector('.ov-msel-mount')){
+      host.innerHTML = `<label class="ov-monthlbl">Reporting</label>
+        <div class="ov-msel-mount"></div>
+        <button class="btn ghost sm ov-cust" id="ovCustomize" type="button" title="Add, remove or reorder your KPI cards">Customize</button>`;
+      ovMonthApi = themedSelect(host.querySelector('.ov-msel-mount'), { options:opts, value:cur,
+        onChange:v=>{ setSel(v===ALL_MONTHS ? ALL_MONTHS : v); render(); } });
+      if(typeof openKpiPrefsEditor==='function') $('ovCustomize').onclick = openKpiPrefsEditor;
+    } else if(ovMonthApi){
+      ovMonthApi.setOptions(opts); ovMonthApi.setValue(cur);
+    }
   });
 
   // ---- editable KPI cards (kpi_dashboard_prefs) ----
@@ -1396,8 +1464,17 @@ function renderOverview(reported){
     if($('ovCustomize2') && typeof openKpiPrefsEditor==='function') $('ovCustomize2').onclick = openKpiPrefsEditor;
   });
 
-  // Performance chart intentionally lives on the Metrics page only (Overview stays
-  // executive/at-a-glance — "how are things going?"; Metrics answers "why?").
+  // ---- Performance chart (Spend & Reach, interactive hover) ----
+  seg('performance chart', ()=>{
+    const asc = [...reported].reverse();
+    $('ovPerf').innerHTML = `
+      <div class="ov-card-head">
+        <div><div class="ov-eyebrow">Performance</div><h3 class="ov-card-title">Spend &amp; reach</h3></div>
+        <div class="ov-legend"><span class="ov-leg"><span class="ov-leg-dot" style="background:var(--gold)"></span>Spend</span><span class="ov-leg"><span class="ov-leg-dot" style="background:oklch(0.7 0.12 60)"></span>Reach</span></div>
+      </div>
+      ${ovBigChart(asc)}`;
+    wireOvChart($('ovPerf').querySelector('.ov-chart'), asc.slice(-12));
+  });
 
   // ---- Current phase (from milestones + deliverables) ----
   seg('current phase', ()=>{
