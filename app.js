@@ -3248,6 +3248,7 @@ const stageGroupOf = s => STAGE_GROUP[s] || 'planned';
 const vStage = key => VIDEO_STAGES.find(s=> s.key===key) || VIDEO_STAGES[0];
 const stageTone = dbStage => vStage(stageGroupOf(dbStage)).tone;   // tone from a RAW db stage
 const STAGE_ICON = {
+  all:       '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   planned:   '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   scheduled: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M12 14v2.5l1.5 1"/>',
   shooting:  '<polygon points="6 4 20 12 6 20 6 4"/>',
@@ -3319,16 +3320,15 @@ function renderPipeline(isTeam){
   const vids = data.video || [];
   const counts = {}; VIDEO_STAGES.forEach(s=> counts[s.key] = vids.filter(v=> stageGroupOf(v.stage)===s.key).length);
 
-  // Icon summary cards — the at-a-glance band that also filters (click to focus a
-  // stage, click again or "Clear filter" to reset).
+  // Icon summary cards — the at-a-glance band that also filters. "All" (total) is
+  // the default landing view; clicking a stage focuses it, clicking All resets.
+  const summaryCard = (key, label, count, on, tone)=>`<button class="vp-card${tone?' stage-'+tone:' vp-card-all'}${on?' on':''}" type="button" data-f="${key}">
+      <span class="vp-card-top"><span class="vp-card-ico">${stageIconSvg(key)}</span><span class="vp-card-n">${count}</span></span>
+      <span class="vp-card-l">${label}</span></button>`;
   const cards = `<div class="vp-summary">
-    ${VIDEO_STAGES.map(s=>`<button class="vp-card stage-${s.tone}${vpFilter===s.key?' on':''}" type="button" data-f="${s.key}">
-      <span class="vp-card-top"><span class="vp-card-ico">${stageIconSvg(s.key)}</span><span class="vp-card-n">${counts[s.key]}</span></span>
-      <span class="vp-card-l">${s.label}</span></button>`).join('')}
+    ${summaryCard('all','All', vids.length, vpFilter==='all', null)}
+    ${VIDEO_STAGES.map(s=> summaryCard(s.key, s.label, counts[s.key], vpFilter===s.key, s.tone)).join('')}
   </div>`;
-  const filterbar = vpFilter!=='all'
-    ? `<div class="vp-filterbar"><span class="vp-fb-lbl">Showing <b>${esc(vStage(vpFilter).label)}</b></span><button class="vp-clear" type="button" data-f="all">Clear filter</button></div>`
-    : '';
 
   if(vpOpen===null){ vpOpen = new Set(); VIDEO_STAGES.forEach(s=>{ if(counts[s.key]>0 && counts[s.key]<=6) vpOpen.add(s.key); }); }
 
@@ -3352,7 +3352,7 @@ function renderPipeline(isTeam){
     </div>`;
   }).join('') || `<p class="note">${vpFilter==='all'?'No video assets yet.':'No videos in this stage.'}</p>`;
 
-  wrap.innerHTML = `${cards}${filterbar}<div class="vp">${groups}</div>`;
+  wrap.innerHTML = `${cards}<div class="vp">${groups}</div>`;
   if(isTeam) enhanceSelectsIn(wrap);   // themed stage dropdowns (fixed-positioned, no clipping)
   wirePipeline(wrap, isTeam);
 }
