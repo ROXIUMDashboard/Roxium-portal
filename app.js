@@ -329,7 +329,7 @@ function teamWorkspace(){
 const PAGE_META = {
   overview:{t:'Overview', s:'What changed, what needs you, and what\'s next'},
   roadmap:{t:'Roadmap', s:'Every milestone, where you stand, and what happens next'},
-  deliverables:{t:'Progress', s:'Deliverables, grouped by phase'},
+  deliverables:{t:'Project Progress', s:'Where you are, what\'s done, and what\'s next'},
   video:{t:'Video', s:'Your production pipeline, stage by stage'},
   metrics:{t:'Performance', s:'Live marketing KPIs against target'},
   updates:{t:'Updates', s:'The latest from your ROXIUM team'},
@@ -376,6 +376,9 @@ function applySidebarPref(){
 }
 function showView(name){
   if(name === 'admin') name = 'controls';
+  // Client side: Roadmap is folded into the unified "Project Progress" view — any
+  // stray #roadmap link (older bookmarks, "You are here" CTAs) lands there.
+  if(name === 'roadmap' && !isTeamView()) name = 'deliverables';
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = CLIENT_HOME;
   if(name === 'access' && !canSeeAccessTab()) name = CLIENT_HOME;
@@ -428,6 +431,8 @@ function syncChrome(){
   };
   // Overview is a client view (router-managed); show it whenever a practice is open.
   navToggle('overview', !(practiceId || (me && me.role==='client')));
+  // Roadmap is a team-only tab now — clients see it folded into Project Progress.
+  navToggle('roadmap', !teamView);
   navToggle('access', !canSeeAccessTab());
   navToggle('connections', !canSeeConnectionsTab());
   TEAM_ONLY_VIEWS.forEach(v=> navToggle(v, !teamView));
@@ -1341,10 +1346,7 @@ function ovBigChart(asc){
   const p1=path(sy), p2=path(ry);
   const grid = [0.25,0.5,0.75].map(y=> `<line x1="0" x2="${w}" y1="${(h*y).toFixed(0)}" y2="${(h*y).toFixed(0)}" stroke="oklch(1 0 0 / 0.05)" stroke-dasharray="3 4"/>`).join('');
   const band = w/rows.length;
-  const pts = rows.map((r,i)=>
-    `<circle class="ov-pt ov-pt-spend" data-i="${i}" cx="${xs(i).toFixed(1)}" cy="${sy[i].toFixed(1)}" r="4"/>`+
-    `<circle class="ov-pt ov-pt-reach" data-i="${i}" cx="${xs(i).toFixed(1)}" cy="${ry[i].toFixed(1)}" r="3.5"/>`).join('');
-  const hits = rows.map((r,i)=> `<rect class="ov-hit" data-i="${i}" x="${(xs(i)-band/2).toFixed(1)}" y="0" width="${band.toFixed(1)}" height="${h}" fill="transparent"/>`).join('');
+  const hits = rows.map((r,i)=> `<rect class="ov-hit" data-i="${i}" data-cx="${xs(i).toFixed(1)}" data-cy="${sy[i].toFixed(1)}" x="${(xs(i)-band/2).toFixed(1)}" y="0" width="${band.toFixed(1)}" height="${h}" fill="transparent"/>`).join('');
   const labels = rows.map(r=> periodLabel(r.period).slice(0,3));
   return `<div class="ov-chart" data-chart>
     <svg viewBox="0 0 ${w} ${h}" class="ov-chart-svg" role="img" aria-label="Spend and reach over time">
@@ -1358,7 +1360,6 @@ function ovBigChart(asc){
       <path class="line" pathLength="1" d="${p1}" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path class="area" d="${p2} L ${w},${h} L 0,${h} Z" fill="url(#ova2)"/>
       <path class="line dash" pathLength="1" d="${p2}" fill="none" stroke="oklch(0.7 0.12 60)" stroke-width="1.5" stroke-dasharray="4 4" stroke-linecap="round"/>
-      ${pts}
       ${hits}
     </svg>
     <div class="ov-tip" hidden></div>
@@ -1370,12 +1371,12 @@ function wireOvChart(chart, rows){
   if(!chart || !rows || rows.length<2) return;
   const tip = chart.querySelector('.ov-tip');
   const cross = chart.querySelector('.ov-cross');
+  const svg = chart.querySelector('.ov-chart-svg');
   const TIP_METRICS = [['spend','Spend'],['reach','Reach'],['clicks','Link clicks'],['cpc','CPC'],['ctr','CTR']];
   const show = i=>{
     const r = rows[i]; if(!r) return;
-    chart.querySelectorAll('.ov-pt').forEach(p=> p.classList.toggle('on', +p.dataset.i===i));
-    const mk = chart.querySelector(`.ov-pt-spend[data-i="${i}"]`);
-    const cx = mk && mk.getAttribute('cx');
+    const hit = chart.querySelector(`.ov-hit[data-i="${i}"]`);
+    const cx = hit && hit.dataset.cx, cy = hit && hit.dataset.cy;
     if(cross && cx!=null){ cross.setAttribute('x1',cx); cross.setAttribute('x2',cx); cross.style.opacity=1; }
     const body = TIP_METRICS.map(([k,l])=>{ const d=metricDef(k); const v=d?metricValue(d,r):N(r,k);
       return v==null ? '' : `<div class="ov-tip-row"><span>${esc(l)}</span><span>${esc(d?d.fmt(v):String(v))}</span></div>`; }).join('');
@@ -1385,16 +1386,20 @@ function wireOvChart(chart, rows){
       mom = `<div class="ov-tip-mom ${p>=0?'up':'down'}">${p>=0?'▲':'▼'} ${Math.abs(p).toFixed(0)}% from ${esc(periodLabel(prev.period))}</div>`; } }
     tip.innerHTML = `<div class="ov-tip-title">${esc(periodLabel(r.period))}</div>${body}${mom}`;
     tip.hidden = false;
-    // position over the spend marker, clamped inside the chart
-    const cr = chart.getBoundingClientRect(), mr = mk.getBoundingClientRect();
+    // position over the spend point (computed from viewBox coords → pixels), clamped inside the chart
+    const cr = chart.getBoundingClientRect();
+    const sr = (svg||chart).getBoundingClientRect();
+    const vb = (svg && svg.viewBox && svg.viewBox.baseVal) || {width:640,height:240};
+    const px = sr.left + (parseFloat(cx)/vb.width)*sr.width - cr.left;
+    const py = sr.top + (parseFloat(cy)/vb.height)*sr.height - cr.top;
     const tw = tip.offsetWidth, th = tip.offsetHeight;
-    let left = (mr.left - cr.left) - tw/2;
+    let left = px - tw/2;
     left = Math.max(6, Math.min(cr.width - tw - 6, left));
-    let top = (mr.top - cr.top) - th - 14;
-    if(top < 4) top = (mr.top - cr.top) + 16;
+    let top = py - th - 14;
+    if(top < 4) top = py + 16;
     tip.style.left = left+'px'; tip.style.top = top+'px';
   };
-  const hide = ()=>{ if(tip) tip.hidden = true; if(cross) cross.style.opacity=0; chart.querySelectorAll('.ov-pt.on').forEach(p=> p.classList.remove('on')); };
+  const hide = ()=>{ if(tip) tip.hidden = true; if(cross) cross.style.opacity=0; };
   chart.querySelectorAll('.ov-hit').forEach(rect=>{
     const i = +rect.dataset.i;
     rect.addEventListener('mouseenter', ()=> show(i));
@@ -2675,23 +2680,92 @@ function renderDeliverables(isTeam){
       <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
     wireDeliverables();
   } else {
-    // client: clean, collapsible phase blocks with per-phase progress + info layer
-    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
-      const {done,total,pct} = phaseProgress(g);
-      const collapsed = delivCollapsed.has(g.phase);
-      const rows = g.items.map(x=>`<div class="drow client" data-deliv="${x.id}">
-        <span class="dnameC">${esc(x.name)}${x.description?`<button class="infobtn has" type="button" data-info="${x.id}" title="What is this?">ⓘ</button>`:''}
-          ${x.description?`<span class="dinfo hidden" id="dinfo-${x.id}">${esc(x.description)}</span>`:''}</span>
-        <span class="chip ${x.status}">${x.status.replace('_',' ')}</span></div>`).join('');
-      return `<div class="phasecard${collapsed?' collapsed':''}"><div class="phasehead">
-        <button class="caret" type="button" data-phase="${esc(g.phase)}" title="Collapse / expand">▾</button>
-        <span class="phasenameC">${esc(g.phase)}</span>
-        <span class="phaseprog"><span style="width:${pct}%"></span></span>
-        <span class="phasecount">${done}/${total}</span></div>
-        <div class="phaserows">${rows}</div></div>`;
-    }).join('') + `</div>`;
-    wireDelivClient();
+    renderClientProgress();   // unified Project Progress (phases + milestones + what's next)
   }
+}
+/* ===== Unified CLIENT "Project Progress" (Roadmap folded in) =====
+   Numbered phase cards (progress bars + %), expandable to reveal deliverables
+   with status icons (delivered ✓ / in-progress rotating spinner / planned ○ /
+   needs-attention !), a compact milestone timeline, and a "what's next" footer.
+   Beautiful + simplified + read-only. Live from deliverables + milestones. */
+let ppOpen = null;   // Set of expanded phase names (seeded with the active phase)
+function delivAttention(x){ return x.status!=='delivered' && x.due && new Date(x.due).getTime() < Date.now(); }
+function delivStatusIcon(status, attn){
+  if(attn) return `<span class="pp-ico attn" aria-hidden="true">!</span>`;
+  if(status==='delivered') return `<span class="pp-ico done" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
+  if(status==='in_progress') return `<span class="pp-ico prog" aria-hidden="true"><span class="pp-spin"></span></span>`;
+  return `<span class="pp-ico plan" aria-hidden="true"></span>`;
+}
+function delivStatusMeta(status, attn){
+  if(attn) return ['Needs attention','attn'];
+  return status==='delivered' ? ['Delivered','done'] : status==='in_progress' ? ['In progress','prog'] : ['Planned','plan'];
+}
+function phaseStateOf(g){
+  const {done,total} = phaseProgress(g);
+  if(total && done===total) return 'complete';
+  if(done>0 || g.items.some(i=> i.status==='in_progress')) return 'current';
+  return 'planned';
+}
+function renderClientProgress(){
+  const t = $('delivTable'); if(!t) return;
+  const groups = phaseGroups();
+  // each phase owns its bar → hide the single overall progress bar above the table
+  document.querySelector('section[data-view="deliverables"] .progressbar')?.classList.add('hidden');
+  // seed the accordion: open the active phase by default
+  if(ppOpen===null){
+    ppOpen = new Set();
+    const cur = groups.find(g=> phaseStateOf(g)==='current');
+    if(cur) ppOpen.add(cur.phase);
+  }
+  const cards = groups.map((g,idx)=>{
+    const {done,total,pct} = phaseProgress(g);
+    const state = phaseStateOf(g);
+    const pill = state==='complete' ? 'Complete' : state==='current' ? 'In progress' : 'Planned';
+    const open = ppOpen.has(g.phase);
+    const rows = g.items.map(x=>{
+      const attn = delivAttention(x);
+      const [lbl,cls] = delivStatusMeta(x.status, attn);
+      return `<div class="pp-item ${cls}">
+        <span class="pp-item-l">${delivStatusIcon(x.status, attn)}<span class="pp-item-name">${esc(x.name)}</span></span>
+        <span class="pp-item-stat ${cls}">${lbl}</span>
+      </div>`;
+    }).join('') || `<div class="pp-item plan"><span class="pp-item-l"><span class="pp-ico plan"></span><span class="pp-item-name note">No deliverables in this phase yet.</span></span></div>`;
+    return `<div class="pp-phase state-${state}${open?'':' collapsed'}" data-phase="${esc(g.phase)}">
+      <button class="pp-phase-head" type="button" data-phase="${esc(g.phase)}" aria-expanded="${open?'true':'false'}">
+        <span class="pp-badge">${idx+1}</span>
+        <span class="pp-phase-name">${esc(g.phase)}</span>
+        <span class="pp-phase-pill ${state}">${pill}</span>
+        <span class="pp-phase-right"><span class="pp-phase-pct">${pct}%</span><span class="pp-phase-count">${total} item${total===1?'':'s'}</span></span>
+        <span class="pp-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="pp-bar"><div class="pp-bar-fill" style="width:${pct}%"></div></div>
+      <div class="pp-body"><div class="pp-body-inner">${rows}</div></div>
+    </div>`;
+  }).join('') || `<p class="note">Your project phases appear here at kickoff.</p>`;
+
+  // compact milestone timeline (folded in from the old Roadmap tab)
+  const ds = milestoneDisplayStatusMap();
+  const miles = sortedMilestones();
+  const tl = miles.length ? `<div class="pp-tl-wrap">
+    <div class="pp-tl-head">Milestone timeline</div>
+    <div class="pp-tl">${miles.map(m=>{
+      const st = ds.get(m.id) || m.status;
+      const tag = st==='done' ? 'Complete' : st==='current' ? 'You are here' : 'Up next';
+      return `<div class="pp-step ${st}"><span class="pp-step-dot"></span><div class="pp-step-name">${esc(m.name)}</div><div class="pp-step-tag">${tag}</div></div>`;
+    }).join('')}</div></div>` : '';
+
+  // what's next footer
+  const nextM = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
+  const foot = nextM ? `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next: <b>${esc(nextM.name)}</b>${nextM.target_date ? ` · ${esc(prettyDate(nextM.target_date,'month'))}` : ''}</span></div>` : '';
+
+  t.innerHTML = `<div class="pp">${cards}</div>${tl}${foot}`;
+  t.querySelectorAll('.pp-phase-head').forEach(h=> h.addEventListener('click', ()=>{
+    const phase = h.dataset.phase, card = h.closest('.pp-phase');
+    if(ppOpen.has(phase)) ppOpen.delete(phase); else ppOpen.add(phase);
+    const open = ppOpen.has(phase);
+    card.classList.toggle('collapsed', !open);
+    h.setAttribute('aria-expanded', open?'true':'false');
+  }));
 }
 // caret collapse/expand + client info toggles (shared)
 function wireCollapse(scope){

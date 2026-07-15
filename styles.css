@@ -1329,12 +1329,8 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .ov-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .ov-chart-svg .line{stroke-dasharray:1;stroke-dashoffset:1;animation:ov-draw 1.6s var(--ease-out) forwards}
 .ov-chart-svg .line.dash{animation-duration:1.6s}
-/* data points always visible (little gold dots); enlarge + glow on hover */
-.ov-pt{transition:r var(--dur-1) var(--ease-out),filter var(--dur-1) var(--ease-out)}
-.ov-pt-spend{fill:var(--gold);stroke:var(--ink);stroke-width:1.5;r:3}
-.ov-pt-reach{fill:oklch(0.7 0.12 60);stroke:var(--ink);stroke-width:1.25;r:2.4;opacity:.85}
-.ov-pt-spend.on{r:5.5;filter:drop-shadow(0 0 5px oklch(0.82 0.14 82 / 0.7))}
-.ov-pt-reach.on{r:4.5;opacity:1}
+/* markers hidden until hovered (cleaner line); the hovered point appears + glows */
+/* Performance chart is markerless: hover shows a crosshair + tooltip only. */
 .ov-cross{opacity:0;transition:opacity var(--dur-1)}
 .ov-hit{cursor:crosshair}
 .ov-tip{position:absolute;z-index:5;min-width:150px;pointer-events:none;background:var(--surface2);
@@ -1501,3 +1497,70 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .croad-step.done .croad-step-tag{color:var(--green)}
 .croad-step-date{margin-top:6px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);opacity:.7}
 @media(max-width:640px){.croad-step{flex:1 1 100%;padding-right:0}.croad-step::before{display:none}}
+
+/* ============================================================================
+   PROJECT PROGRESS (client) · numbered phase cards + status-icon deliverables
+   ========================================================================== */
+.pp{display:flex;flex-direction:column;gap:14px}
+.pp-phase{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-xl);
+  padding:18px 22px 20px;transition:border-color var(--dur-2) var(--ease-out)}
+.pp-phase:hover{border-color:oklch(0.82 0.14 82 / 40%)}
+.pp-phase.state-planned{opacity:.72}
+.pp-phase-head{display:flex;align-items:center;gap:14px;width:100%;background:none;border:none;cursor:pointer;color:var(--cream);text-align:left;padding:0}
+.pp-badge{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);
+  font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pp-phase.state-complete .pp-badge{background:var(--gold);border-color:var(--gold);color:var(--ink)}
+.pp-phase.state-current .pp-badge{border-color:var(--gold);color:var(--gold)}
+.pp-phase-name{flex:1;min-width:0;font-family:var(--font-display);font-weight:600;font-size:19px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp-phase-pill{flex:0 0 auto;font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:4px 11px;border-radius:var(--r-full);border:1px solid var(--line);color:var(--muted)}
+.pp-phase-pill.complete{color:var(--green);border-color:oklch(0.74 0.12 155 / 40%)}
+.pp-phase-pill.current{color:var(--gold);border-color:var(--gold-soft)}
+.pp-phase-right{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.1}
+.pp-phase-pct{font-family:var(--font-display);font-weight:600;font-size:22px;color:var(--gold);font-variant-numeric:tabular-nums}
+.pp-phase-count{font-size:10.5px;color:var(--muted);margin-top:2px}
+.pp-caret{flex:0 0 auto;color:var(--muted);transition:transform var(--dur-2) var(--ease-out);font-size:12px}
+.pp-phase.collapsed .pp-caret{transform:rotate(-90deg)}
+.pp-bar{height:6px;background:oklch(1 0 0 / 6%);border-radius:var(--r-full);margin-top:14px;overflow:hidden}
+.pp-bar-fill{height:100%;border-radius:var(--r-full);background:linear-gradient(90deg,var(--gold-dim),var(--gold));animation:ov-grow 1.1s var(--ease-out) forwards}
+/* smooth accordion (grid-rows 0fr↔1fr) */
+.pp-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur-3) var(--ease-out),margin-top var(--dur-3) var(--ease-out);margin-top:14px}
+.pp-phase.collapsed .pp-body{grid-template-rows:0fr;margin-top:0}
+.pp-body-inner{overflow:hidden;min-height:0;display:flex;flex-direction:column;gap:8px}
+.pp-item{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:var(--r-md);
+  background:oklch(1 0 0 / 2%);padding:11px 14px;transition:border-color var(--dur-1)}
+.pp-item:hover{border-color:var(--gold-soft)}
+.pp-item-l{display:flex;align-items:center;gap:11px;min-width:0}
+.pp-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pp-item-stat{flex:0 0 auto;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+.pp-item-stat.done{color:var(--gold)}.pp-item-stat.prog{color:var(--amber)}.pp-item-stat.plan{color:var(--muted)}.pp-item-stat.attn{color:var(--red)}
+/* status icons */
+.pp-ico{flex:0 0 auto;width:20px;height:20px;display:grid;place-items:center;border-radius:50%}
+.pp-ico.done{color:var(--gold);border:1.5px solid var(--gold-soft)}
+.pp-ico.plan{border:1.5px solid var(--line)}
+.pp-ico.attn{border:1.5px solid oklch(0.66 0.19 25 / 45%);color:var(--red);font-weight:700;font-size:12px}
+.pp-ico.prog{border:none}
+.pp-spin{width:16px;height:16px;border-radius:50%;border:2px solid oklch(1 0 0 / 14%);border-top-color:var(--gold);animation:pp-rot .85s linear infinite}
+@keyframes pp-rot{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.pp-spin{animation:none;border-top-color:var(--amber)}}
+
+/* compact milestone timeline inside Project Progress (smaller, connected) */
+.pp-tl-wrap{margin-top:28px}
+.pp-tl-head{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.pp-tl{display:flex;flex-wrap:wrap;margin-top:16px}
+.pp-step{flex:1;min-width:170px;position:relative;padding:0 18px 6px 0}
+.pp-step-dot{display:block;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--gold);background:var(--ink);margin-bottom:12px;position:relative;z-index:1}
+.pp-step.upcoming .pp-step-dot{border-color:var(--line)}
+.pp-step.done .pp-step-dot{background:var(--gold)}
+.pp-step.current .pp-step-dot{background:var(--cream);border-color:var(--cream)}
+.pp-step::before{content:'';position:absolute;top:4px;left:11px;right:6px;height:1px;background:var(--line)}
+.pp-step:last-child::before{display:none}
+.pp-step-name{font-size:13.5px;letter-spacing:-.01em}
+.pp-step.current .pp-step-name{color:var(--gold)}
+.pp-step-tag{display:inline-block;font-size:8.5px;letter-spacing:.2em;text-transform:uppercase;margin-top:6px;color:var(--muted)}
+.pp-step.current .pp-step-tag{color:var(--gold)}
+.pp-step.done .pp-step-tag{color:var(--green)}
+.pp-foot{display:flex;align-items:center;gap:9px;margin-top:24px;padding:14px 18px;border:1px solid var(--line);border-radius:var(--r-lg);
+  background:oklch(1 0 0 / 2%);font-size:13px;color:var(--muted)}
+.pp-foot b{color:var(--cream);font-weight:500}
+.pp-foot-ico{color:var(--gold)}
+@media(max-width:640px){.pp-step{flex:1 1 100%;padding-right:0}.pp-step::before{display:none}.pp-phase-name{font-size:17px}}
