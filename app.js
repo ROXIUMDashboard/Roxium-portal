@@ -3232,17 +3232,35 @@ function videoTooltip(v){
    hundreds of videos. Team keeps ALL editing (drag between stages, themed stage
    dropdown, add/delete, full detail modal); client sees a clean read-only view. */
 const SHOW_VIDEO_PERF = false;   // Video Performance parked — flip on later (see videoPerfCell)
-const STAGE_META = {
-  planned:       { label:'Planned',        tone:'plan'  },
-  scheduled:     { label:'Scheduled',      tone:'sched' },
-  pre_production:{ label:'Pre-production', tone:'prog'  },
-  shot:          { label:'Shot',           tone:'prog'  },
-  editing:       { label:'Editing',        tone:'prog'  },
-  delivered:     { label:'Delivered',      tone:'done'  },
-  posted:        { label:'Posted',         tone:'done'  },
+// Display stage model — cleaner than the raw DB stages: pre_production+shot fold into
+// "Shooting"; delivered+posted fold into "Delivered" (a posted video is just a delivered
+// one with a link, so there's no separate Posted section). DB stage values are never
+// changed by this — it only governs grouping, labels, and what the stage picker offers.
+const VIDEO_STAGES = [
+  { key:'planned',   label:'Planned',   tone:'plan',  set:'planned'   },
+  { key:'scheduled', label:'Scheduled', tone:'sched', set:'scheduled' },
+  { key:'shooting',  label:'Shooting',  tone:'prog',  set:'shot'      },
+  { key:'editing',   label:'Editing',   tone:'prog',  set:'editing'   },
+  { key:'delivered', label:'Delivered', tone:'done',  set:'delivered' },
+];
+const STAGE_GROUP = { planned:'planned', scheduled:'scheduled', pre_production:'shooting', shot:'shooting', editing:'editing', delivered:'delivered', posted:'delivered' };
+const stageGroupOf = s => STAGE_GROUP[s] || 'planned';
+const vStage = key => VIDEO_STAGES.find(s=> s.key===key) || VIDEO_STAGES[0];
+const stageTone = dbStage => vStage(stageGroupOf(dbStage)).tone;   // tone from a RAW db stage
+const STAGE_ICON = {
+  planned:   '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  scheduled: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M12 14v2.5l1.5 1"/>',
+  shooting:  '<polygon points="6 4 20 12 6 20 6 4"/>',
+  editing:   '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
+  delivered: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
 };
-const stageTone = k => (STAGE_META[k]||{}).tone || 'plan';
-const stageMetaLabel = k => (STAGE_META[k]||{}).label || stageLabelOf(k);
+function stageIconSvg(key){ return `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${STAGE_ICON[key]||''}</svg>`; }
+// Stage picker offers the five display stages; values are the canonical DB stage each
+// group writes back (Shooting → 'shot', Delivered → 'delivered').
+function videoStageSelect(v){
+  const cur = vStage(stageGroupOf(v.stage)).set;
+  return `<select class="stagesel">`+VIDEO_STAGES.map(s=>`<option value="${s.set}" ${s.set===cur?'selected':''}>${s.label}</option>`).join('')+`</select>`;
+}
 // Parked: video performance cell. Returns markup only when SHOW_VIDEO_PERF is on, so
 // the feature can be reinstated in one place without touching the row layout.
 function videoPerfCell(v){ if(!SHOW_VIDEO_PERF) return ''; return `<span class="vp-perf">${esc(String(v.perf??''))}</span>`; }
@@ -3256,11 +3274,12 @@ let vpFilter = 'all';   // active stage filter chip
 let vpOpen = null;      // Set of expanded stage keys (session)
 
 function videoRow(v, isTeam){
-  const posted = v.stage==='posted';
-  const isFinal = v.stage==='posted' || v.stage==='delivered';
+  const isFinal = stageGroupOf(v.stage)==='delivered';
   const sla = slaState(v.stage_since, isFinal);           // team-only age colour
   const dateStr = v.stage_since ? fmtDate(v.stage_since) : '';
-  const actions = (posted && v.video_url) ? `
+  // Any video that has a finished link shows watch / download / copy — no separate
+  // Posted section; a posted video is just a delivered one with a link.
+  const actions = v.video_url ? `
       <a class="vp-act" href="${esc(v.video_url)}" target="_blank" rel="noopener" title="Watch video">▶</a>
       <a class="vp-act" href="${esc(v.video_url)}" download target="_blank" rel="noopener" title="Download">⤓</a>
       <button class="vp-act vp-copy" type="button" data-url="${esc(v.video_url)}" title="Copy link">⧉</button>` : '';
@@ -3282,7 +3301,7 @@ function videoRow(v, isTeam){
         ${dateStr?`<span class="vp-date">${esc(dateStr)}</span>`:''}
         ${ageChip}${videoPerfCell(v)}${actions}
         <button class="vp-info" type="button" data-open="${v.id}" title="Open details">ⓘ</button>
-        ${stageSelect(v.stage)}
+        ${videoStageSelect(v)}
         <button class="vp-del" type="button" data-del="${v.id}" title="Delete">✕</button>
       </span>
     </div>`;
@@ -3298,49 +3317,53 @@ function videoRow(v, isTeam){
 function renderPipeline(isTeam){
   const wrap = $('pipeline'); if(!wrap) return;
   const vids = data.video || [];
-  const counts = {}; STAGES.forEach(([k])=> counts[k] = vids.filter(v=>v.stage===k).length);
-  // Client hides stages that are empty AND internal-only (pre-production / shot) to
-  // keep it simple; team sees every stage so nothing is unreachable.
-  const clientHide = k => !isTeam && counts[k]===0 && (k==='pre_production' || k==='shot');
-  const visibleStages = STAGES.filter(([k])=> !clientHide(k));
+  const counts = {}; VIDEO_STAGES.forEach(s=> counts[s.key] = vids.filter(v=> stageGroupOf(v.stage)===s.key).length);
 
-  const chips = `<div class="vp-filters">
-    <button class="vp-chip${vpFilter==='all'?' on':''}" type="button" data-f="all">All<span class="vp-chip-n">${vids.length}</span></button>
-    ${visibleStages.map(([k])=>`<button class="vp-chip${vpFilter===k?' on':''}" type="button" data-f="${k}"><span class="vp-dot ${stageTone(k)}"></span>${stageMetaLabel(k)}<span class="vp-chip-n">${counts[k]}</span></button>`).join('')}
-    <button class="vp-clear${vpFilter==='all'?' hidden':''}" type="button" data-f="all" title="Show all stages">Clear filter</button>
+  // Icon summary cards — the at-a-glance band that also filters (click to focus a
+  // stage, click again or "Clear filter" to reset).
+  const cards = `<div class="vp-summary">
+    ${VIDEO_STAGES.map(s=>`<button class="vp-card stage-${s.tone}${vpFilter===s.key?' on':''}" type="button" data-f="${s.key}">
+      <span class="vp-card-top"><span class="vp-card-ico">${stageIconSvg(s.key)}</span><span class="vp-card-n">${counts[s.key]}</span></span>
+      <span class="vp-card-l">${s.label}</span></button>`).join('')}
   </div>`;
+  const filterbar = vpFilter!=='all'
+    ? `<div class="vp-filterbar"><span class="vp-fb-lbl">Showing <b>${esc(vStage(vpFilter).label)}</b></span><button class="vp-clear" type="button" data-f="all">Clear filter</button></div>`
+    : '';
 
-  if(vpOpen===null){ vpOpen = new Set(); STAGES.forEach(([k])=>{ if(counts[k]>0 && counts[k]<=6) vpOpen.add(k); }); }
+  if(vpOpen===null){ vpOpen = new Set(); VIDEO_STAGES.forEach(s=>{ if(counts[s.key]>0 && counts[s.key]<=6) vpOpen.add(s.key); }); }
 
-  const stages = (vpFilter==='all' ? visibleStages : visibleStages.filter(([k])=> k===vpFilter));
-  const groups = stages.map(([key])=>{
-    const items = vids.filter(v=>v.stage===key);
-    const open = (vpFilter!=='all') || vpOpen.has(key);
+  // Empty groups are hidden (unless that group is the active filter, so the team can
+  // still add into an empty stage).
+  const shown = VIDEO_STAGES.filter(s=> vpFilter==='all' ? counts[s.key]>0 : s.key===vpFilter);
+  const groups = shown.map(s=>{
+    const items = vids.filter(v=> stageGroupOf(v.stage)===s.key);
+    const open = (vpFilter!=='all') || vpOpen.has(s.key);
     const rows = items.map(v=> videoRow(v, isTeam)).join('')
       || `<div class="vp-empty note">No videos in this stage${isTeam?' yet.':'.'}</div>`;
-    const addBtn = isTeam ? `<button class="vp-add" type="button" data-addstage="${key}">+ Add video</button>` : '';
-    return `<div class="vp-stage stage-${stageTone(key)}${open?'':' collapsed'}${isTeam?' dropstage':''}" data-stage="${key}">
-      <button class="vp-stage-head" type="button" data-stage="${key}" aria-expanded="${open?'true':'false'}">
-        <span class="vp-dot ${stageTone(key)}"></span>
-        <span class="vp-stage-name">${stageMetaLabel(key)}</span>
+    const addBtn = isTeam ? `<button class="vp-add" type="button" data-addstage="${s.set}">+ Add video</button>` : '';
+    return `<div class="vp-stage stage-${s.tone}${open?'':' collapsed'}${isTeam?' dropstage':''}" data-stage="${s.set}">
+      <button class="vp-stage-head" type="button" data-group="${s.key}" aria-expanded="${open?'true':'false'}">
+        <span class="vp-dot ${s.tone}"></span>
+        <span class="vp-stage-name">${s.label}</span>
         <span class="vp-stage-n">${items.length}</span>
         <span class="vp-caret" aria-hidden="true">▾</span>
       </button>
-      <div class="vp-body"><div class="vp-body-inner">${rows}${addBtn}</div></div>
+      <div class="vp-body"><div class="vp-body-inner"><div class="vp-body-pad">${rows}${addBtn}</div></div></div>
     </div>`;
-  }).join('') || `<p class="note">No video assets yet.</p>`;
+  }).join('') || `<p class="note">${vpFilter==='all'?'No video assets yet.':'No videos in this stage.'}</p>`;
 
-  wrap.innerHTML = `${chips}<div class="vp">${groups}</div>`;
+  wrap.innerHTML = `${cards}${filterbar}<div class="vp">${groups}</div>`;
   if(isTeam) enhanceSelectsIn(wrap);   // themed stage dropdowns (fixed-positioned, no clipping)
   wirePipeline(wrap, isTeam);
 }
 
 function wirePipeline(wrap, isTeam){
-  // filter chips (also the at-a-glance counts) + clear filter
-  wrap.querySelectorAll('.vp-chip, .vp-clear').forEach(b=> b.addEventListener('click', ()=>{ vpFilter = b.dataset.f; renderPipeline(isTeam); }));
-  // accordion toggle
+  // summary cards act as stage filters (toggle); Clear filter resets
+  wrap.querySelectorAll('.vp-card').forEach(b=> b.addEventListener('click', ()=>{ vpFilter = (vpFilter===b.dataset.f ? 'all' : b.dataset.f); renderPipeline(isTeam); }));
+  wrap.querySelectorAll('.vp-clear').forEach(b=> b.addEventListener('click', ()=>{ vpFilter = 'all'; renderPipeline(isTeam); }));
+  // accordion toggle (keyed by display group)
   wrap.querySelectorAll('.vp-stage-head').forEach(h=> h.addEventListener('click', ()=>{
-    const key = h.dataset.stage, card = h.closest('.vp-stage');
+    const key = h.dataset.group, card = h.closest('.vp-stage');
     if(vpOpen.has(key)) vpOpen.delete(key); else vpOpen.add(key);
     const open = vpOpen.has(key); card.classList.toggle('collapsed', !open); h.setAttribute('aria-expanded', open?'true':'false');
   }));

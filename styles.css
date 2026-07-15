@@ -1647,19 +1647,33 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-mile-tag.done{color:var(--green)}.pp-mile-tag.current{color:var(--gold)}
 .pp-mile-edit{flex:0 0 auto}
 
-/* ===== Video Pipeline (stage groups + filter chips) ===== */
+/* ===== Video Pipeline (icon summary cards + collapsible stage groups) ===== */
 .vp-root{display:block}
-.vp-filters{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-bottom:22px}
-.vp-chip{display:inline-flex;align-items:center;gap:8px;background:var(--surface);background-image:var(--glass);
-  border:1px solid var(--line);border-radius:var(--r-full);color:var(--cream);font-family:var(--font-sans);
-  font-size:12.5px;padding:7px 14px;cursor:pointer;transition:border-color var(--dur-1),background var(--dur-1),color var(--dur-1)}
-.vp-chip:hover{border-color:var(--gold-soft)}
-.vp-chip.on{border-color:var(--gold);color:var(--gold);background:oklch(0.82 0.14 82 / 7%)}
-.vp-chip-n{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-left:2px}
-.vp-chip.on .vp-chip-n{color:var(--gold)}
-.vp-clear{background:none;border:none;color:var(--gold);font-family:var(--font-sans);font-size:11.5px;
-  letter-spacing:.02em;cursor:pointer;padding:6px 10px;margin-left:2px;opacity:.85;transition:opacity var(--dur-1)}
-.vp-clear:hover{opacity:1;text-decoration:underline}
+/* icon summary cards — the at-a-glance band that also filters */
+.vp-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}
+.vp-card{display:flex;flex-direction:column;gap:16px;background:var(--surface);background-image:var(--glass);
+  border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px;cursor:pointer;text-align:left;
+  transition:border-color var(--dur-1) var(--ease-out),background var(--dur-1) var(--ease-out)}
+.vp-card:hover{border-color:var(--gold-soft)}
+.vp-card.on{border-color:var(--gold);background:oklch(0.82 0.14 82 / 6%)}
+.vp-card-top{display:flex;align-items:center;justify-content:space-between}
+.vp-card-ico{display:inline-flex;color:var(--muted);transition:color var(--dur-1)}
+.vp-card.stage-sched .vp-card-ico,.vp-card.stage-prog .vp-card-ico{color:var(--gold)}
+.vp-card.stage-done .vp-card-ico{color:var(--green)}
+.vp-card-n{font-family:var(--font-display);font-weight:600;font-size:27px;line-height:1;color:var(--cream);font-variant-numeric:tabular-nums}
+.vp-card-l{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.vp-card.on .vp-card-l{color:var(--gold)}
+.vp-filterbar{display:flex;align-items:center;gap:14px;margin:-6px 0 18px}
+.vp-fb-lbl{font-size:12.5px;color:var(--muted)}
+.vp-fb-lbl b{color:var(--cream);font-weight:600}
+.vp-clear{background:none;border:1px solid var(--gold-soft);border-radius:var(--r-full);color:var(--gold);
+  font-family:var(--font-sans);font-size:11px;letter-spacing:.04em;cursor:pointer;padding:5px 12px;transition:background var(--dur-1),border-color var(--dur-1)}
+.vp-clear:hover{background:oklch(0.82 0.14 82 / 8%);border-color:var(--gold)}
+.vp-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.vp-dot.plan{background:oklch(1 0 0 / 24%)}
+.vp-dot.sched{background:var(--amber)}
+.vp-dot.prog{background:var(--gold)}
+.vp-dot.done{background:var(--green)}
 .vp-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--muted)}
 .vp-dot.plan{background:oklch(1 0 0 / 24%)}
 .vp-dot.sched{background:var(--amber)}
@@ -1679,7 +1693,10 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .vp-stage.collapsed .vp-caret{transform:rotate(-90deg)}
 .vp-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--dur-3) var(--ease-out)}
 .vp-stage.collapsed .vp-body{grid-template-rows:0fr}
-.vp-body-inner{overflow:hidden;min-height:0;display:flex;flex-direction:column;gap:7px;padding:0 12px 12px}
+/* padding lives on an inner wrapper (never on the grid item itself) so a collapsed
+   0fr row clips to true zero — no video-row sliver peeking under the header. */
+.vp-body-inner{overflow:hidden;min-height:0}
+.vp-body-pad{display:flex;flex-direction:column;gap:7px;padding:0 14px 14px}
 .vp-item{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);
   border-radius:var(--r-md);background:oklch(1 0 0 / 2%);padding:10px 13px;transition:border-color var(--dur-1)}
 .vp-item:hover{border-color:var(--gold-soft)}
