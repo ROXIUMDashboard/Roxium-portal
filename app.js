@@ -1030,6 +1030,128 @@ const fmt$ = v=> v==null? '—' : '$'+Math.round(v).toLocaleString();
 const fmtP = v=> v==null? '—' : (v*100).toFixed(2)+'%';
 const fmtNum = v=> v==null? '—' : Math.round(v).toLocaleString();
 
+/* ---------------- answer-first client Overview (Phase 5) --------------------
+   The portal used to open on raw numbers; this layer leads with the answer —
+   "what changed / what needs you / what's next" — the executive summary a
+   practice owner wants before any chart. It's derived, not stored: every line
+   is computed live from the same KPI / deliverable / video / connection data
+   the tabs already render, so it stays truthful with zero extra plumbing. */
+
+// Metrics worth narrating in plain English, in priority order. lowerBetter flips
+// the good/bad reading (a falling CPC is good). value() reuses the registry so a
+// derived metric (CTR, CPC) computes identically to the cards.
+const INSIGHT_METRICS = [
+  { k:'reach',  noun:'reach',        verb:'reached',  lowerBetter:false, fmt:fmtNum },
+  { k:'clicks', noun:'link clicks',  verb:'clicked',  lowerBetter:false, fmt:fmtNum },
+  { k:'leads',  noun:'leads',        verb:'came in',  lowerBetter:false, fmt:fmtNum },
+  { k:'ctr',    noun:'click-through rate', verb:'',   lowerBetter:false, fmt:fmtP },
+  { k:'cpc',    noun:'cost per click',     verb:'',   lowerBetter:true,  fmt:fmt$ },
+  { k:'cpm',    noun:'cost per 1,000 views', verb:'', lowerBetter:true,  fmt:fmt$ },
+  { k:'spend',  noun:'spend',        verb:'invested', lowerBetter:false, fmt:fmt$, neutral:true },
+];
+// Compare the viewed month against the prior reported month and surface the most
+// material movements as ranked, plain-language insights. Returns [] when there is
+// no prior month to compare (the caller shows a first-month message instead).
+function buildKpiInsights(cur, prev){
+  if(!cur || !prev) return [];
+  const out = [];
+  for(const m of INSIGHT_METRICS){
+    const def = metricDef(m.k);
+    const c = def ? metricValue(def, cur) : N(cur, m.k);
+    const p = def ? metricValue(def, prev) : N(prev, m.k);
+    if(c==null || p==null || !isFinite(p) || p===0) continue;
+    const pct = (c - p) / Math.abs(p) * 100;
+    if(Math.abs(pct) < 5) continue;                 // ignore noise under 5%
+    const up = pct > 0;
+    const tone = m.neutral ? 'neutral' : ((m.lowerBetter ? !up : up) ? 'good' : 'bad');
+    const mag = Math.abs(pct);
+    const dirWord = up ? 'up' : 'down';
+    const text = m.verb
+      ? `${m.fmt(c)} people ${m.verb} — ${m.noun} ${dirWord} ${mag.toFixed(0)}% vs last month.`
+      : `Your ${m.noun} is ${dirWord} ${mag.toFixed(0)}% — now ${m.fmt(c)}.`;
+    out.push({ k:m.k, tone, pct, mag, text });
+  }
+  // Most material movement first; a real regression outranks a tie-magnitude win.
+  out.sort((a,b)=> (b.mag - a.mag) || (a.tone==='bad'? -1: 1));
+  return out;
+}
+
+// The three answer columns. Each entry: { text, tone?, view?, verb? } — view/verb
+// make a line actionable (jumps to the tab, optional button label).
+function buildClientOverview(cur, prev){
+  const changed = [];
+  const insights = buildKpiInsights(cur, prev);
+  if(insights.length){
+    changed.push(...insights.slice(0,3).map(i=> ({ text:i.text, tone:i.tone })));
+  } else if(cur){
+    changed.push({ text:'Your first month of performance data is in — next month unlocks trends and comparisons.', tone:'neutral' });
+  } else if(hasMarketingConnected()){
+    changed.push({ text:'Your marketing is connected — the first numbers appear here within a couple of hours.', tone:'neutral' });
+  } else {
+    changed.push({ text:'No marketing data yet. Connect your ad platforms to start tracking performance.', tone:'neutral', view:'connections', verb:'Connect' });
+  }
+
+  const needs = [];
+  // Broken / unfinished marketing connections are the client's to fix.
+  (data.connections||[]).forEach(c=>{
+    if(c.status==='error' || c.status==='revoked')
+      needs.push({ text:`${platformInfo(c.provider).title} stopped syncing — reconnect to resume reporting.`, tone:'bad', view:'connections', verb:'Reconnect' });
+    else if(c.status==='pending')
+      needs.push({ text:`${platformInfo(c.provider).title} sign-in wasn't finished — connect again to complete it.`, tone:'warn', view:'connections', verb:'Finish' });
+  });
+  // Video waiting on the practice's approval (v.blocked + v.blocked_reason).
+  (data.video||[]).filter(v=> v.blocked).forEach(v=>{
+    const days = daysIn(v.stage_since);
+    const why = (v.blocked_reason||'').trim();
+    needs.push({ text:`“${v.item}” is waiting on you${why?` — ${why}`:' for approval'}${days?` · ${days} day${days===1?'':'s'}`:''}.`, tone: days>=7?'bad':'warn', view:'video', verb:'Review' });
+  });
+  // Un-onboarded marketing (only when nothing is connected and they haven't opted out).
+  if(shouldPromptMarketingConnect() && !(data.connections||[]).length)
+    needs.push({ text:'Connect your marketing data to unlock live KPI reporting.', tone:'warn', view:'connections', verb:'Connect' });
+
+  const next = [];
+  const ds = milestoneDisplayStatusMap();
+  const miles = sortedMilestones();
+  const current = miles.find(m=> ds.get(m.id)==='current');
+  const upcoming = miles.find(m=> ds.get(m.id)==='upcoming');
+  if(current) next.push({ text:`You're in “${current.name}”${current.target_date? ` · planned ${prettyDate(current.target_date,'month')}`:''}.`, tone:'neutral', view:'roadmap' });
+  if(upcoming) next.push({ text:`Next milestone: ${upcoming.name}${upcoming.target_date? ` · ${prettyDate(upcoming.target_date,'month')}`:''}.`, tone:'neutral', view:'roadmap' });
+  // Nearest deliverable still in flight.
+  const openDeliv = (data.deliv||[]).filter(d=> d.status!=='delivered');
+  if(openDeliv.length){
+    const d = openDeliv[0];
+    next.push({ text:`${openDeliv.length} deliverable${openDeliv.length===1?'':'s'} in progress — next up: ${d.name}.`, tone:'neutral', view:'deliverables' });
+  } else if((data.deliv||[]).length){
+    next.push({ text:'Every deliverable is shipped — you\'re fully caught up.', tone:'good', view:'deliverables' });
+  }
+  if(!next.length) next.push({ text:'Your roadmap will appear here at kickoff.', tone:'neutral' });
+
+  return { changed, needs, next };
+}
+
+function overviewCol(title, items){
+  const rows = items.length ? items.map(it=>{
+    const dot = `<span class="ov-dot ${it.tone||'neutral'}"></span>`;
+    const cta = it.view ? `<button class="ov-cta" data-ovview="${it.view}">${esc(it.verb||'View')}</button>` : '';
+    return `<li class="ov-item">${dot}<span class="ov-text">${esc(it.text)}</span>${cta}</li>`;
+  }).join('') : `<li class="ov-item ov-empty"><span class="ov-dot neutral"></span><span class="ov-text note">Nothing right now.</span></li>`;
+  return `<div class="ov-col"><div class="ov-col-title">${esc(title)}</div><ul class="ov-list">${rows}</ul></div>`;
+}
+
+function renderClientOverview(cur, prev){
+  const el = $('clientOverview'); if(!el) return;
+  if(isTeamView() || !data.practice){ el.classList.add('hidden'); el.innerHTML=''; return; }
+  const ov = buildClientOverview(cur, prev);
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="ov-grid">
+      ${overviewCol('What changed', ov.changed)}
+      ${overviewCol('What needs you', ov.needs)}
+      ${overviewCol('What\'s next', ov.next)}
+    </div>`;
+  el.querySelectorAll('.ov-cta').forEach(b=> b.onclick = ()=>{ location.hash = '#' + b.dataset.ovview; });
+}
+
 /* ---------------- Marketing Setup Wizard (opt-in, client) ----------------
    Never blocks the portal. Opened via the Metrics CTA or the Connections tab.
    Finish marks it done; "Continue without connecting" persists a declined flag
@@ -1042,14 +1164,16 @@ const WIZARD_PROVIDERS = [
 ];
 let marketingWizardOpen = false;
 // Persisted opt-out: "Continue without connecting" records a declined flag so the
-// in-context prompt stops nagging. The Connections tab is always available to
-// connect later, so declining hides the CTA without hiding the capability.
-const mktDeclinedKey = ()=> practiceId ? `roxium_mkt_declined_${practiceId}` : '';
+// in-context prompt stops nagging. Stored on the practice (wizard_declined_at) so
+// it carries across every device and co-owner — the Connections tab is always
+// available to connect later, so declining hides the CTA, not the capability.
 function marketingDeclined(){
-  try{ return localStorage.getItem(mktDeclinedKey()) === '1'; }catch(_){ return false; }
+  return !!(data.practice?.wizard_declined_at);
 }
-function setMarketingDeclined(v){
-  try{ v ? localStorage.setItem(mktDeclinedKey(),'1') : localStorage.removeItem(mktDeclinedKey()); }catch(_){}
+async function setMarketingDeclined(v){
+  if(!practiceId) return;
+  if(data.practice) data.practice.wizard_declined_at = v ? new Date().toISOString() : null;
+  try{ await sb.rpc('decline_marketing_wizard', { p_practice: practiceId, p_declined: !!v }); }catch(_){}
 }
 function hasMarketingConnected(){
   const conns = data.connections || [];
@@ -1196,9 +1320,10 @@ function renderSetupWizard(){
     }
   });
   const finish = async ()=>{
-    setMarketingDeclined(false);   // finishing supersedes any prior opt-out
+    // complete_marketing_wizard also nulls wizard_declined_at server-side, so
+    // finishing supersedes any prior opt-out; just mirror both locally.
     try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
-    if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
+    if(data.practice){ data.practice.wizard_completed_at = new Date().toISOString(); data.practice.wizard_declined_at = null; }
     try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
     closeMarketingWizard();
     render();
@@ -1642,6 +1767,11 @@ function render(){
   ];
   $('heroStats').innerHTML = heroes.map(h=>
     `<div class="stat"><div class="v">${h.v}</div><div class="l">${h.l}</div><div class="d ${({g:'good',a:'warn',r:'bad',i:'idle'})[h.cls]}">${h.note}</div></div>`).join('');
+
+  // Answer-first Overview (client portal): what changed / needs you / next.
+  // Always uses the two newest reported months (independent of the month picker),
+  // so the summary reflects the freshest performance even in the All-Months view.
+  safe('client overview', ()=> renderClientOverview(reported[0]||null, reported[1]||null));
 
   // Marketing connection prompt (single in-context surface on Metrics) + opt-in wizard.
   // The redundant global banner and the standalone Settings tab were folded into the
