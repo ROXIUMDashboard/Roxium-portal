@@ -1519,7 +1519,6 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-phase{background:var(--surface);background-image:var(--glass);border:1px solid var(--line);border-radius:var(--r-xl);
   padding:18px 22px 20px;transition:border-color var(--dur-2) var(--ease-out)}
 .pp-phase:hover{border-color:oklch(0.82 0.14 82 / 40%)}
-.pp-phase.state-planned{opacity:.72}
 .pp-phase-head{display:flex;align-items:center;gap:14px;width:100%;background:none;border:none;cursor:pointer;color:var(--cream);text-align:left;padding:0}
 .pp-badge{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);
   font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -1547,15 +1546,16 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .pp-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream);font-weight:500}
 .pp-item-name.note{color:var(--muted);font-weight:400}
 .pp-item-stat{flex:0 0 auto;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
-.pp-item-stat.done{color:var(--gold)}.pp-item-stat.prog{color:var(--amber)}.pp-item-stat.plan{color:var(--muted)}.pp-item-stat.attn{color:var(--red)}.pp-item-stat.sched{color:var(--amber)}
-.pp-ico.sched{border:1.5px solid var(--amber);color:var(--amber)}
+/* Status colours match the "What do these mean?" guide: delivered = green,
+   in progress = amber/yellow, planned = grey. */
+.pp-item-stat.done{color:var(--green)}.pp-item-stat.prog{color:var(--amber)}.pp-item-stat.plan{color:var(--muted)}.pp-item-stat.attn{color:var(--red)}
 /* status icons */
 .pp-ico{flex:0 0 auto;width:20px;height:20px;display:grid;place-items:center;border-radius:50%}
-.pp-ico.done{color:var(--gold);border:1.5px solid var(--gold-soft)}
+.pp-ico.done{color:var(--green);border:1.5px solid oklch(0.74 0.12 155 / 45%)}
 .pp-ico.plan{border:1.5px solid var(--line)}
 .pp-ico.attn{border:1.5px solid oklch(0.66 0.19 25 / 45%);color:var(--red);font-weight:700;font-size:12px}
 .pp-ico.prog{border:none}
-.pp-spin{width:16px;height:16px;border-radius:50%;border:2px solid oklch(1 0 0 / 14%);border-top-color:var(--gold);animation:pp-rot .85s linear infinite}
+.pp-spin{width:16px;height:16px;border-radius:50%;border:2px solid oklch(1 0 0 / 14%);border-top-color:var(--amber);animation:pp-rot .85s linear infinite}
 @keyframes pp-rot{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){.pp-spin{animation:none;border-top-color:var(--amber)}}
 
