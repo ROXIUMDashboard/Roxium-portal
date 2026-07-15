@@ -1042,14 +1042,16 @@ const WIZARD_PROVIDERS = [
 ];
 let marketingWizardOpen = false;
 // Persisted opt-out: "Continue without connecting" records a declined flag so the
-// in-context prompt stops nagging. The Connections tab is always available to
-// connect later, so declining hides the CTA without hiding the capability.
-const mktDeclinedKey = ()=> practiceId ? `roxium_mkt_declined_${practiceId}` : '';
+// in-context prompt stops nagging. Stored on the practice (wizard_declined_at) so
+// it carries across every device and co-owner — the Connections tab is always
+// available to connect later, so declining hides the CTA, not the capability.
 function marketingDeclined(){
-  try{ return localStorage.getItem(mktDeclinedKey()) === '1'; }catch(_){ return false; }
+  return !!(data.practice?.wizard_declined_at);
 }
-function setMarketingDeclined(v){
-  try{ v ? localStorage.setItem(mktDeclinedKey(),'1') : localStorage.removeItem(mktDeclinedKey()); }catch(_){}
+async function setMarketingDeclined(v){
+  if(!practiceId) return;
+  if(data.practice) data.practice.wizard_declined_at = v ? new Date().toISOString() : null;
+  try{ await sb.rpc('decline_marketing_wizard', { p_practice: practiceId, p_declined: !!v }); }catch(_){}
 }
 function hasMarketingConnected(){
   const conns = data.connections || [];
@@ -1196,9 +1198,10 @@ function renderSetupWizard(){
     }
   });
   const finish = async ()=>{
-    setMarketingDeclined(false);   // finishing supersedes any prior opt-out
+    // complete_marketing_wizard also nulls wizard_declined_at server-side, so
+    // finishing supersedes any prior opt-out; just mirror both locally.
     try{ await sb.rpc('complete_marketing_wizard', { p_practice: practiceId }); }catch(_){}
-    if(data.practice) data.practice.wizard_completed_at = new Date().toISOString();
+    if(data.practice){ data.practice.wizard_completed_at = new Date().toISOString(); data.practice.wizard_declined_at = null; }
     try{ const u = new URL(location.href); u.searchParams.delete('connected'); u.searchParams.delete('connect_error'); history.replaceState(null,'',u); }catch(_){}
     closeMarketingWizard();
     render();
