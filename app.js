@@ -2480,10 +2480,9 @@ $('btnExportKpi')?.addEventListener('click', ()=>{
 /* ============================================================
    INLINE-EDITABLE RENDERERS  (team edits in place; client sees read-only)
    ============================================================ */
-// 'promised' is the historical value for a not-yet-started deliverable; it now reads
-// "Planned". 'scheduled' + 'posted' extend the lifecycle (status is a free-text column,
-// so no schema change). Order = lifecycle order.
-const STATUS_OPTS = [['promised','Planned'],['scheduled','Scheduled'],['in_progress','In progress'],['delivered','Delivered'],['posted','Posted']];
+// Three canonical deliverable states (match the "What do these mean?" guide).
+// 'promised' is the historical value for a not-yet-started item; it now reads "Planned".
+const STATUS_OPTS = [['promised','Planned'],['in_progress','In progress'],['delivered','Delivered']];
 const MILE_OPTS   = [['upcoming','Up next'],['current','You are here'],['done','Complete']];
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -2659,8 +2658,7 @@ function renderDeliverables(isTeam){
    needs-attention !), a compact milestone timeline, and a "what's next" footer.
    Beautiful + simplified + read-only. Live from deliverables + milestones. */
 let ppOpen = null;   // Set of expanded phase names (seeded with the active phase)
-// A deliverable is "done" once it's delivered OR posted (published beyond delivery).
-const DELIV_DONE = s => s==='delivered' || s==='posted';
+const DELIV_DONE = s => s==='delivered';
 // Needs-attention is INTERNAL (team/ops only) — never surfaced to clients. It clears
 // the moment the item is done, or its due date moves to today/future, so no stale
 // flags survive an edit. Compared at day granularity (something due later today ≠ overdue).
@@ -2673,27 +2671,23 @@ function delivStatusIcon(status, attn){
   if(attn) return `<span class="pp-ico attn" aria-hidden="true">!</span>`;
   if(DELIV_DONE(status)) return `<span class="pp-ico done" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
   if(status==='in_progress') return `<span class="pp-ico prog" aria-hidden="true"><span class="pp-spin"></span></span>`;
-  if(status==='scheduled') return `<span class="pp-ico sched" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>`;
   return `<span class="pp-ico plan" aria-hidden="true"></span>`;
 }
 function delivStatusMeta(status, attn){
   if(attn) return ['Needs attention','attn'];
-  if(status==='posted') return ['Posted','done'];
   if(status==='delivered') return ['Delivered','done'];
   if(status==='in_progress') return ['In progress','prog'];
-  if(status==='scheduled') return ['Scheduled','sched'];
   return ['Planned','plan'];
 }
 function phaseStateOf(g){
   const {done,total} = phaseProgress(g);
   if(total && done===total) return 'complete';
-  if(done>0 || g.items.some(i=> i.status==='in_progress' || i.status==='scheduled')) return 'current';
+  if(done>0 || g.items.some(i=> i.status==='in_progress')) return 'current';
   return 'planned';
 }
 /* Compact, themed milestone hero — sits ABOVE the phase cards (both roles). Answers
-   at a glance: where you are (current milestone), what's next (next milestone), current
-   phase %, and the whole timeline progression. Read-only; milestones edit in the team
-   list below. */
+   at a glance: where you are (current milestone), what's next (the next PHASE step),
+   current phase %, and the whole timeline progression. Read-only. */
 function ppMilestoneHero(){
   const ds = milestoneDisplayStatusMap();
   const miles = sortedMilestones();
@@ -2702,10 +2696,15 @@ function ppMilestoneHero(){
     || groups.find(g=> phaseStateOf(g)==='planned') || groups[groups.length-1];
   const curPct = curPhase ? phaseProgress(curPhase).pct : 0;
   const current = miles.find(m=> ds.get(m.id)==='current');
-  const next = miles.find(m=> ds.get(m.id)==='upcoming');
+  // What's next = the next PHASE to begin (the actual next step of work).
+  const nextPhase = groups.find(g=> phaseStateOf(g)==='planned');
+  const allComplete = groups.length && groups.every(g=> phaseStateOf(g)==='complete');
+  const nextLabel = nextPhase ? nextPhase.phase
+    : allComplete ? 'All phases complete'
+    : curPhase ? curPhase.phase : '—';
   const cards = `<div class="pp-hero-row">
-    <div class="pp-hero-card"><span class="pp-hero-k">Where you are</span><span class="pp-hero-v">${current?esc(current.name):'Kicking off'}</span></div>
-    <div class="pp-hero-card"><span class="pp-hero-k">What's next</span><span class="pp-hero-v">${next?esc(next.name):'You\'re all caught up'}</span></div>
+    <div class="pp-hero-card"><span class="pp-hero-k">Where you are</span><span class="pp-hero-v">${current?esc(current.name):(curPhase?esc(curPhase.phase):'Kicking off')}</span></div>
+    <div class="pp-hero-card"><span class="pp-hero-k">What's next</span><span class="pp-hero-v">${esc(nextLabel)}</span></div>
     <div class="pp-hero-card"><span class="pp-hero-k">${curPhase?esc(curPhase.phase):'Current phase'}</span><span class="pp-hero-v gold">${curPct}%<span class="pp-hero-sub">complete</span></span></div>
   </div>`;
   const tl = miles.length ? `<div class="pp-tl">${miles.map(m=>{
@@ -2714,16 +2713,6 @@ function ppMilestoneHero(){
     return `<div class="pp-step ${st}"><span class="pp-step-dot"></span><div class="pp-step-name">${esc(m.name)}</div><div class="pp-step-tag">${tag}</div></div>`;
   }).join('')}</div>` : '';
   return `<div class="pp-hero">${cards}${tl}</div>`;
-}
-/* Bottom "What's next" — the next PHASE to begin (the hero already carries the next
-   milestone, so we don't repeat it here). Never a "milestone review" date. */
-function ppNextFooter(){
-  const groups = phaseGroups();
-  const nextPhase = groups.find(g=> phaseStateOf(g)==='planned');
-  if(nextPhase) return `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next — <b>${esc(nextPhase.phase)}</b></span></div>`;
-  const allComplete = groups.length && groups.every(g=> phaseStateOf(g)==='complete');
-  if(allComplete) return `<div class="pp-foot done"><span class="pp-foot-ico">✓</span><span>Every phase is complete — you're fully caught up.</span></div>`;
-  return '';   // phases underway with none queued → hero's "what's next" is enough
 }
 function ppPhaseCard(g, idx, open){
   const {done,total,pct} = phaseProgress(g);
@@ -2760,7 +2749,7 @@ function renderClientProgress(){
   }
   const cards = groups.map((g,idx)=> ppPhaseCard(g, idx, ppOpen.has(g.phase))).join('')
     || `<p class="note">Your project phases appear here at kickoff.</p>`;
-  t.innerHTML = `${ppMilestoneHero()}<div class="pp">${cards}</div>${ppNextFooter()}`;
+  t.innerHTML = `${ppMilestoneHero()}<div class="pp">${cards}</div>`;
   t.querySelectorAll('.pp-phase-head').forEach(h=> h.addEventListener('click', ()=>{
     const phase = h.dataset.phase, card = h.closest('.pp-phase');
     if(ppOpen.has(phase)) ppOpen.delete(phase); else ppOpen.add(phase);
@@ -2847,7 +2836,7 @@ function renderTeamProgress(){
 
   // Order (matches the IA): timeline hero → editable milestones → deliverables by phase → what's next.
   const delivHead = `<div class="pp-sec-head">Deliverables by phase</div>`;
-  t.innerHTML = `${ppMilestoneHero()}${mileSec}${delivHead}<div class="pp pp-editable" id="phaseWrap">${cards}</div>${newphase}${ppNextFooter()}`;
+  t.innerHTML = `${ppMilestoneHero()}${mileSec}${delivHead}<div class="pp pp-editable" id="phaseWrap">${cards}</div>${newphase}`;
   enhanceSelectsIn(t);   // themed status dropdowns on every row
   wireTeamProgress(t);
 }
@@ -5943,7 +5932,7 @@ $('btnResetData').onclick = async ()=>{
   guide.innerHTML = `
     <p>This is everything we committed to for your practice, grouped into <b>phases</b> of work. Each phase shows how many items are <b>delivered</b> out of the total, and you can collapse a phase with the ▾ caret to focus on what's active.</p>
     <ul class="guidelist">
-      <li><span class="chip promised">promised</span> Committed and scheduled — not started yet.</li>
+      <li><span class="chip promised">planned</span> Committed and scheduled — not started yet.</li>
       <li><span class="chip in_progress">in progress</span> Actively being worked on right now.</li>
       <li><span class="chip delivered">delivered</span> Completed and handed off.</li>
     </ul>
