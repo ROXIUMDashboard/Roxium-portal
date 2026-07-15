@@ -376,9 +376,9 @@ function applySidebarPref(){
 }
 function showView(name){
   if(name === 'admin') name = 'controls';
-  // Client side: Roadmap is folded into the unified "Project Progress" view — any
+  // Roadmap is folded into the unified "Project Progress" view for both roles — any
   // stray #roadmap link (older bookmarks, "You are here" CTAs) lands there.
-  if(name === 'roadmap' && !isTeamView()) name = 'deliverables';
+  if(name === 'roadmap') name = 'deliverables';
   if(!VIEWS.includes(name)) name = (me && me.role === 'team' && isTeamView()) ? 'operations' : CLIENT_HOME;
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = CLIENT_HOME;
   if(name === 'access' && !canSeeAccessTab()) name = CLIENT_HOME;
@@ -431,8 +431,8 @@ function syncChrome(){
   };
   // Overview is a client view (router-managed); show it whenever a practice is open.
   navToggle('overview', !(practiceId || (me && me.role==='client')));
-  // Roadmap is a team-only tab now — clients see it folded into Project Progress.
-  navToggle('roadmap', !teamView);
+  // Roadmap is no longer its own tab for anyone — it lives inside Project Progress.
+  navToggle('roadmap', true);
   navToggle('access', !canSeeAccessTab());
   navToggle('connections', !canSeeConnectionsTab());
   TEAM_ONLY_VIEWS.forEach(v=> navToggle(v, !teamView));
@@ -2645,43 +2645,10 @@ function phaseProgress(g){
 }
 
 function renderDeliverables(isTeam){
-  const t = $('delivTable');
-  const groups = phaseGroups();
-  // Phases start expanded; collapsing is opt-in per session via the ▾ caret.
-  if(isTeam){
-    t.innerHTML = `<div class="phasewrap" id="phaseWrap">` + groups.map(g=>{
-      const {done,total,pct} = phaseProgress(g);
-      const collapsed = delivCollapsed.has(g.phase);
-      const rows = g.items.map(x=>{
-        const sla = slaState(x.status_since, x.status==='delivered');   // team-only age colour
-        const ageChip = sla? `<span class="agechip ${sla}" title="${daysIn(x.status_since)} days in this status">${daysIn(x.status_since)}d</span>` : '';
-        return `<div class="drow taskrow ${sla}" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
-        <span class="taskgrip">⋮⋮</span>
-        <input class="cellinput dname" data-f="name" value="${esc(x.name)}">
-        <input class="cellinput owner" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—">
-        <input class="cellinput dueinput compact-due" type="date" data-f="due" value="${x.due ? String(x.due).slice(0,10) : ''}" title="Due date">
-        ${ageChip}
-        <button class="infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
-        ${statusSelect('deliv', x.status)}
-        <button class="rowdel" title="Delete">✕</button></div>`;}).join('');
-      return `<div class="phasecard${collapsed?' collapsed':''}" draggable="true" data-phase="${esc(g.phase)}">
-        <div class="phasehead">
-          <span class="grip">⋮⋮</span>
-          <button class="caret" type="button" data-phase="${esc(g.phase)}" title="Collapse / expand">▾</button>
-          <input class="cellinput phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}">
-          <span class="phaseprog"><span style="width:${pct}%"></span></span>
-          <span class="phasecount">${done}/${total}</span>
-          <button class="phasedel" data-phase="${esc(g.phase)}" title="Delete phase">✕</button>
-        </div>
-        <div class="phaserows">${rows}
-          <button class="adddeliv" data-phase="${esc(g.phase)}">+ Add deliverable</button>
-        </div></div>`;
-    }).join('') + `</div>
-      <div class="newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase">+ Add phase</button></div>`;
-    wireDeliverables();
-  } else {
-    renderClientProgress();   // unified Project Progress (phases + milestones + what's next)
-  }
+  // Same unified "Project Progress" design for both roles — read-only for the
+  // client, fully editable for the team (phases, deliverables, milestones, drag-drop).
+  if(isTeam) renderTeamProgress();
+  else renderClientProgress();
 }
 /* ===== Unified CLIENT "Project Progress" (Roadmap folded in) =====
    Numbered phase cards (progress bars + %), expandable to reveal deliverables
@@ -2766,6 +2733,198 @@ function renderClientProgress(){
     card.classList.toggle('collapsed', !open);
     h.setAttribute('aria-expanded', open?'true':'false');
   }));
+}
+/* ===== TEAM "Project Progress" — SAME design as the client, fully editable =====
+   Identical pp-phase cards + accordion + status icons, but every field is live-
+   editable: rename/delete/drag phases, edit/move/reorder/delete deliverables,
+   change status (themed dropdown), dates, client explanation (ⓘ), plus a folded-in
+   editable Milestones section (add / edit / drag-reorder) and the What's-next foot. */
+function renderTeamProgress(){
+  const t = $('delivTable'); if(!t) return;
+  const groups = phaseGroups();
+  document.querySelector('section[data-view="deliverables"] .progressbar')?.classList.add('hidden');
+  if(ppOpen===null){
+    ppOpen = new Set();
+    const cur = groups.find(g=> phaseStateOf(g)==='current');
+    ppOpen.add(cur ? cur.phase : (groups[0] && groups[0].phase));
+  }
+  const cards = groups.map((g,idx)=>{
+    const {done,total,pct} = phaseProgress(g);
+    const state = phaseStateOf(g);
+    const pill = state==='complete' ? 'Complete' : state==='current' ? 'In progress' : 'Planned';
+    const open = ppOpen.has(g.phase);
+    const rows = g.items.map(x=>{
+      const attn = delivAttention(x);
+      const [,cls] = delivStatusMeta(x.status, attn);
+      const sla = slaState(x.status_since, x.status==='delivered');
+      const ageChip = sla ? `<span class="agechip ${sla}" title="${daysIn(x.status_since)} days in this status">${daysIn(x.status_since)}d</span>` : '';
+      return `<div class="pp-item pp-item-edit ${cls} taskrow" draggable="true" data-id="${x.id}" data-phase="${esc(g.phase)}">
+        <span class="pp-item-l">
+          <span class="pp-drag" title="Drag to reorder">⋮⋮</span>
+          ${delivStatusIcon(x.status, attn)}
+          <input class="pp-name-input cellinput" data-f="name" value="${esc(x.name)}">
+        </span>
+        <span class="pp-item-r">
+          <input class="pp-owner-input cellinput" data-f="owner_seat" value="${esc(x.owner_seat||'')}" placeholder="—" title="Owner seat">
+          <input class="pp-due-input cellinput" type="date" data-f="due" value="${x.due ? String(x.due).slice(0,10) : ''}" title="Due date">
+          ${ageChip}
+          <button class="pp-info infobtn${x.description?' has':''}" data-info-edit="${x.id}" title="Edit client explanation">ⓘ</button>
+          ${statusSelect('deliv', x.status)}
+          <button class="pp-del rowdel" title="Delete">✕</button>
+        </span>
+      </div>`;
+    }).join('');
+    return `<div class="pp-phase pp-team state-${state}${open?'':' collapsed'}" draggable="true" data-phase="${esc(g.phase)}">
+      <div class="pp-phase-head" data-phase="${esc(g.phase)}">
+        <span class="pp-grip" title="Drag to reorder phase">⋮⋮</span>
+        <span class="pp-badge">${idx+1}</span>
+        <input class="pp-phase-name-input phasename" data-phase="${esc(g.phase)}" value="${esc(g.phase)}" title="Rename phase">
+        <span class="pp-phase-pill ${state}">${pill}</span>
+        <span class="pp-phase-right"><span class="pp-phase-pct">${pct}%</span><span class="pp-phase-count">${done}/${total}</span></span>
+        <button class="pp-phase-del phasedel" data-phase="${esc(g.phase)}" title="Delete phase">✕</button>
+        <button class="pp-caret-btn" type="button" data-phase="${esc(g.phase)}" aria-expanded="${open?'true':'false'}"><span class="pp-caret" aria-hidden="true">▾</span></button>
+      </div>
+      <div class="pp-bar"><div class="pp-bar-fill" style="width:${pct}%"></div></div>
+      <div class="pp-body"><div class="pp-body-inner">${rows}
+        <button class="pp-add adddeliv" data-phase="${esc(g.phase)}" type="button">+ Add deliverable</button>
+      </div></div>
+    </div>`;
+  }).join('') || `<p class="note">No phases yet — add the first one below.</p>`;
+
+  const newphase = `<div class="pp-newphase"><input id="ndPhase" class="cellinput" placeholder="New phase name…"><button class="btn sm" id="ndAddPhase" type="button">+ Add phase</button></div>`;
+
+  // folded-in editable Milestones section
+  const ds = milestoneDisplayStatusMap();
+  const miles = sortedMilestones();
+  const mileRows = miles.map(m=>{
+    const st = ds.get(m.id) || m.status;
+    const tag = st==='done'?'Complete':st==='current'?'You are here':'Up next';
+    const dates = m.target_date ? ` · ${prettyDate(m.target_date,'month')}` : '';
+    return `<div class="pp-mile pp-item msrow" draggable="true" data-id="${m.id}">
+      <span class="pp-item-l"><span class="pp-drag" title="Drag to reorder">⋮⋮</span>${mileStatusIcon(st)}<span class="pp-mile-name">${esc(m.name)}</span></span>
+      <span class="pp-item-r"><span class="pp-mile-tag ${st}">${tag}${dates}</span><button class="btn ghost xs pp-mile-edit" type="button">Edit</button></span>
+    </div>`;
+  }).join('') || `<p class="note">No milestones yet — add the first one.</p>`;
+  const mileSec = `<div class="pp-mile-sec">
+    <div class="pp-mile-head"><span class="pp-mile-title">Milestones</span><button class="btn ghost sm" id="ppAddMile" type="button">+ Add milestone</button></div>
+    <div class="pp-mile-list">${mileRows}</div>
+  </div>`;
+
+  const nextM = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
+  const foot = nextM ? `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next: <b>${esc(nextM.name)}</b>${nextM.target_date ? ` · ${esc(prettyDate(nextM.target_date,'month'))}` : ''}</span></div>` : '';
+
+  t.innerHTML = `<div class="pp pp-editable" id="phaseWrap">${cards}</div>${newphase}${mileSec}${foot}`;
+  enhanceSelectsIn(t);   // themed status dropdowns on every row
+  wireTeamProgress(t);
+}
+function mileStatusIcon(st){
+  if(st==='done') return delivStatusIcon('delivered', false);
+  if(st==='current') return delivStatusIcon('in_progress', false);
+  return delivStatusIcon('promised', false);
+}
+function wireTeamProgress(t){
+  // accordion: click the head (never an input/select/button) or the caret toggles
+  const toggle = (phase, card, head)=>{
+    if(ppOpen.has(phase)) ppOpen.delete(phase); else ppOpen.add(phase);
+    const open = ppOpen.has(phase);
+    card.classList.toggle('collapsed', !open);
+    head.setAttribute('aria-expanded', open?'true':'false');
+    card.querySelector('.pp-caret-btn')?.setAttribute('aria-expanded', open?'true':'false');
+  };
+  t.querySelectorAll('.pp-team').forEach(card=>{
+    const phase = card.dataset.phase, head = card.querySelector('.pp-phase-head');
+    head.addEventListener('click', e=>{
+      if(e.target.closest('input,select,textarea,button,.tsel-wrap')) return;
+      toggle(phase, card, head);
+    });
+    card.querySelector('.pp-caret-btn')?.addEventListener('click', e=>{ e.stopPropagation(); toggle(phase, card, head); });
+  });
+  // inline edits on each deliverable row
+  t.querySelectorAll('.taskrow[data-id]').forEach(row=>{
+    const id = row.dataset.id;
+    row.addEventListener('dblclick', e=>{ if(e.target.closest('input,select,textarea,button,.tsel-wrap')) return; openDeliverableEditor(id); });
+    row.querySelectorAll('.cellinput').forEach(inp=> inp.onchange = ()=>{
+      let val = inp.value.trim();
+      if(inp.type === 'date') val = val || null;
+      updateRow('deliverables', id, { [inp.dataset.f]: val || null });
+    });
+    const ssel = row.querySelector('select');
+    if(ssel) ssel.onchange = ()=> updateDeliverableStatus(id, ssel.value);
+    row.querySelector('.rowdel').onclick = ()=> deleteRow('deliverables', id, 'Delete this deliverable?');
+    const info = row.querySelector('.infobtn[data-info-edit]');
+    if(info) info.onclick = ()=> editDeliverableInfo(id);
+  });
+  // rename / delete a whole phase
+  t.querySelectorAll('.phasename').forEach(inp=> inp.onchange = async ()=>{
+    const oldName = inp.dataset.phase, newName = inp.value.trim();
+    if(!newName || newName===oldName) return;
+    await sb.from('deliverables').update({ phase:newName }).eq('practice_id',practiceId).eq('phase',oldName);
+    loadAll();
+  });
+  t.querySelectorAll('.phasedel').forEach(b=> b.onclick = async e=>{
+    e.stopPropagation();
+    const phase = b.dataset.phase;
+    if(!await uiConfirm(`Delete the "${phase}" phase?`, 'This removes the phase and <b>all</b> of its deliverables.', {danger:true})) return;
+    const { error } = await sb.from('deliverables').delete().eq('practice_id',practiceId).eq('phase',phase);
+    if(error){ uiAlert('Delete failed', esc(error.message)); return; }
+    loadAll();
+  });
+  t.querySelectorAll('.adddeliv').forEach(b=> b.onclick = ()=> addDeliverableTo(b.dataset.phase));
+  const addPhaseBtn = t.querySelector('#ndAddPhase'); if(addPhaseBtn) addPhaseBtn.onclick = addPhase;
+
+  // drag phase CARDS to reorder
+  t.querySelectorAll('.pp-phase[draggable]').forEach(card=>{
+    card.addEventListener('dragstart', e=>{ if(e.target.closest('.taskrow')) return; e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','phase:'+card.dataset.phase); card.classList.add('dragging'); });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
+    card.addEventListener('dragover', e=>{ e.preventDefault(); card.classList.add('over'); });
+    card.addEventListener('dragleave', ()=> card.classList.remove('over'));
+    card.addEventListener('drop', async e=>{
+      e.preventDefault(); card.classList.remove('over');
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('phase:')) return;
+      const from = payload.slice(6), to = card.dataset.phase;
+      if(!from || from===to) return;
+      await reorderPhases(from, to);
+    });
+  });
+  // drag task rows to reorder WITHIN their phase
+  t.querySelectorAll('.taskrow[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{ e.stopPropagation(); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','task:'+row.dataset.id); row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); e.stopPropagation(); row.classList.add('taskover'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('taskover'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); e.stopPropagation(); row.classList.remove('taskover');
+      const payload = e.dataTransfer.getData('text/plain');
+      if(!payload.startsWith('task:')) return;
+      const fromId = payload.slice(5), toId = row.dataset.id;
+      if(fromId===toId) return;
+      await reorderTaskWithinPhase(fromId, toId, row.dataset.phase);
+    });
+  });
+  // milestones: add / edit / drag-reorder
+  const addMileBtn = t.querySelector('#ppAddMile'); if(addMileBtn) addMileBtn.onclick = ()=> addMilestone();
+  t.querySelectorAll('.msrow[draggable]').forEach(row=>{
+    const id = row.dataset.id;
+    row.addEventListener('dblclick', e=>{ if(e.target.closest('button')) return; openMilestoneEditor(id); });
+    row.querySelector('.pp-mile-edit')?.addEventListener('click', e=>{ e.stopPropagation(); openMilestoneEditor(id); });
+    row.addEventListener('dragstart', e=>{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', id); row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=> row.classList.remove('dragging'));
+    row.addEventListener('dragover', e=>{ e.preventDefault(); row.classList.add('over'); });
+    row.addEventListener('dragleave', ()=> row.classList.remove('over'));
+    row.addEventListener('drop', async e=>{
+      e.preventDefault(); row.classList.remove('over');
+      const from = e.dataTransfer.getData('text/plain');
+      if(from && from!==id) await reorderMilestones(from, id);
+    });
+  });
+}
+async function addMilestone(){
+  const name = await uiPrompt('New milestone', 'Add a milestone to the roadmap.', '', 'Milestone name'); if(name===null) return;
+  if(!name.trim()){ flash('Enter a name.'); return; }
+  const sort = (Math.max(0,...data.miles.map(m=>m.sort||0)))+1;
+  const { error } = await sb.from('milestones').insert({ practice_id:practiceId, name:name.trim(), status:'upcoming', phase:MILE_PHASE_DEFAULT, sort });
+  flash(error? error.message : 'Milestone added.'); if(!error) loadAll();
 }
 // caret collapse/expand + client info toggles (shared)
 function wireCollapse(scope){
