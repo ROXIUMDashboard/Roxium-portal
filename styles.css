@@ -1753,11 +1753,16 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .up-ico-gold{color:var(--gold);border-color:var(--gold-soft)}
 .up-ico-muted{color:var(--muted)}
 .up-item.up-nav{cursor:pointer}
-.up-compose{display:flex;gap:10px;margin-bottom:24px}
-.up-compose-input{flex:1;min-width:0;background:var(--surface);background-image:var(--glass);border:1px solid var(--line);
-  border-radius:var(--r-md);color:var(--cream);font-family:var(--font-sans);font-size:14px;padding:11px 14px;transition:border-color var(--dur-1)}
+.up-compose{display:flex;align-items:center;gap:12px;margin-bottom:24px;
+  background:var(--surface);background-image:var(--glass);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:10px 12px;transition:border-color var(--dur-1) var(--ease-out)}
+.up-compose:focus-within{border-color:var(--gold-soft);box-shadow:0 0 0 1px var(--gold-soft)}
+.up-compose-ico{flex:0 0 auto;width:34px;height:34px;display:grid;place-items:center;border-radius:var(--r-md);
+  border:1px solid var(--line);background:oklch(1 0 0 / 3%);color:var(--gold)}
+.up-compose-input{flex:1;min-width:0;background:none;border:none;color:var(--cream);
+  font-family:var(--font-sans);font-size:14px;padding:4px 0}
 .up-compose-input::placeholder{color:var(--muted)}
-.up-compose-input:focus{outline:none;border-color:var(--gold-soft);box-shadow:0 0 0 1px var(--gold-soft)}
+.up-compose-input:focus{outline:none}
 .up-compose .btn{flex:0 0 auto}
 .up-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .up-line{display:flex;align-items:baseline;justify-content:space-between;gap:14px}
