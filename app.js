@@ -404,6 +404,7 @@ function showView(name){
   }
   if(name==='access') loadClientAccessRoster();
   if(name==='connections') renderConnectionsPage();
+  if(name==='updates') markUpdatesSeen();   // opening Updates clears its "new" badge
 }
 // Chrome visibility: Operations + Team Controls are global team screens; Clients = per-practice portal.
 function syncChrome(){
@@ -2133,7 +2134,19 @@ function renderConnectionsPage(){
    events only (deliverables delivered, milestones completed, video stage moves).
    Video: one Update per forward move; Delivered only on delivered/posted stages.
    Planned / creation seeds never appear. No new tables — merges loadAll() data. */
-function buildEngagementTimeline(){
+// Classify a free-text activity update → is it an "important" (client-cares) event,
+// and which icon represents it. Keeps the What's-New "This week" list to the things
+// a client would actually want after a week away (connections, KPI snapshots,
+// deliveries, phase/milestone completions) — comments and minor moves are excluded.
+function classifyUpdate(text){
+  const s = String(text||'').toLowerCase();
+  if(/connect|reconnect|\bmeta\b|google|facebook|linkedin|tiktok|instagram|integrat/.test(s)) return { important:true, ic:'connection' };
+  if(/sync|snapshot|numbers|kpi|report|metric|stats/.test(s)) return { important:true, ic:'sync' };
+  if(/phase .*(complete|done)|milestone|roadmap/.test(s)) return { important:true, ic:'milestone' };
+  if(/deliver|posted|shipped|\blive\b|launch/.test(s)) return { important:true, ic:'delivered' };
+  return { important:false, ic:'update' };
+}
+function buildEngagementTimeline(limit){
   const ev = [];
   const stageLbl = k => stageLabelOf(k);
   const deliveredDelivNames = new Set(
@@ -2144,19 +2157,21 @@ function buildEngagementTimeline(){
     const m = String(f.message||'').match(/^Deliverable completed:\s*(.+?)\.?\s*$/i);
     if(m && deliveredDelivNames.has(m[1].trim().toLowerCase())) return;
     const isComment = String(f.source||'').toLowerCase()==='comment';
+    const cls = isComment ? { important:false, ic:'comment' } : classifyUpdate(f.message);
     ev.push({
       t:f.created_at, kind: isComment ? 'comment' : 'update',
       tag: isComment ? 'Comment' : 'Update', text:f.message,
       meta:`${f.author||'ROXIUM'} · ${f.source||'portal'}`, fid:f.id, edited:f.edited_at,
+      important: cls.important, ic: cls.ic, pinned: !!f.pinned,
     });
   });
   (data.deliv||[]).forEach(d=>{
     if(d.status==='delivered' && d.delivered_at)
-      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'✓ Delivered', text:d.name, meta:d.phase||'Deliverable' });
+      ev.push({ t:d.delivered_at, kind:'deliverable', tag:'✓ Delivered', text:d.name, meta:d.phase||'Deliverable', important:true, ic:'delivered' });
   });
   (data.miles||[]).forEach(m=>{
     if(m.status==='done' && m.completed_on)
-      ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap' });
+      ev.push({ t:m.completed_on+'T12:00:00', kind:'milestone', tag:'Milestone', text:`${m.name} — completed`, meta:'Roadmap', important:true, ic:'milestone' });
   });
   const vname = id => ((data.video||[]).find(v=> v.id===id)||{}).item || 'Video';
   const firstMove = new Map();
@@ -2172,19 +2187,133 @@ function buildEngagementTimeline(){
       ev.push({
         t:h.moved_at, kind:'deliverable', tag:'✓ Delivered',
         text: h.stage==='posted' ? `${name} is posted.` : `${name} was delivered.`,
-        meta:'Video production',
+        meta:'Video production', important:true, ic:'video',
       });
       return;
     }
     ev.push({
       t:h.moved_at, kind:'update', tag:'Update',
       text:`${name} moved to ${stageLbl(h.stage)}.`,
-      meta:'Video production',
+      meta:'Video production', important:false, ic:'video',
     });
   });
   ev.sort((a,b)=> new Date(b.t)-new Date(a.t));
-  return ev.slice(0, 80);
+  return ev.slice(0, limit || 80);
 }
+
+/* ===== Updates — a concise "What's New" center (Today / Yesterday / This week)
+   with a one-click full History. Client-safe: no warnings, stalled videos or
+   internal ops signals ever appear here (those live in team Operations). Team
+   keeps edit / delete / pin / create. ===== */
+let updatesHistory = false;
+const UPD_ICON = {
+  delivered:  '<path d="M20 6L9 17l-5-5"/>',
+  milestone:  '<path d="M4 22V4h13l-2 4 2 4H4"/>',
+  sync:       '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  connection: '<path d="M8 8a4 4 0 0 0 0 8h2"/><path d="M16 8a4 4 0 0 1 0 8h-2"/><path d="M9 12h6"/>',
+  video:      '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  comment:    '<path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.6 8.6 0 0 1-4-1L3 21l1.5-5.5a8.4 8.4 0 0 1-1-4A8.5 8.5 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>',
+  update:     '<circle cx="12" cy="12" r="3.2"/>',
+};
+function updIconSvg(ic, tone){
+  return `<span class="up-ico up-ico-${tone||'muted'}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${UPD_ICON[ic]||UPD_ICON.update}</svg></span>`;
+}
+function updToneOf(ev){
+  if(ev.ic==='delivered'||ev.ic==='video'||ev.kind==='deliverable') return 'good';
+  if(ev.ic==='milestone'||ev.ic==='sync'||ev.ic==='connection'||ev.kind==='milestone') return 'gold';
+  return 'muted';
+}
+function relTime(t){
+  const d = new Date(t), diff = Date.now() - d.getTime();
+  if(diff < 60000) return 'Just now';
+  const sod = new Date(); sod.setHours(0,0,0,0);
+  if(d.getTime() >= sod.getTime()) return diff < 3600000 ? Math.round(diff/60000)+'m ago' : Math.round(diff/3600000)+'h ago';
+  const soy = new Date(sod); soy.setDate(soy.getDate()-1);
+  if(d.getTime() >= soy.getTime()) return d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  return d.toLocaleDateString(undefined,{weekday:'short'});
+}
+function renderUpdates(isTeam){
+  const host = $('feed'); if(!host) return;
+  const all = buildEngagementTimeline(updatesHistory ? 300 : 120);
+  const sod = new Date(); sod.setHours(0,0,0,0);
+  const soy = new Date(sod); soy.setDate(soy.getDate()-1);
+  const sow = new Date(sod); sow.setDate(sow.getDate()-7);
+  const bucket = e=>{ const t=new Date(e.t).getTime();
+    if(t>=sod.getTime()) return 'today';
+    if(t>=soy.getTime()) return 'yesterday';
+    if(t>=sow.getTime()) return 'week';
+    return 'earlier';
+  };
+  const pinned  = all.filter(e=> e.pinned);
+  const rest    = all.filter(e=> !e.pinned);
+  const today   = rest.filter(e=> bucket(e)==='today');
+  const yest    = rest.filter(e=> bucket(e)==='yesterday');
+  let   week    = rest.filter(e=> bucket(e)==='week');
+  const earlier = rest.filter(e=> bucket(e)==='earlier');
+  // Simple view keeps "This week" to the 5 things a client would care about most.
+  if(!updatesHistory) week = week.filter(e=> e.important).slice(0,5);
+
+  const row = ev=>{
+    const tone = updToneOf(ev);
+    const actions = (isTeam && ev.fid) ? `<span class="up-actions">
+        <button class="up-pin${ev.pinned?' on':''}" type="button" data-fid="${ev.fid}" data-pin="${ev.pinned?1:0}" title="${ev.pinned?'Unpin':'Pin to top'}">${ev.pinned?'★':'☆'}</button>
+        <button class="up-edit" type="button" data-fid="${ev.fid}" title="Edit">✎</button>
+        <button class="up-del" type="button" data-fid="${ev.fid}" title="Delete">✕</button></span>` : '';
+    return `<div class="up-item${ev.pinned?' pinned':''}" data-fid="${ev.fid||''}">
+      ${updIconSvg(ev.ic, tone)}
+      <span class="up-body"><span class="up-text">${esc(ev.text)}</span>${ev.meta?`<span class="up-meta">${esc(ev.meta)}${ev.edited?' · edited':''}</span>`:''}</span>
+      <span class="up-time">${esc(relTime(ev.t))}</span>
+      ${actions}
+    </div>`;
+  };
+  const section = (label, items)=> items.length ? `<div class="up-sec">
+    <div class="up-sec-head"><span>${label}</span><span class="up-sec-n">${items.length} item${items.length===1?'':'s'}</span></div>
+    <div class="up-list">${items.map(row).join('')}</div></div>` : '';
+
+  let html = '';
+  if(pinned.length) html += section('Pinned', pinned);
+  html += section('Today', today);
+  html += section('Yesterday', yest);
+  html += section('This week', week);
+  if(updatesHistory) html += section('Earlier', earlier);
+  if(!html) html = '<p class="note">No updates yet — activity appears here as work ships.</p>';
+  host.innerHTML = html;
+
+  if(isTeam){
+    host.querySelectorAll('.up-edit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
+    host.querySelectorAll('.up-del').forEach(b=> b.onclick = async ()=>{
+      if(!await uiConfirm('Delete this update?', 'This removes the posted update from the client feed.', {danger:true})) return;
+      const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
+      if(error) uiAlert('Delete failed', esc(error.message)); else loadAll();
+    });
+    host.querySelectorAll('.up-pin').forEach(b=> b.onclick = ()=> togglePinUpdate(b.dataset.fid, b.dataset.pin==='1'));
+  }
+}
+async function togglePinUpdate(id, isPinned){
+  const { error } = await sb.from('activity').update({ pinned: !isPinned }).eq('id', id);
+  if(error){ uiAlert('Pin failed', /pinned/i.test(error.message)?'Run the activity-pinned migration first.':esc(error.message)); return; }
+  loadAll();
+}
+/* ---- Updates unread badge — new important events since the view was last opened ---- */
+function updatesSeenKey(){ return 'roxium_updates_seen_' + (practiceId||'x'); }
+function markUpdatesSeen(){ try{ localStorage.setItem(updatesSeenKey(), String(Date.now())); }catch(_){ } renderUpdatesBadge(); }
+function renderUpdatesBadge(){
+  const el = $('sbUpdCount'); if(!el) return;
+  let seen = 0; try{ seen = +localStorage.getItem(updatesSeenKey()) || 0; }catch(_){ }
+  // First ever visit for this practice: baseline to now so we don't flag old history.
+  if(!seen){ seen = Date.now(); try{ localStorage.setItem(updatesSeenKey(), String(seen)); }catch(_){ } }
+  const n = buildEngagementTimeline(120).filter(e=> e.important && new Date(e.t).getTime() > seen).length;
+  el.textContent = n > 9 ? '9+' : String(n);
+  el.classList.toggle('hidden', n<=0);
+}
+$('updHistBtn')?.addEventListener('click', ()=>{
+  updatesHistory = !updatesHistory;
+  $('updHistBtn').textContent = updatesHistory ? 'Back to summary' : 'View history';
+  const sub = $('updSub'); if(sub) sub.textContent = updatesHistory
+    ? 'The complete history — every update, comment, delivery and change.'
+    : 'Today, yesterday, and this week\'s highlights — everything important, at a glance.';
+  renderUpdates(isTeamView());
+});
 
 
 /* ---------------- render ---------------- */
@@ -2342,33 +2471,8 @@ function render(){
   });
 
   // feed (team can edit/delete each posted update)
-  safe('updates feed', ()=>{
-    const teamFeed = isTeamView();
-    // Engagement timeline: posted updates merged with system events (deliverables
-    // delivered, milestones completed, video stage moves) into ONE chronological
-    // story of the engagement — the client scrolls one feed, not four tabs.
-    const events = buildEngagementTimeline();
-    $('feed').innerHTML = events.length? events.map(ev=>
-      ev.kind==='update' || ev.kind==='comment'
-        ? `<div class="fitem" data-fid="${ev.fid||''}">
-             <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
-             <span class="fmsg">${esc(ev.text)}</span>
-             ${teamFeed && ev.fid ? `<span class="factions"><button class="fedit" data-fid="${ev.fid}" title="Edit">✎</button><button class="fdel" data-fid="${ev.fid}" title="Delete">✕</button></span>`:''}
-             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}${ev.edited? ' · <span class="edited">edited '+new Date(ev.edited).toLocaleDateString()+'</span>':''}</div></div>`
-        : `<div class="fitem fitem-sys">
-             <span class="ftag ftag-${ev.kind}">${esc(ev.tag)}</span>
-             <span class="fmsg">${esc(ev.text)}</span>
-             <div class="meta">${esc(ev.meta)} · ${new Date(ev.t).toLocaleDateString()}</div></div>`
-    ).join('') : '<p class="note">No updates yet.</p>';
-    if(teamFeed){
-      $('feed').querySelectorAll('.fedit').forEach(b=> b.onclick = ()=> editFeedItem(b.dataset.fid));
-      $('feed').querySelectorAll('.fdel').forEach(b=> b.onclick = async ()=>{
-        if(!await uiConfirm('Delete this update?', 'This removes the posted update from the client feed.', {danger:true})) return;
-        const { error } = await sb.from('activity').delete().eq('id', b.dataset.fid);
-        if(error) uiAlert('Delete failed', esc(error.message)); else loadAll();
-      });
-    }
-  });
+  safe('updates feed', ()=> renderUpdates(isTeamView()));
+  safe('updates badge', ()=> renderUpdatesBadge());
 
   // team panel + controls only when team AND not previewing as client
   safe('team panel', ()=>{
@@ -4318,6 +4422,18 @@ function buildOpsAlerts(){
           sort: OPS_HEALTH_RANK.yellow, linkView:'metrics', srcKey:s.source });
       }
     });
+    // Failing marketing connections — a reconnect the team needs to chase.
+    (opsData.connections||[]).filter(c=> c.practice_id===p.id).forEach(c=>{
+      if(c.status==='error' || c.status==='revoked'){
+        alerts.push({ severity:'red', practice:pname, practiceId:p.id,
+          title:'Connection failed', detail:`${platformInfo(c.provider).title} · ${humanizeSyncError(c.last_error)||'reconnect to resume reporting'}`,
+          sort: OPS_HEALTH_RANK.red, linkView:'connections' });
+      } else if(c.last_error){
+        alerts.push({ severity:'yellow', practice:pname, practiceId:p.id,
+          title:'Connection needs attention', detail:`${platformInfo(c.provider).title} · last sync had an issue`,
+          sort: OPS_HEALTH_RANK.yellow, linkView:'connections' });
+      }
+    });
     (opsData.milestones||[]).filter(m=> m.practice_id===p.id).forEach(m=>{
       if(!m.target_date || m.status==='done') return;
       const days = Math.ceil((new Date(m.target_date+'T12:00:00')-Date.now())/86400000);
@@ -5011,6 +5127,14 @@ async function loadOperationsData(force){
         // along when present without breaking on databases that predate them.
         sb.from('sheet_sources').select('*'),
       ]);
+      // Marketing OAuth connections (fail-soft on pre-migration DBs) — feeds the
+      // connection-failure alerts in Needs Attention.
+      let platformConns = [];
+      try{
+        const { data: pc, error: pcErr } = await sb.from('platform_connections')
+          .select('practice_id,provider,status,last_error,last_synced_at');
+        if(!pcErr && Array.isArray(pc)) platformConns = pc;
+      }catch(_){ /* pre-migration DB */ }
       // Pending self-service account requests (fail-soft on pre-migration DBs).
       let pendingAccounts = [];
       try{
@@ -5025,6 +5149,7 @@ async function loadOperationsData(force){
         kpiRaw: kpiRaw.data||[],
         kpiDailyRaw: kpiDaily.error ? [] : (kpiDaily.data||[]),
         sources: sources.data||[],
+        connections: platformConns,
         pendingAccounts,
       };
       renderOperationsDashboard();
