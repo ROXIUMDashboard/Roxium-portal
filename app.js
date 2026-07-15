@@ -2480,7 +2480,10 @@ $('btnExportKpi')?.addEventListener('click', ()=>{
 /* ============================================================
    INLINE-EDITABLE RENDERERS  (team edits in place; client sees read-only)
    ============================================================ */
-const STATUS_OPTS = [['promised','Promised'],['in_progress','In progress'],['delivered','Delivered']];
+// 'promised' is the historical value for a not-yet-started deliverable; it now reads
+// "Planned". 'scheduled' + 'posted' extend the lifecycle (status is a free-text column,
+// so no schema change). Order = lifecycle order.
+const STATUS_OPTS = [['promised','Planned'],['scheduled','Scheduled'],['in_progress','In progress'],['delivered','Delivered'],['posted','Posted']];
 const MILE_OPTS   = [['upcoming','Up next'],['current','You are here'],['done','Complete']];
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -2639,7 +2642,7 @@ function phaseGroups(){
 
 let delivCollapsed = new Set();   // phase names the user has collapsed (persists in-session)
 function phaseProgress(g){
-  const done = g.items.filter(i=>i.status==='delivered').length;
+  const done = g.items.filter(i=> DELIV_DONE(i.status)).length;
   const pct = g.items.length? Math.round(100*done/g.items.length):0;
   return { done, total:g.items.length, pct };
 }
@@ -2656,76 +2659,108 @@ function renderDeliverables(isTeam){
    needs-attention !), a compact milestone timeline, and a "what's next" footer.
    Beautiful + simplified + read-only. Live from deliverables + milestones. */
 let ppOpen = null;   // Set of expanded phase names (seeded with the active phase)
-function delivAttention(x){ return x.status!=='delivered' && x.due && new Date(x.due).getTime() < Date.now(); }
+// A deliverable is "done" once it's delivered OR posted (published beyond delivery).
+const DELIV_DONE = s => s==='delivered' || s==='posted';
+// Needs-attention is INTERNAL (team/ops only) — never surfaced to clients. It clears
+// the moment the item is done, or its due date moves to today/future, so no stale
+// flags survive an edit. Compared at day granularity (something due later today ≠ overdue).
+function delivAttention(x){
+  if(!x || DELIV_DONE(x.status) || !x.due) return false;
+  const due = new Date(x.due); due.setHours(23,59,59,999);
+  return due.getTime() < Date.now();
+}
 function delivStatusIcon(status, attn){
   if(attn) return `<span class="pp-ico attn" aria-hidden="true">!</span>`;
-  if(status==='delivered') return `<span class="pp-ico done" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
+  if(DELIV_DONE(status)) return `<span class="pp-ico done" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
   if(status==='in_progress') return `<span class="pp-ico prog" aria-hidden="true"><span class="pp-spin"></span></span>`;
+  if(status==='scheduled') return `<span class="pp-ico sched" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>`;
   return `<span class="pp-ico plan" aria-hidden="true"></span>`;
 }
 function delivStatusMeta(status, attn){
   if(attn) return ['Needs attention','attn'];
-  return status==='delivered' ? ['Delivered','done'] : status==='in_progress' ? ['In progress','prog'] : ['Planned','plan'];
+  if(status==='posted') return ['Posted','done'];
+  if(status==='delivered') return ['Delivered','done'];
+  if(status==='in_progress') return ['In progress','prog'];
+  if(status==='scheduled') return ['Scheduled','sched'];
+  return ['Planned','plan'];
 }
 function phaseStateOf(g){
   const {done,total} = phaseProgress(g);
   if(total && done===total) return 'complete';
-  if(done>0 || g.items.some(i=> i.status==='in_progress')) return 'current';
+  if(done>0 || g.items.some(i=> i.status==='in_progress' || i.status==='scheduled')) return 'current';
   return 'planned';
+}
+/* Compact, themed milestone hero — sits ABOVE the phase cards (both roles). Answers
+   at a glance: where you are (current milestone), what's next (next milestone), current
+   phase %, and the whole timeline progression. Read-only; milestones edit in the team
+   list below. */
+function ppMilestoneHero(){
+  const ds = milestoneDisplayStatusMap();
+  const miles = sortedMilestones();
+  const groups = phaseGroups();
+  const curPhase = groups.find(g=> phaseStateOf(g)==='current')
+    || groups.find(g=> phaseStateOf(g)==='planned') || groups[groups.length-1];
+  const curPct = curPhase ? phaseProgress(curPhase).pct : 0;
+  const current = miles.find(m=> ds.get(m.id)==='current');
+  const next = miles.find(m=> ds.get(m.id)==='upcoming');
+  const cards = `<div class="pp-hero-row">
+    <div class="pp-hero-card"><span class="pp-hero-k">Where you are</span><span class="pp-hero-v">${current?esc(current.name):'Kicking off'}</span></div>
+    <div class="pp-hero-card"><span class="pp-hero-k">What's next</span><span class="pp-hero-v">${next?esc(next.name):'You\'re all caught up'}</span></div>
+    <div class="pp-hero-card"><span class="pp-hero-k">${curPhase?esc(curPhase.phase):'Current phase'}</span><span class="pp-hero-v gold">${curPct}%<span class="pp-hero-sub">complete</span></span></div>
+  </div>`;
+  const tl = miles.length ? `<div class="pp-tl">${miles.map(m=>{
+    const st = ds.get(m.id) || m.status;
+    const tag = st==='done'?'Complete':st==='current'?'You are here':'Up next';
+    return `<div class="pp-step ${st}"><span class="pp-step-dot"></span><div class="pp-step-name">${esc(m.name)}</div><div class="pp-step-tag">${tag}</div></div>`;
+  }).join('')}</div>` : '';
+  return `<div class="pp-hero">${cards}${tl}</div>`;
+}
+/* Bottom "What's next" — the next PHASE to begin (the hero already carries the next
+   milestone, so we don't repeat it here). Never a "milestone review" date. */
+function ppNextFooter(){
+  const groups = phaseGroups();
+  const nextPhase = groups.find(g=> phaseStateOf(g)==='planned');
+  if(nextPhase) return `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next — <b>${esc(nextPhase.phase)}</b></span></div>`;
+  const allComplete = groups.length && groups.every(g=> phaseStateOf(g)==='complete');
+  if(allComplete) return `<div class="pp-foot done"><span class="pp-foot-ico">✓</span><span>Every phase is complete — you're fully caught up.</span></div>`;
+  return '';   // phases underway with none queued → hero's "what's next" is enough
+}
+function ppPhaseCard(g, idx, open){
+  const {done,total,pct} = phaseProgress(g);
+  const state = phaseStateOf(g);
+  const pill = state==='complete' ? 'Complete' : state==='current' ? 'In progress' : 'Planned';
+  // Client view is read-only and INTERNAL-signal-free: no needs-attention, no overdue.
+  const rows = g.items.map(x=>{
+    const [lbl,cls] = delivStatusMeta(x.status, false);
+    return `<div class="pp-item ${cls}">
+      <span class="pp-item-l">${delivStatusIcon(x.status, false)}<span class="pp-item-name">${esc(x.name)}</span></span>
+      <span class="pp-item-stat ${cls}">${lbl}</span>
+    </div>`;
+  }).join('') || `<div class="pp-item plan"><span class="pp-item-l"><span class="pp-ico plan"></span><span class="pp-item-name note">No deliverables in this phase yet.</span></span></div>`;
+  return `<div class="pp-phase state-${state}${open?'':' collapsed'}" data-phase="${esc(g.phase)}">
+    <button class="pp-phase-head" type="button" data-phase="${esc(g.phase)}" aria-expanded="${open?'true':'false'}">
+      <span class="pp-badge">${idx+1}</span>
+      <span class="pp-phase-name">${esc(g.phase)}</span>
+      <span class="pp-phase-pill ${state}">${pill}</span>
+      <span class="pp-phase-right"><span class="pp-phase-pct">${pct}%</span><span class="pp-phase-count">${done}/${total} done</span></span>
+      <span class="pp-caret" aria-hidden="true">▾</span>
+    </button>
+    <div class="pp-bar"><div class="pp-bar-fill" style="width:${pct}%"></div></div>
+    <div class="pp-body"><div class="pp-body-inner">${rows}</div></div>
+  </div>`;
 }
 function renderClientProgress(){
   const t = $('delivTable'); if(!t) return;
   const groups = phaseGroups();
-  // each phase owns its bar → hide the single overall progress bar above the table
   document.querySelector('section[data-view="deliverables"] .progressbar')?.classList.add('hidden');
-  // seed the accordion: open the active phase by default
   if(ppOpen===null){
     ppOpen = new Set();
     const cur = groups.find(g=> phaseStateOf(g)==='current');
     if(cur) ppOpen.add(cur.phase);
   }
-  const cards = groups.map((g,idx)=>{
-    const {done,total,pct} = phaseProgress(g);
-    const state = phaseStateOf(g);
-    const pill = state==='complete' ? 'Complete' : state==='current' ? 'In progress' : 'Planned';
-    const open = ppOpen.has(g.phase);
-    const rows = g.items.map(x=>{
-      const attn = delivAttention(x);
-      const [lbl,cls] = delivStatusMeta(x.status, attn);
-      return `<div class="pp-item ${cls}">
-        <span class="pp-item-l">${delivStatusIcon(x.status, attn)}<span class="pp-item-name">${esc(x.name)}</span></span>
-        <span class="pp-item-stat ${cls}">${lbl}</span>
-      </div>`;
-    }).join('') || `<div class="pp-item plan"><span class="pp-item-l"><span class="pp-ico plan"></span><span class="pp-item-name note">No deliverables in this phase yet.</span></span></div>`;
-    return `<div class="pp-phase state-${state}${open?'':' collapsed'}" data-phase="${esc(g.phase)}">
-      <button class="pp-phase-head" type="button" data-phase="${esc(g.phase)}" aria-expanded="${open?'true':'false'}">
-        <span class="pp-badge">${idx+1}</span>
-        <span class="pp-phase-name">${esc(g.phase)}</span>
-        <span class="pp-phase-pill ${state}">${pill}</span>
-        <span class="pp-phase-right"><span class="pp-phase-pct">${pct}%</span><span class="pp-phase-count">${total} item${total===1?'':'s'}</span></span>
-        <span class="pp-caret" aria-hidden="true">▾</span>
-      </button>
-      <div class="pp-bar"><div class="pp-bar-fill" style="width:${pct}%"></div></div>
-      <div class="pp-body"><div class="pp-body-inner">${rows}</div></div>
-    </div>`;
-  }).join('') || `<p class="note">Your project phases appear here at kickoff.</p>`;
-
-  // compact milestone timeline (folded in from the old Roadmap tab)
-  const ds = milestoneDisplayStatusMap();
-  const miles = sortedMilestones();
-  const tl = miles.length ? `<div class="pp-tl-wrap">
-    <div class="pp-tl-head">Milestone timeline</div>
-    <div class="pp-tl">${miles.map(m=>{
-      const st = ds.get(m.id) || m.status;
-      const tag = st==='done' ? 'Complete' : st==='current' ? 'You are here' : 'Up next';
-      return `<div class="pp-step ${st}"><span class="pp-step-dot"></span><div class="pp-step-name">${esc(m.name)}</div><div class="pp-step-tag">${tag}</div></div>`;
-    }).join('')}</div></div>` : '';
-
-  // what's next footer
-  const nextM = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
-  const foot = nextM ? `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next: <b>${esc(nextM.name)}</b>${nextM.target_date ? ` · ${esc(prettyDate(nextM.target_date,'month'))}` : ''}</span></div>` : '';
-
-  t.innerHTML = `<div class="pp">${cards}</div>${tl}${foot}`;
+  const cards = groups.map((g,idx)=> ppPhaseCard(g, idx, ppOpen.has(g.phase))).join('')
+    || `<p class="note">Your project phases appear here at kickoff.</p>`;
+  t.innerHTML = `${ppMilestoneHero()}<div class="pp">${cards}</div>${ppNextFooter()}`;
   t.querySelectorAll('.pp-phase-head').forEach(h=> h.addEventListener('click', ()=>{
     const phase = h.dataset.phase, card = h.closest('.pp-phase');
     if(ppOpen.has(phase)) ppOpen.delete(phase); else ppOpen.add(phase);
@@ -2810,10 +2845,9 @@ function renderTeamProgress(){
     <div class="pp-mile-list">${mileRows}</div>
   </div>`;
 
-  const nextM = miles.find(m=> ds.get(m.id)==='current') || miles.find(m=> ds.get(m.id)==='upcoming');
-  const foot = nextM ? `<div class="pp-foot"><span class="pp-foot-ico">◷</span><span>What's next: <b>${esc(nextM.name)}</b>${nextM.target_date ? ` · ${esc(prettyDate(nextM.target_date,'month'))}` : ''}</span></div>` : '';
-
-  t.innerHTML = `<div class="pp pp-editable" id="phaseWrap">${cards}</div>${newphase}${mileSec}${foot}`;
+  // Order (matches the IA): timeline hero → editable milestones → deliverables by phase → what's next.
+  const delivHead = `<div class="pp-sec-head">Deliverables by phase</div>`;
+  t.innerHTML = `${ppMilestoneHero()}${mileSec}${delivHead}<div class="pp pp-editable" id="phaseWrap">${cards}</div>${newphase}${ppNextFooter()}`;
   enhanceSelectsIn(t);   // themed status dropdowns on every row
   wireTeamProgress(t);
 }
