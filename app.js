@@ -675,14 +675,32 @@ function wireTopbar(){
   document.addEventListener('click', ()=> closeAllPops());
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeAllPops(); });
 }
+function updateNotifDot(){
+  const unseen = (data.notif||[]).filter(n=> !n.seen).length;
+  $('tbNotifDot')?.classList.toggle('hidden', unseen<=0);
+}
 function renderNotifPop(){
   const el = $('tbNotifPop'); if(!el) return;
-  const items = (data.notif||[]).slice(0,6);
-  el.innerHTML = `<div class="tb-pop-head"><span>Notifications</span>${items.length?`<span class="tb-pop-count">${items.length}</span>`:''}</div>
+  const items = (data.notif||[]).filter(n=> !n.seen).slice(0,20);
+  el.innerHTML = `<div class="tb-pop-head"><span>Notifications${items.length?` <span class="tb-pop-count">${items.length}</span>`:''}</span>${items.length?`<button class="tb-pop-clear" id="tbNotifClear" type="button">Clear all</button>`:''}</div>
     ${items.length ? items.map(nItem=>{
       const txt = nItem.title || nItem.message || nItem.body || 'Update';
-      return `<div class="tb-notif-item"><span class="tb-notif-tdot"></span><div><div class="tb-notif-t">${esc(String(txt))}</div><div class="tb-notif-w">${esc(connAgo(nItem.created_at)||'')}</div></div></div>`;
+      return `<div class="tb-notif-item" data-nid="${nItem.id}"><span class="tb-notif-tdot"></span><div class="tb-notif-main"><div class="tb-notif-t">${esc(String(txt))}</div><div class="tb-notif-w">${esc(connAgo(nItem.created_at)||'')}</div></div><button class="tb-notif-x" type="button" data-nid="${nItem.id}" title="Dismiss">✕</button></div>`;
     }).join('') : `<div class="tb-notif-empty note">You're all caught up.</div>`}`;
+  el.querySelectorAll('.tb-notif-x').forEach(b=> b.onclick = e=>{ e.stopPropagation(); dismissNotif(b.dataset.nid); });
+  const clr = el.querySelector('#tbNotifClear'); if(clr) clr.onclick = e=>{ e.stopPropagation(); clearAllNotifs(); };
+}
+async function dismissNotif(id){
+  const n = (data.notif||[]).find(x=> x.id===id); if(n) n.seen = true;   // optimistic
+  renderNotifPop(); updateNotifDot();
+  try{ await sb.from('notifications').update({ seen:true }).eq('id', id); }catch(_){ }
+}
+async function clearAllNotifs(){
+  const ids = (data.notif||[]).filter(n=> !n.seen).map(n=> n.id);
+  if(!ids.length) return;
+  (data.notif||[]).forEach(n=> n.seen = true);   // optimistic
+  renderNotifPop(); updateNotifDot();
+  try{ await sb.from('notifications').update({ seen:true }).in('id', ids); }catch(_){ }
 }
 async function editMyName(){
   if(!me) return;
@@ -2320,7 +2338,7 @@ $('updHistBtn')?.addEventListener('click', ()=>{
 function render(){
   renderBanner();
   renderWhoami();                                          // refresh top-bar identity (practice name loads late)
-  $('tbNotifDot')?.classList.toggle('hidden', !(data.notif||[]).length);
+  updateNotifDot();   // bell dot reflects UNSEEN notifications only
   safe('sidebar sync', ()=> renderSidebarSync());          // intelligent Live Sync footer
   // newest → oldest by period (immutable monthly snapshots; never overwrite the past)
   const reported = [...data.kpi].sort((a,b)=> (a.period<b.period?1:a.period>b.period?-1:0));

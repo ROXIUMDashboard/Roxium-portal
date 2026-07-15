@@ -1458,12 +1458,19 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .tb-pop-count{background:var(--gold-soft);color:var(--gold);border-radius:var(--r-full);padding:1px 8px;font-size:10px}
 .tb-pop-item{display:block;width:100%;text-align:left;background:none;border:none;color:var(--cream);font:inherit;font-size:13px;padding:9px 10px;border-radius:var(--r-sm);cursor:pointer;transition:background var(--dur-1)}
 .tb-pop-item:hover{background:oklch(1 0 0 / 5%)}
-.tb-notif-item{display:flex;gap:10px;padding:9px 10px;border-radius:var(--r-sm)}
+.tb-notif-item{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:var(--r-sm)}
 .tb-notif-item:hover{background:oklch(1 0 0 / 4%)}
 .tb-notif-tdot{width:6px;height:6px;border-radius:50%;background:var(--gold);margin-top:6px;flex:0 0 auto}
+.tb-notif-main{flex:1;min-width:0}
 .tb-notif-t{font-size:13px;line-height:1.35}
 .tb-notif-w{font-size:11px;color:var(--muted);margin-top:2px}
 .tb-notif-empty{padding:16px 10px;text-align:center}
+.tb-notif-x{flex:0 0 auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;
+  padding:3px 5px;border-radius:var(--r-sm);opacity:.5;transition:opacity var(--dur-1),color var(--dur-1),background var(--dur-1)}
+.tb-notif-item:hover .tb-notif-x{opacity:1}
+.tb-notif-x:hover{color:var(--red);background:oklch(1 0 0 / 6%)}
+.tb-pop-clear{background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;letter-spacing:.02em;padding:2px 6px;border-radius:var(--r-sm);transition:background var(--dur-1)}
+.tb-pop-clear:hover{background:oklch(0.82 0.14 82 / 10%)}
 
 /* ============================================================================
    CLIENT ROADMAP · premium, simplified, confidence-building (read-only)
