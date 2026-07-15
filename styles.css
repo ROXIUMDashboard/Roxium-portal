@@ -1206,8 +1206,13 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 .tb-title{font-family:var(--font-display);font-weight:600;font-size:19px;color:var(--cream);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tb-sub{font-size:11px;letter-spacing:.02em;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tb-right{display:flex;align-items:center;gap:12px;flex:0 0 auto}
-.sb-toggle{display:none;flex-direction:column;gap:4px;background:none;border:none;cursor:pointer;padding:6px}
-.sb-toggle span{display:block;width:20px;height:2px;background:var(--cream);border-radius:2px;transition:transform var(--dur-2) var(--ease-out),opacity var(--dur-1)}
+.sb-toggle{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;padding:6px;color:var(--muted);border-radius:var(--r-sm);transition:color var(--dur-1),background var(--dur-1)}
+.sb-toggle:hover{color:var(--cream);background:oklch(1 0 0 / 4%)}
+.sb-toggle-arrow{transition:transform var(--dur-2) var(--ease-out);transform-origin:12px 12px}
+.app-shell.sb-collapsed .sb-toggle-arrow{transform:scaleX(-1)}   /* arrow flips when collapsed */
+/* Desktop slide open/close */
+.app-shell.sb-collapsed{padding-left:0}
+.app-shell.sb-collapsed .sidebar{transform:translateX(-100%)}
 .sb-scrim{position:fixed;inset:0;background:rgba(8,7,10,.6);z-index:calc(var(--z-overlay) - 1);opacity:0;transition:opacity var(--dur-2)}
 .sb-scrim.show{opacity:1}
 
@@ -1321,12 +1326,30 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .ov-leg{display:flex;align-items:center;gap:6px}
 .ov-leg-dot{width:7px;height:7px;border-radius:50%}
 .ov-chart{position:relative;margin-top:18px}
-.ov-chart-svg{height:224px;width:100%;overflow:visible}
+.ov-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .ov-chart-svg .line{stroke-dasharray:1;stroke-dashoffset:1;animation:ov-draw 1.6s var(--ease-out) forwards}
 .ov-chart-svg .line.dash{animation-duration:1.6s}
+/* interactive hover: markers hidden until hovered; crosshair fades in */
+.ov-pt{opacity:0;transition:opacity var(--dur-1) var(--ease-out)}
+.ov-pt.on{opacity:1}
+.ov-pt-spend{fill:var(--gold);stroke:var(--ink);stroke-width:1.5}
+.ov-pt-reach{fill:oklch(0.7 0.12 60);stroke:var(--ink);stroke-width:1.5}
+.ov-cross{opacity:0;transition:opacity var(--dur-1)}
+.ov-hit{cursor:crosshair}
+.ov-tip{position:absolute;z-index:5;min-width:150px;pointer-events:none;background:var(--surface2);
+  border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-lg);padding:10px 12px;
+  animation:ds-fade-in var(--dur-1) var(--ease-out)}
+@keyframes ds-fade-in{from{opacity:0}to{opacity:1}}
+.ov-tip-title{font-family:var(--font-display);font-weight:600;font-size:14px;margin-bottom:6px}
+.ov-tip-row{display:flex;justify-content:space-between;gap:16px;font-size:12px;padding:2px 0;color:var(--muted)}
+.ov-tip-row span:last-child{color:var(--cream);font-variant-numeric:tabular-nums}
+.ov-tip-mom{margin-top:6px;font-size:11px}
+.ov-tip-mom.up{color:var(--green)}.ov-tip-mom.down{color:var(--red)}
 .ov-chart-x{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;margin-top:8px;font-size:10px;color:var(--muted)}
 .ov-chart-x span{text-align:center}
 .ov-chart-empty{padding:40px 0;text-align:center}
+/* themed month dropdown mount on the Overview */
+.ov-msel-mount{display:inline-flex;min-width:150px}
 
 /* current phase */
 .ov-pct{font-size:12px;color:var(--gold)}

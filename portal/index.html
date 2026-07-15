@@ -82,7 +82,9 @@
 
   <!-- ===== Top utility bar ===== -->
   <header class="topbar"><div class="topbar-inner">
-    <button id="sbToggle" class="sb-toggle" aria-label="Toggle navigation" aria-expanded="false" type="button"><span></span><span></span><span></span></button>
+    <button id="sbToggle" class="sb-toggle" aria-label="Toggle sidebar" aria-expanded="true" type="button">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path class="sb-toggle-arrow" d="M14 9l-2 3 2 3"/></svg>
+    </button>
     <div class="tb-titles">
       <div class="tb-title" id="pageTitle">ROXIUM</div>
       <div class="tb-sub" id="pageSub"></div>
@@ -175,9 +177,12 @@
         <div class="ovh-range" id="ovRange" role="tablist" aria-label="Time range"></div>
       </div>
       <div class="ov-kpis" id="ovKpis"></div>
-      <div class="ov-grid-even">
-        <div class="ov-card" id="ovPhase"></div>
-        <div class="ov-card" id="ovSync"></div>
+      <div class="ov-grid-main">
+        <div class="ov-card ov-perf" id="ovPerf"></div>
+        <div class="ov-rail">
+          <div class="ov-card" id="ovPhase"></div>
+          <div class="ov-card" id="ovSync"></div>
+        </div>
       </div>
       <div class="ov-grid-even">
         <div class="ov-card" id="ovVideos"></div>
