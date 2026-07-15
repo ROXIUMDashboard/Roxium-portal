@@ -88,6 +88,12 @@
       <div class="tb-sub" id="pageSub"></div>
     </div>
     <div class="tb-right">
+      <button id="tbSearch" class="tb-search" type="button" aria-label="Search (Cmd K)">
+        <span class="tb-search-ico" aria-hidden="true"></span>
+        <span class="tb-search-lbl">Search</span>
+        <span class="tb-kbd">⌘K</span>
+      </button>
+      <button id="tbExport" class="btn ghost sm tb-export" type="button">Export report</button>
       <div id="practiceSwitcher" class="switcher hidden">
         <button type="button" id="practiceSwitcherBtn" class="switcher-btn picker" aria-haspopup="listbox" aria-expanded="false">
           <span class="switcher-btn-label" id="practiceCurrentName">Select client…</span>
@@ -98,9 +104,32 @@
           <div id="practiceResults" class="switcher-results"></div>
         </div>
       </div>
-      <button class="btn ghost sm teamonly hidden" id="btnPreview">Preview as client</button>
-      <span class="practice" id="whoami"></span>
-      <button class="btn ghost sm" id="btnLogout">Sign out</button>
+      <div class="tb-menu-wrap">
+        <button id="tbNotif" class="tb-icon-btn" type="button" aria-label="Notifications" aria-haspopup="menu" aria-expanded="false">
+          <span class="tb-bell" aria-hidden="true"></span>
+          <span class="tb-dot hidden" id="tbNotifDot" aria-hidden="true"></span>
+        </button>
+        <div id="tbNotifPop" class="tb-pop hidden" role="menu" aria-label="Notifications"></div>
+      </div>
+      <div class="tb-menu-wrap">
+        <button id="tbUser" class="tb-user" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span class="tb-avatar" id="tbUserAvatar">R</span>
+          <span class="tb-user-id">
+            <span class="tb-user-name" id="whoami"></span>
+            <span class="tb-user-sub" id="tbUserSub"></span>
+          </span>
+          <span class="tb-caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="tbUserPop" class="tb-pop tb-user-pop hidden" role="menu" aria-label="Account">
+          <div class="tb-pop-head">
+            <div class="tb-pop-name" id="tbPopName"></div>
+            <div class="tb-pop-email" id="tbPopEmail"></div>
+          </div>
+          <button class="tb-pop-item" id="tbEditName" type="button">Edit name</button>
+          <button class="tb-pop-item teamonly hidden" id="btnPreview" type="button">Preview as client</button>
+          <button class="tb-pop-item" id="btnLogout" type="button">Sign out</button>
+        </div>
+      </div>
     </div>
   </div></header>
 
@@ -135,17 +164,32 @@
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
 
-    <!-- OVERVIEW · default client landing — answer-first summary + headline KPIs -->
+    <!-- OVERVIEW · default client landing — the dashboard (composed from live data) -->
     <section class="view" data-view="overview">
-      <div class="ov-hero">
-        <div class="eyebrow">Live Performance &amp; Delivery</div>
-        <h1 id="heroTitle" class="ov-h1">Where you are, <em>exactly.</em></h1>
-        <div class="updated" id="updated"></div>
+      <div class="ovh">
+        <div class="ovh-lead">
+          <div class="eyebrow">Client portal</div>
+          <h1 id="heroTitle" class="ovh-title">Everything, in <em>one view.</em></h1>
+          <p class="ovh-sub" id="updated">Live numbers beside the roadmap, deliverables and videos they belong to.</p>
+        </div>
+        <div class="ovh-range" id="ovRange" role="tablist" aria-label="Time range"></div>
       </div>
-      <div class="stats" id="heroStats"></div>
-      <!-- what changed / needs you / what's next — derived live from KPI +
-           delivery + connection data. -->
-      <div id="clientOverview" class="client-overview hidden" aria-label="Your overview"></div>
+      <div class="ov-kpis" id="ovKpis"></div>
+      <div class="ov-grid-main">
+        <div class="ov-card ov-perf" id="ovPerf"></div>
+        <div class="ov-rail">
+          <div class="ov-card" id="ovPhase"></div>
+          <div class="ov-card" id="ovSync"></div>
+        </div>
+      </div>
+      <div class="ov-grid-even">
+        <div class="ov-card" id="ovVideos"></div>
+        <div class="ov-card" id="ovUpdates"></div>
+      </div>
+      <!-- retained (hidden) so any existing references stay valid; the dashboard
+           above supersedes the old stat band + answer-first columns. -->
+      <div class="stats hidden" id="heroStats"></div>
+      <div id="clientOverview" class="client-overview hidden" aria-hidden="true"></div>
     </section>
 
     <!-- Milestone timeline -->
