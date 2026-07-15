@@ -450,7 +450,11 @@ window.addEventListener('hashchange', ()=>{
 });
 $('btnAdminBack')?.addEventListener('click', e=>{ e.preventDefault(); location.hash = '#operations'; });
 // Sidebar toggle: desktop collapse (remembered) / mobile drawer; scrim closes drawer.
+// The topbar #sbToggle re-opens a collapsed sidebar (desktop) or opens the drawer
+// (mobile); #sbCollapse lives ON the sidebar and closes it, so the control isn't
+// stranded next to the page content on wide screens.
 $('sbToggle')?.addEventListener('click', toggleSidebar);
+$('sbCollapse')?.addEventListener('click', toggleSidebar);
 $('sbScrim')?.addEventListener('click', closeSidebarDrawer);
 applySidebarPref();
 

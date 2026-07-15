@@ -1210,9 +1210,21 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 .sb-toggle:hover{color:var(--cream);background:oklch(1 0 0 / 4%)}
 .sb-toggle-arrow{transition:transform var(--dur-2) var(--ease-out);transform-origin:12px 12px}
 .app-shell.sb-collapsed .sb-toggle-arrow{transform:scaleX(-1)}   /* arrow flips when collapsed */
+/* Collapse control mounted ON the sidebar (top-right of the brand row) so the close
+   action lives on the sidebar itself, not stranded in the topbar next to the page. */
+.sb-collapse{position:absolute;top:15px;right:12px;display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;background:none;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
+  color:var(--muted);transition:color var(--dur-1),background var(--dur-1),border-color var(--dur-1)}
+.sb-collapse:hover{color:var(--cream);border-color:var(--gold-soft);background:oklch(1 0 0 / 4%)}
 /* Desktop slide open/close */
 .app-shell.sb-collapsed{padding-left:0}
 .app-shell.sb-collapsed .sidebar{transform:translateX(-100%)}
+/* Desktop: the topbar toggle is only the RE-OPEN control for a collapsed sidebar;
+   while the sidebar is open, collapsing is done from #sbCollapse on the sidebar. */
+@media(min-width:901px){
+  .sb-toggle{display:none}
+  .app-shell.sb-collapsed .sb-toggle{display:inline-flex}
+}
 .sb-scrim{position:fixed;inset:0;background:rgba(8,7,10,.6);z-index:calc(var(--z-overlay) - 1);opacity:0;transition:opacity var(--dur-2)}
 .sb-scrim.show{opacity:1}
 
@@ -1230,6 +1242,7 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
   .sidebar{transform:translateX(-100%);box-shadow:var(--shadow-lg)}
   .app-shell.sb-open .sidebar{transform:none}
   .sb-toggle{display:flex}
+  .sb-collapse{display:none}   /* mobile uses the topbar hamburger + scrim to close */
   .sb-scrim:not(.hidden){display:block}
 }
 @media(min-width:901px){.sb-scrim{display:none}}
