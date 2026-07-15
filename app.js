@@ -2294,8 +2294,10 @@ function renderUpdates(isTeam){
         <button class="up-del" type="button" data-fid="${ev.fid}" title="Delete">✕</button></span>` : '';
     return `<div class="up-item${ev.pinned?' pinned':''}${nav?' up-nav':''}" data-fid="${ev.fid||''}" data-nav="${nav}">
       ${updIconSvg(ev.ic, tone)}
-      <span class="up-body"><span class="up-text">${esc(ev.text)}</span>${ev.meta?`<span class="up-meta">${esc(ev.meta)}${ev.edited?' · edited':''}</span>`:''}</span>
-      <span class="up-time">${esc(relTime(ev.t))}</span>
+      <span class="up-body">
+        <span class="up-line"><span class="up-text">${esc(ev.text)}</span><span class="up-time">${esc(relTime(ev.t))}</span></span>
+        ${ev.meta?`<span class="up-meta">${esc(ev.meta)}${ev.edited?' · edited':''}</span>`:''}
+      </span>
       ${actions}
     </div>`;
   };

@@ -255,3 +255,61 @@ change.
 **Bottom line:** choose **`roxiumstudio.com`** (Option A), portal at
 `app.roxiumstudio.com`. Say the word and I'll implement everything in the "I can
 implement" list; you handle the Cloudflare/Supabase/Resend dashboard steps in §7.
+
+---
+
+## 9. Option A — exact execution runbook (you chose this)
+
+Target end state: `roxium.com` = marketing, **`app.roxiumstudio.com`** = the software.
+Nothing in the code hard-codes the host, so this is almost entirely dashboard work.
+
+There are two ways to land the app on the studio domain. Do **Path 1** first (10
+minutes, zero repo risk); move to **Path 2** later if you want the app at the studio
+*root* with clean URLs.
+
+### Path 1 — attach the domain (fastest, app at `app.roxiumstudio.com/portal/`)
+1. **Cloudflare → Add site** → `roxiumstudio.com`. Point the registrar's nameservers at
+   the two Cloudflare NS it shows. Wait for "Active".
+2. **Cloudflare → Workers & Pages → `roxium-portal` → Custom domains → Set up a domain**
+   → `app.roxiumstudio.com`. Cloudflare creates the CNAME + cert automatically.
+3. **Cloudflare → Rules → Redirect Rules → Create**:
+   - When: `Hostname equals app.roxiumstudio.com` **and** `URI Path equals /`
+   - Then: **Dynamic redirect**, 302, expression `concat("https://app.roxiumstudio.com/portal/")`
+   - (So the studio root opens the app; deep links like `/portal/#overview` already work.)
+4. **Supabase → Authentication → URL Configuration**:
+   - **Site URL**: `https://app.roxiumstudio.com/portal/`
+   - **Redirect URLs**: add `https://app.roxiumstudio.com/portal/**`
+     (keep `https://roxium.com/portal/**` during transition).
+5. **Supabase → Edge Functions → Secrets** (or `supabase secrets set`):
+   - `SITE_URL = https://app.roxiumstudio.com`  (drives email + invite + oauth-callback links)
+   - Redeploy the functions (or they pick it up on next invoke).
+6. **Composio / Google / Meta**: nothing — Composio owns the OAuth redirect URIs.
+7. **(Optional) Resend** — studio-branded email:
+   - Add domain `roxiumstudio.com`, add the SPF/DKIM/DMARC DNS records it gives you.
+   - `EMAIL_FROM = ROXIUM STUDIO <updates@roxiumstudio.com>` (function secret).
+   - Skip this to keep sending from the already-verified `updates@roxium.com`.
+8. **Test**: open `https://app.roxiumstudio.com` → lands on the portal login; send a
+   magic link → confirm it returns to `app.roxiumstudio.com/portal/`; connect a data
+   source → confirm the post-OAuth bounce lands back on the app.
+
+That's the whole migration. `roxium.com` marketing is untouched.
+
+### Path 2 — clean split (optional polish, app at `app.roxiumstudio.com/` root)
+Only if you want `app.roxiumstudio.com/` (no `/portal/`) and a fully separate app
+deploy. This is repo work I can do on request:
+- Split `scripts/prepare-pages.sh` into a **marketing bundle** (index/privacy/terms) and
+  an **app bundle** (portal SPA served at root), and add a second Pages project
+  `roxium-app` with its own deploy workflow.
+- Point `roxium.com` at the marketing project and `app.roxiumstudio.com` at the app
+  project.
+- Add `roxium.com/portal/* → app.roxiumstudio.com/*` 301 for old links/emails.
+- Then Supabase Site URL/Redirect become `https://app.roxiumstudio.com/**` (no `/portal`).
+
+Ask me to "do Path 2" and I'll prepare the build split + workflow; you'd create the
+second Pages project and repoint the two custom domains.
+
+### One-line summary of what actually changes
+- **You (dashboards):** Cloudflare custom domain + one redirect rule · Supabase Site
+  URL + Redirect URLs · `SITE_URL` secret · (optional) Resend domain + `EMAIL_FROM`.
+- **Code:** nothing required for Path 1 (already host-agnostic). Path 2 is an optional
+  build/deploy split I can implement.
