@@ -2721,6 +2721,8 @@ function wireDeliverables(){
   // inline edits on each deliverable row
   wrap.querySelectorAll('.taskrow[data-id]').forEach(row=>{
     const id = row.dataset.id;
+    // Double-click the row (not an inline field) → full themed deliverable editor.
+    row.addEventListener('dblclick', e=>{ if(e.target.closest('input,select,textarea,button,.tsel-wrap')) return; openDeliverableEditor(id); });
     row.querySelectorAll('.cellinput').forEach(inp=>{
       inp.onchange = ()=>{
         let val = inp.value.trim();
@@ -3230,11 +3232,16 @@ function renderMilestoneTeamList(wrap){
   wrap.innerHTML = phases.map(phase=>{
     const items = sortedMilestones().filter(m=> ((m.phase||'').trim() || MILE_PHASE_DEFAULT)===phase);
     return `<div class="msphase" data-phase="${esc(phase)}">
-      <div class="msphase-head"><span class="chanlabel">${esc(phase)}</span><span class="note">${items.length} milestone${items.length===1?'':'s'}</span></div>
+      <div class="msphase-head" data-phase="${esc(phase)}" title="Double-click to edit phase"><span class="chanlabel">${esc(phase)}</span><span class="note">${items.length} milestone${items.length===1?'':'s'} · double-click to edit</span></div>
       <div class="msphase-items">${items.map(m=> milestoneTeamRow(m, ds)).join('')}</div>
     </div>`;
   }).join('');
+  // Double-click a phase header to edit the phase (rename / renumber).
+  wrap.querySelectorAll('.msphase-head[data-phase]').forEach(head=>
+    head.addEventListener('dblclick', ()=> openPhaseEditor(head.dataset.phase)));
   wrap.querySelectorAll('.msrow[draggable]').forEach(row=>{
+    // Double-click a milestone row to open its full editor.
+    row.addEventListener('dblclick', ()=> openMilestoneEditor(row.dataset.id));
     row.addEventListener('dragstart', e=>{
       e.dataTransfer.effectAllowed='move';
       e.dataTransfer.setData('text/plain', row.dataset.id);
@@ -3352,6 +3359,7 @@ async function openMilestoneEditor(id){
     </div>
   </div>`;
   $('modal').classList.add('open');
+  enhanceSelectsIn($('modal'));   // themed dropdowns (no native <select>)
   $('mCancel').onclick = closeModal;
   $('mCancelX').onclick = closeModal;
   $('mDelete').onclick = async ()=>{
@@ -3385,6 +3393,91 @@ async function openMilestoneEditor(id){
       await notifyClient('milestone', `Milestone ${verb}: ${patch.name}.`);
     }
     closeModal(); loadAll();
+  };
+}
+// Double-click a roadmap phase header → themed editor to rename it (updates every
+// milestone in that phase). Phases are a text field on milestones.
+async function openPhaseEditor(phase){
+  if(!phase) return;
+  const items = data.miles.filter(m=> ((m.phase||'').trim() || MILE_PHASE_DEFAULT)===phase);
+  $('modal').innerHTML = `<div class="modalcard">
+    <div class="modalhead"><h3>Edit phase</h3><button class="modalx" id="phX">✕</button></div>
+    <div class="modalbody">
+      <label class="mlabel">Phase name</label>
+      <input class="cellinput mfield" id="phName" value="${esc(phase)}">
+      <p class="note" style="margin-top:8px">${items.length} milestone${items.length===1?'':'s'} in this phase will be renamed.</p>
+      <p class="note" id="phMsg"></p>
+    </div>
+    <div class="modalfoot">
+      <button class="btn ghost" id="phCancel">Cancel</button>
+      <button class="btn" id="phSave">Save</button>
+    </div>
+  </div>`;
+  $('modal').classList.add('open');
+  const close = ()=> closeModal();
+  $('phX').onclick = close; $('phCancel').onclick = close;
+  $('phSave').onclick = async ()=>{
+    const name = $('phName').value.trim();
+    if(!name){ $('phMsg').textContent = 'Enter a phase name.'; return; }
+    if(name===phase){ close(); return; }
+    $('phMsg').textContent = 'Saving…';
+    for(const m of items){ await sb.from('milestones').update({ phase:name }).eq('id', m.id); }
+    close(); loadAll();
+  };
+}
+// Double-click a deliverable row → full themed editor (name/owner/due/status/phase/notes).
+async function openDeliverableEditor(id){
+  const d = (data.deliv||[]).find(x=> x.id===id); if(!d) return;
+  const phases = [...new Set((data.deliv||[]).map(x=> x.phase).filter(Boolean))];
+  const phaseOpts = phases.map(p=> `<option value="${esc(p)}"${p===d.phase?' selected':''}>${esc(p)}</option>`).join('');
+  const statusOpts = STATUS_OPTS.map(([v,l])=> `<option value="${v}"${v===d.status?' selected':''}>${esc(l)}</option>`).join('');
+  $('modal').innerHTML = `<div class="modalcard modalcard-wide">
+    <div class="modalhead"><h3>Edit deliverable</h3><button class="modalx" id="deX">✕</button></div>
+    <div class="modalbody">
+      <label class="mlabel">Name</label><input class="cellinput mfield" id="deName" value="${esc(d.name||'')}">
+      <div class="mform-row">
+        <div><label class="mlabel">Owner seat</label><input class="cellinput mfield" id="deOwner" value="${esc(d.owner_seat||'')}" placeholder="AL"></div>
+        <div><label class="mlabel">Due date</label><input type="date" class="cellinput mfield" id="deDue" value="${d.due? String(d.due).slice(0,10):''}"></div>
+      </div>
+      <div class="mform-row">
+        <div><label class="mlabel">Status</label><select class="cellinput mfield" id="deStatus">${statusOpts}</select></div>
+        <div><label class="mlabel">Phase</label><select class="cellinput mfield" id="dePhase">${phaseOpts}</select></div>
+      </div>
+      <label class="mlabel">Client explanation (optional)</label>
+      <textarea class="cellinput mfield mtextarea" id="deDesc" rows="2" placeholder="Plain-English description the client sees">${esc(d.description||'')}</textarea>
+      <p class="note" id="deMsg"></p>
+    </div>
+    <div class="modalfoot">
+      <button class="btn danger ghost" id="deDelete">Delete</button>
+      <button class="btn ghost" id="deCancel">Cancel</button>
+      <button class="btn" id="deSave">Save</button>
+    </div>
+  </div>`;
+  $('modal').classList.add('open');
+  enhanceSelectsIn($('modal'));   // themed dropdowns
+  const close = ()=> closeModal();
+  $('deX').onclick = close; $('deCancel').onclick = close;
+  $('deDelete').onclick = async ()=>{
+    if(!await uiConfirm('Delete deliverable?', `Remove “${esc(d.name||'this item')}”?`, { danger:true, confirmLabel:'Delete' })) return;
+    const { error } = await sb.from('deliverables').delete().eq('id', id);
+    if(error){ $('deMsg').textContent = error.message; return; }
+    close(); loadAll();
+  };
+  $('deSave').onclick = async ()=>{
+    const status = $('deStatus').value;
+    const patch = {
+      name: $('deName').value.trim() || d.name,
+      owner_seat: $('deOwner').value.trim() || null,
+      due: $('deDue').value || null,
+      status,
+      phase: $('dePhase').value || d.phase,
+      description: $('deDesc').value.trim() || null,
+    };
+    if(status==='delivered' && d.status!=='delivered') patch.delivered_at = new Date().toISOString();
+    $('deMsg').textContent = 'Saving…';
+    const { error } = await sb.from('deliverables').update(patch).eq('id', id);
+    if(error){ $('deMsg').textContent = error.message; return; }
+    close(); loadAll();
   };
 }
 async function updateMilestoneStatus(id, status){
