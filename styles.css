@@ -901,6 +901,24 @@ select option{background:var(--surface2);color:var(--cream)}
 /* KPI insights strip removed — cumulative All-Months view no longer shows MoM badges */
 @media(max-width:640px){.sheetchans{grid-template-columns:1fr}}
 
+/* ---- answer-first client Overview (Phase 5) ---- */
+.client-overview{margin:0 0 8px}
+.ov-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.ov-col{border:1px solid var(--line);background:var(--surface);padding:16px 18px}
+.ov-col-title{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
+.ov-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.ov-item{display:flex;align-items:flex-start;gap:9px;font-size:13px;line-height:1.5;color:var(--cream)}
+.ov-item.ov-empty{color:var(--muted)}
+.ov-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;margin-top:6px;background:var(--muted)}
+.ov-dot.good{background:var(--green)}
+.ov-dot.bad{background:var(--red)}
+.ov-dot.warn{background:var(--amber)}
+.ov-dot.neutral{background:var(--gold-dim)}
+.ov-text{flex:1;min-width:0}
+.ov-cta{flex:0 0 auto;background:none;border:1px solid var(--line);color:var(--gold);font:inherit;font-size:11px;letter-spacing:.04em;padding:3px 10px;cursor:pointer;transition:background .15s,border-color .15s}
+.ov-cta:hover{background:var(--surface2);border-color:var(--gold)}
+@media(max-width:820px){.ov-grid{grid-template-columns:1fr}}
+
 /* ---- sync observability: did the 2-hour automation run? status banner + audit table ---- */
 .syncstatus-h{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:17px;margin:26px 0 4px;color:var(--gold)}
 .syncstatus{margin:8px 0 6px}
