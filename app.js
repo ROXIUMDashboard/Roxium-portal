@@ -136,7 +136,7 @@ function monthNote(period, isLive){
   const curYr = String(new Date().getFullYear());
   return yr===curYr ? `in ${mn}` : `in ${mn} ${yr}`;
 }
-const STAGES = [['planned','Planned / Backlog'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
+const STAGES = [['planned','Planned'],['scheduled','Scheduled'],['pre_production','Pre-production'],['shot','Shot'],['editing','Editing'],['delivered','Delivered'],['posted','Posted']];
 // Team-only SLA: an item >=3 days in its current stage warns (yellow), >=7 overdue (red). See slaState().
 
 let me = null;            // profile row
@@ -3213,69 +3213,151 @@ function videoTooltip(v){
   return lines.join('\n\n') || 'No details yet — double-click to add.';
 }
 
+/* Redesigned Video Pipeline — collapsible stage groups (accordion, same language as
+   Project Progress) + a filter chip row, instead of long kanban columns. Scales to
+   hundreds of videos. Team keeps ALL editing (drag between stages, themed stage
+   dropdown, add/delete, full detail modal); client sees a clean read-only view. */
+const SHOW_VIDEO_PERF = false;   // Video Performance parked — flip on later (see videoPerfCell)
+const STAGE_META = {
+  planned:       { label:'Planned',        tone:'plan'  },
+  scheduled:     { label:'Scheduled',      tone:'sched' },
+  pre_production:{ label:'Pre-production', tone:'prog'  },
+  shot:          { label:'Shot',           tone:'prog'  },
+  editing:       { label:'Editing',        tone:'prog'  },
+  delivered:     { label:'Delivered',      tone:'done'  },
+  posted:        { label:'Posted',         tone:'done'  },
+};
+const stageTone = k => (STAGE_META[k]||{}).tone || 'plan';
+const stageMetaLabel = k => (STAGE_META[k]||{}).label || stageLabelOf(k);
+// Parked: video performance cell. Returns markup only when SHOW_VIDEO_PERF is on, so
+// the feature can be reinstated in one place without touching the row layout.
+function videoPerfCell(v){ if(!SHOW_VIDEO_PERF) return ''; return `<span class="vp-perf">${esc(String(v.perf??''))}</span>`; }
+function copyText(text, okMsg){
+  if(!text) return;
+  const ok = ()=> flash(okMsg||'Link copied.');
+  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, ()=> flash('Copy failed.'));
+  else ok();
+}
+let vpFilter = 'all';   // active stage filter chip
+let vpOpen = null;      // Set of expanded stage keys (session)
+
+function videoRow(v, isTeam){
+  const posted = v.stage==='posted';
+  const isFinal = v.stage==='posted' || v.stage==='delivered';
+  const sla = slaState(v.stage_since, isFinal);           // team-only age colour
+  const dateStr = v.stage_since ? fmtDate(v.stage_since) : '';
+  const actions = (posted && v.video_url) ? `
+      <a class="vp-act" href="${esc(v.video_url)}" target="_blank" rel="noopener" title="Watch video">▶</a>
+      <a class="vp-act" href="${esc(v.video_url)}" download target="_blank" rel="noopener" title="Download">⤓</a>
+      <button class="vp-act vp-copy" type="button" data-url="${esc(v.video_url)}" title="Copy link">⧉</button>` : '';
+  if(isTeam){
+    const ageChip = sla ? `<span class="agechip ${sla}" title="${daysIn(v.stage_since)} days in this stage">${daysIn(v.stage_since)}d</span>` : '';
+    const flag = v.blocked ? `<span class="vp-flag" title="${esc(v.blocked_reason||'Waiting on practice')}">⚑</span>` : '';
+    return `<div class="vp-item vp-item-edit ${v.blocked?'blocked':''} ${sla}" draggable="true" data-vid="${v.id}">
+      <span class="vp-item-l">
+        <span class="pp-drag" title="Drag to another stage">⋮⋮</span>
+        <span class="vp-dot ${stageTone(v.stage)}"></span>
+        <span class="vp-name"${v.description?` title="${esc(v.description)}"`:''}>${esc(v.item)}</span>
+        ${flag}
+      </span>
+      <span class="vp-item-r">
+        ${dateStr?`<span class="vp-date">${esc(dateStr)}</span>`:''}
+        ${ageChip}${videoPerfCell(v)}${actions}
+        <button class="vp-info" type="button" data-open="${v.id}" title="Open details">ⓘ</button>
+        ${stageSelect(v.stage)}
+        <button class="vp-del" type="button" data-del="${v.id}" title="Delete">✕</button>
+      </span>
+    </div>`;
+  }
+  // Client: read-only, simplified — no team SLA/age, no internal controls.
+  const flag = v.blocked ? `<span class="vp-flag client" title="We need something from you to continue">⚑ Needs your input</span>` : '';
+  return `<div class="vp-item" data-vid="${v.id}">
+    <span class="vp-item-l"><span class="vp-dot ${stageTone(v.stage)}"></span><span class="vp-name">${esc(v.item)}</span>${flag}</span>
+    <span class="vp-item-r">${dateStr?`<span class="vp-date">${esc(dateStr)}</span>`:''}${actions}</span>
+  </div>`;
+}
+
 function renderPipeline(isTeam){
-  const wrap = $('pipeline');
-  wrap.innerHTML = STAGES.map(([key,label])=>{
-    const items = data.video.filter(v=>v.stage===key);
-    const cards = items.map(v=>{
-      const isFinal = key==='posted' || key==='delivered';
-      const sla = slaState(v.stage_since, isFinal);   // '', 'warn' or 'overdue' (team only)
-      const enteredStr = v.stage_since ? fmtDate(v.stage_since) : '';
-      const days = daysIn(v.stage_since);
-      const daysLine = isTeam? `<span class="vdays ${sla}">${days} day${days===1?'':'s'} in this stage${sla==='overdue'?' · overdue':sla==='warn'?' · watch':''}</span>` : '';
-      const stageDateLine = enteredStr? `<span class="vdate">${stageLabelOf(key)} · ${enteredStr}</span>` : '';
-      return `<div class="vitem ${v.blocked?'blocked':''} ${sla}" ${isTeam?`draggable="true"`:''} data-vid="${v.id}" title="${esc(videoTooltip(v))}">
-        ${isTeam?`<button class="vdel" data-del="${v.id}" title="Delete">✕</button>`:''}
-        <span class="vtitle">${esc(v.item)}</span>
-        ${v.video_url && key==='posted'?`<a class="vlink" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ watch</a>`:''}
-        ${daysLine}${stageDateLine}
-        ${v.blocked?`<span class="why">⚑ ${esc(v.blocked_reason||'Waiting on practice')}</span>`:''}</div>`;
-    }).join('');
-    const addBtn = isTeam? `<button class="vadd" data-addstage="${key}">+ Add video</button>` : '';
-    return `<div class="col ${isTeam?'dropcol':''}" data-stage="${key}"><div class="h">${label} · <span class="cnt">${items.length}</span></div><div class="coldrop">${cards}</div>${addBtn}</div>`;
-  }).join('');
+  const wrap = $('pipeline'); if(!wrap) return;
+  const vids = data.video || [];
+  const counts = {}; STAGES.forEach(([k])=> counts[k] = vids.filter(v=>v.stage===k).length);
+  // Client hides stages that are empty AND internal-only (pre-production / shot) to
+  // keep it simple; team sees every stage so nothing is unreachable.
+  const clientHide = k => !isTeam && counts[k]===0 && (k==='pre_production' || k==='shot');
+  const visibleStages = STAGES.filter(([k])=> !clientHide(k));
+
+  const chips = `<div class="vp-filters">
+    <button class="vp-chip${vpFilter==='all'?' on':''}" type="button" data-f="all">All<span class="vp-chip-n">${vids.length}</span></button>
+    ${visibleStages.map(([k])=>`<button class="vp-chip${vpFilter===k?' on':''}" type="button" data-f="${k}"><span class="vp-dot ${stageTone(k)}"></span>${stageMetaLabel(k)}<span class="vp-chip-n">${counts[k]}</span></button>`).join('')}
+    <button class="vp-clear${vpFilter==='all'?' hidden':''}" type="button" data-f="all" title="Show all stages">Clear filter</button>
+  </div>`;
+
+  if(vpOpen===null){ vpOpen = new Set(); STAGES.forEach(([k])=>{ if(counts[k]>0 && counts[k]<=6) vpOpen.add(k); }); }
+
+  const stages = (vpFilter==='all' ? visibleStages : visibleStages.filter(([k])=> k===vpFilter));
+  const groups = stages.map(([key])=>{
+    const items = vids.filter(v=>v.stage===key);
+    const open = (vpFilter!=='all') || vpOpen.has(key);
+    const rows = items.map(v=> videoRow(v, isTeam)).join('')
+      || `<div class="vp-empty note">No videos in this stage${isTeam?' yet.':'.'}</div>`;
+    const addBtn = isTeam ? `<button class="vp-add" type="button" data-addstage="${key}">+ Add video</button>` : '';
+    return `<div class="vp-stage stage-${stageTone(key)}${open?'':' collapsed'}${isTeam?' dropstage':''}" data-stage="${key}">
+      <button class="vp-stage-head" type="button" data-stage="${key}" aria-expanded="${open?'true':'false'}">
+        <span class="vp-dot ${stageTone(key)}"></span>
+        <span class="vp-stage-name">${stageMetaLabel(key)}</span>
+        <span class="vp-stage-n">${items.length}</span>
+        <span class="vp-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="vp-body"><div class="vp-body-inner">${rows}${addBtn}</div></div>
+    </div>`;
+  }).join('') || `<p class="note">No video assets yet.</p>`;
+
+  wrap.innerHTML = `${chips}<div class="vp">${groups}</div>`;
+  if(isTeam) enhanceSelectsIn(wrap);   // themed stage dropdowns (fixed-positioned, no clipping)
   wirePipeline(wrap, isTeam);
 }
 
 function wirePipeline(wrap, isTeam){
-  // Click ANY card to open its detail panel (watch / history — plus editing for team).
-  wrap.querySelectorAll('.vitem[data-vid]').forEach(card=>{
-    card.addEventListener('click', e=>{
-      if(_vDragged) return;                                              // ignore the click that ends a drag
-      if(e.target.closest('.vdel') || e.target.closest('.vlink')) return; // those handle their own clicks
-      openVideoDetail(card.dataset.vid);
+  // filter chips (also the at-a-glance counts) + clear filter
+  wrap.querySelectorAll('.vp-chip, .vp-clear').forEach(b=> b.addEventListener('click', ()=>{ vpFilter = b.dataset.f; renderPipeline(isTeam); }));
+  // accordion toggle
+  wrap.querySelectorAll('.vp-stage-head').forEach(h=> h.addEventListener('click', ()=>{
+    const key = h.dataset.stage, card = h.closest('.vp-stage');
+    if(vpOpen.has(key)) vpOpen.delete(key); else vpOpen.add(key);
+    const open = vpOpen.has(key); card.classList.toggle('collapsed', !open); h.setAttribute('aria-expanded', open?'true':'false');
+  }));
+  // click a row (not an action/control) → full detail modal (client + team)
+  wrap.querySelectorAll('.vp-item[data-vid]').forEach(row=>{
+    row.addEventListener('click', e=>{
+      if(_vDragged) return;
+      if(e.target.closest('.vp-act,.vp-del,.vp-info,.vp-copy,.tsel-wrap,select,.pp-drag')) return;
+      openVideoDetail(row.dataset.vid);
     });
   });
-  if(!isTeam) return;   // clients get click-to-view only; everything below is team editing
+  wrap.querySelectorAll('.vp-copy').forEach(b=> b.addEventListener('click', e=>{ e.stopPropagation(); copyText(b.dataset.url); }));
+  wrap.querySelectorAll('.vp-info').forEach(b=> b.addEventListener('click', e=>{ e.stopPropagation(); openVideoDetail(b.dataset.open); }));
+  if(!isTeam) return;   // everything below is team editing
 
-  wrap.querySelectorAll('.vitem[draggable]').forEach(card=>{
-    card.addEventListener('dragstart', e=>{
-      _vDragged = true;
-      e.dataTransfer.setData('text/plain', card.dataset.vid);  // reliable: travels with the drag
-      e.dataTransfer.effectAllowed='move';
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', ()=>{ card.classList.remove('dragging'); setTimeout(()=>{ _vDragged=false; }, 60); });
+  // quick stage change via the themed dropdown
+  wrap.querySelectorAll('.vp-item .stagesel').forEach(sel=>{
+    const row = sel.closest('[data-vid]'); const id = row.dataset.vid;
+    sel.onchange = ()=>{ const v = data.video.find(x=>x.id===id); if(v && v.stage!==sel.value) updateRow('video_pipeline', id, { stage:sel.value }); };
   });
-  wrap.querySelectorAll('.vdel').forEach(b=>{
-    b.addEventListener('click', e=>{ e.stopPropagation(); deleteRow('video_pipeline', b.dataset.del, 'Delete this video asset and its history?'); });
+  wrap.querySelectorAll('.vp-del').forEach(b=> b.addEventListener('click', e=>{ e.stopPropagation(); deleteRow('video_pipeline', b.dataset.del, 'Delete this video asset and its history?'); }));
+  wrap.querySelectorAll('.vp-add').forEach(b=> b.addEventListener('click', e=>{ e.stopPropagation(); addVideoTo(b.dataset.addstage); }));
+  // drag a video row onto another stage group to move it
+  wrap.querySelectorAll('.vp-item[draggable]').forEach(row=>{
+    row.addEventListener('dragstart', e=>{ _vDragged=true; e.dataTransfer.setData('text/plain', row.dataset.vid); e.dataTransfer.effectAllowed='move'; row.classList.add('dragging'); });
+    row.addEventListener('dragend', ()=>{ row.classList.remove('dragging'); setTimeout(()=>{ _vDragged=false; }, 60); });
   });
-  wrap.querySelectorAll('.vadd').forEach(b=>{
-    b.addEventListener('click', e=>{ e.stopPropagation(); addVideoTo(b.dataset.addstage); });
-  });
-  // EVERY column is a drop target — including empty ones and Planned
-  wrap.querySelectorAll('.col').forEach(col=>{
-    col.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; col.classList.add('over'); });
-    col.addEventListener('dragleave', e=>{ if(!col.contains(e.relatedTarget)) col.classList.remove('over'); });
-    col.addEventListener('drop', async e=>{
-      e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
-      const id = e.dataTransfer.getData('text/plain');
-      if(!id) return;
-      const newStage = e.currentTarget.dataset.stage;   // the column this handler is bound to
-      const v = data.video.find(x=>x.id===id);
-      if(v && v.stage!==newStage){
-        await updateRow('video_pipeline', id, { stage:newStage });
-      }
+  wrap.querySelectorAll('.vp-stage.dropstage').forEach(st=>{
+    st.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; st.classList.add('over'); });
+    st.addEventListener('dragleave', e=>{ if(!st.contains(e.relatedTarget)) st.classList.remove('over'); });
+    st.addEventListener('drop', async e=>{
+      e.preventDefault(); st.classList.remove('over');
+      const id = e.dataTransfer.getData('text/plain'); if(!id) return;
+      const v = data.video.find(x=>x.id===id); const newStage = st.dataset.stage;
+      if(v && v.stage!==newStage) await updateRow('video_pipeline', id, { stage:newStage });
     });
   });
 }
@@ -3322,11 +3404,13 @@ function openVideoDetail(id){
       <div class="modalfoot">
         ${v.video_url
           ? `<a class="btn" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ Watch video</a>
-             <a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>`
+             <a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>
+             <button class="btn ghost" id="mCopy" type="button">⧉ Copy link</button>`
           : '<span class="note">Video not posted yet.</span>'}
       </div></div>`;
     mc.classList.add('open');
     $('mClose').onclick = closeModal;
+    $('mCopy') && ($('mCopy').onclick = ()=> copyText(v.video_url));
     mc.onclick = e=>{ if(e.target===mc) closeModal(); };
     return;
   }
@@ -3363,12 +3447,15 @@ function openVideoDetail(id){
     <div class="modalfoot">
       <button class="btn" id="mSave">Save changes</button>
       <button class="btn" id="mPost">Post video &amp; email client</button>
-      ${v.video_url? `<a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>`:''}
+      ${v.video_url? `<a class="btn ghost" href="${esc(v.video_url)}" target="_blank" rel="noopener">▶ Watch</a>
+        <a class="btn ghost" href="${esc(v.video_url)}" download target="_blank" rel="noopener">⤓ Download</a>
+        <button class="btn ghost" id="mCopy" type="button">⧉ Copy link</button>`:''}
       <span id="mMsg" class="note"></span>
     </div></div>`;
   m.classList.add('open');
 
   $('mClose').onclick = closeModal;
+  $('mCopy') && ($('mCopy').onclick = ()=> copyText(v.video_url));
   m.onclick = e=>{ if(e.target===m) closeModal(); };
 
   // delete individual stage-history rows
