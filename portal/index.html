@@ -58,6 +58,12 @@
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 9l-2 3 2 3"/></svg>
     </button>
     <nav class="sb-nav">
+      <div class="sb-group teamonly hidden" id="sbOpsGroup">
+        <div class="sb-group-label">Operations</div>
+        <a href="#operations" class="sb-link" data-view="operations" data-i="ops"><span class="sb-txt">Operations</span></a>
+        <a href="#controls"   class="sb-link" data-view="controls"   data-i="controls"><span class="sb-txt">Team Controls</span></a>
+        <a href="#team"       class="sb-link" data-view="team"       data-i="wrench"><span class="sb-txt">Client Controls</span></a>
+      </div>
       <div class="sb-group" id="sbClientGroup">
         <div class="sb-group-label">Client Portal</div>
         <a href="#overview"     class="sb-link" data-view="overview"     data-i="overview"><span class="sb-txt">Overview</span></a>
@@ -68,12 +74,6 @@
         <a href="#updates"      class="sb-link" data-view="updates"      data-i="updates"><span class="sb-txt">Updates</span><span class="sb-count hidden" id="sbUpdCount"></span></a>
         <a href="#connections"  class="sb-link accessonly hidden" data-view="connections" data-i="plug"><span class="sb-txt">Connections</span><span class="sb-count sb-count-warn hidden" id="sbConnCount"></span></a>
         <a href="#access"       class="sb-link accessonly hidden" data-view="access"      data-i="invite"><span class="sb-txt">Invite team</span></a>
-      </div>
-      <div class="sb-group teamonly hidden" id="sbOpsGroup">
-        <div class="sb-group-label">Operations</div>
-        <a href="#operations" class="sb-link" data-view="operations" data-i="ops"><span class="sb-txt">Operations</span></a>
-        <a href="#controls"   class="sb-link" data-view="controls"   data-i="controls"><span class="sb-txt">Team Controls</span></a>
-        <a href="#team"       class="sb-link" data-view="team"       data-i="wrench"><span class="sb-txt">Client Controls</span></a>
       </div>
     </nav>
     <div class="sb-foot" id="sbFoot" title="Reporting sync status">

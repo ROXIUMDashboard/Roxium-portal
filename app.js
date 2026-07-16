@@ -383,6 +383,10 @@ function showView(name){
   if(TEAM_ONLY_VIEWS.includes(name) && !isTeamView()) name = CLIENT_HOME;
   if(name === 'access' && !canSeeAccessTab()) name = CLIENT_HOME;
   if(name === 'connections' && !canSeeConnectionsTab()) name = CLIENT_HOME;
+  // Team hasn't picked a client yet → a client-portal view has no practice to show,
+  // so keep them on Operations instead of a blank dashboard.
+  if(me && me.role==='team' && !practiceId &&
+     ['overview','deliverables','video','metrics','updates','connections','access'].includes(name)) name = 'operations';
   if(CLIENT_PORTAL_VIEWS.includes(name)) lastClientView = name;
   document.querySelectorAll('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name));
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.view===name));
@@ -496,6 +500,9 @@ function buildSwitcher(list){
       setOpen(false);
       btn?.focus();
       resetPracticeUiState();
+      syncChrome();                 // reveal the Client Portal group now a client is chosen
+      if(location.hash.replace('#','') !== 'overview') location.hash = '#overview';
+      else showView('overview');    // same hash → force the view to (re)render
       loadAll();
     });
   };
@@ -589,8 +596,11 @@ $('btnLogin').onclick = async ()=>{
   // The app lives at /portal/ (the root is the public marketing page, which
   // forwards stray auth callbacks here). Send magic links straight to the portal.
   const redirectTo = location.origin + '/portal/' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
+  // Invite-only: never auto-create an account for an unknown email. Supabase then
+  // returns an error for addresses with no existing auth user, which we surface as
+  // "no account — contact ROXIUM" instead of silently mailing a stranger a link.
   const { error } = await sb.auth.signInWithOtp({
-    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: true }
+    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: false }
   });
   if(!error){
     // Reveal the typed-code path: Outlook's link scanner can consume or delay the
@@ -781,8 +791,11 @@ async function afterLogin(){
   if(me.role === 'team'){
     const prax = await loadTeamPractices();
     const { view, params } = hashParts();
-    practiceId = (params.pid && prax.some(p=> p.id===params.pid)) ? params.pid
-      : (prax && prax.length ? prax[0].id : null);
+    // Do NOT auto-open the first client — the team lands on Operations with no
+    // client selected. The Client Portal only appears once a client is picked
+    // (or a deep link supplies ?pid), so we never silently show one practice's
+    // data under a blank name.
+    practiceId = (params.pid && prax.some(p=> p.id===params.pid)) ? params.pid : null;
     captureDeepLinkFromHash();
     if(!view || view === 'admin') location.hash = '#operations';
     $('btnPreview').onclick = ()=>{
@@ -5360,10 +5373,18 @@ function renderRoster(wrap, roster, opts){
     + memRows + invRows;
   if(opts.canRemove){
     wrap.querySelectorAll('[data-rmuser]').forEach(b=> b.onclick = async ()=>{
-      if(!await uiConfirm('Remove member', 'Remove this person\'s access to the practice?', {danger:true})) return;
-      const { error } = await sb.rpc('remove_practice_member', { p_practice: opts.practiceId, p_user: b.dataset.rmuser });
-      if(error) uiAlert('Cannot remove', esc(error.message));
-      else { opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload(); }
+      if(!await uiConfirm('Remove member',
+        'This removes their access <b>and deletes their login</b> — their email will no longer work until you re-invite them. Continue?',
+        {danger:true, confirmLabel:'Remove & delete login'})) return;
+      // Route through the edge function so the auth.users row is actually deleted —
+      // an RPC alone leaves the login alive, so a "removed" person could sign back
+      // in and reappear as a pending account.
+      try{
+        const { data: res, error } = await sb.functions.invoke('delete-account', { body: { user_id: b.dataset.rmuser } });
+        if(error) throw error;
+        if(res && res.ok === false) throw new Error(res.error || 'remove failed');
+        opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload();
+      }catch(e){ uiAlert('Cannot remove', esc(e.message||String(e))); }
     });
   }
   if(opts.canRevoke){
@@ -6246,7 +6267,6 @@ async function deletePractice(id, name, opts={}){
     delete chanByPractice[id];
     if(practiceId===id){ practiceId = null; }
     await loadTeamPractices();
-    if(!practiceId && practicesList[0]) practiceId = practicesList[0].id;
     renderAdminClients();
     flash(`"${name}" was deleted.`);
     const ap = $('accessPractice');
