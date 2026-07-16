@@ -794,16 +794,18 @@ async function afterLogin(){
     ({ data: prof } = await sb.from('profiles').select('*').eq('id', uid).single());
   }
   me = prof;
-  // Approval gate. Rejected is a HARD deny regardless of any leftover
-  // practice_id (reject_account now also revokes memberships + nulls
-  // practice_id, but gate defensively). Pending with no practice link waits in
-  // the waiting room. (approval_status is absent on pre-migration databases;
-  // treat that as legacy-approved so nothing changes until the migration runs.)
-  if(me.role !== 'team' && ('approval_status' in me)){
-    if(me.approval_status === 'rejected'){ showPendingPane('rejected', authEmail); return; }
-    if(me.approval_status !== 'approved' && !me.practice_id){
-      showPendingPane(me.approval_status, authEmail); return;
-    }
+  // Access gate for non-team users:
+  //   • rejected            → hard deny.
+  //   • no practice at all   → waiting room ("awaiting team verification").
+  // The second case is the key one: a REMOVED member's profile lingers with a
+  // stale approval_status='approved' but practice_id=null (and no memberships).
+  // Without this they'd fall straight through into an EMPTY client shell instead
+  // of the "your access needs review" screen. No practice = nothing to show =
+  // waiting room, whatever the approval flag says. (approval_status is absent on
+  // pre-migration DBs — those clients always have a practice_id, so they pass.)
+  if(me.role !== 'team'){
+    if(('approval_status' in me) && me.approval_status === 'rejected'){ showPendingPane('rejected', authEmail); return; }
+    if(!me.practice_id){ showPendingPane('pending', authEmail); return; }
   }
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
