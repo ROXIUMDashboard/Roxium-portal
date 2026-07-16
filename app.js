@@ -597,7 +597,7 @@ $('btnLogin').onclick = async ()=>{
     // one-time magic link, so a code the user types is the reliable fallback.
     pendingLoginEmail = email;
     $('loginCodeRow')?.classList.remove('hidden');
-    $('loginMsg').textContent = 'Check your email for the sign-in link — or type the 6-digit code from that email below.';
+    $('loginMsg').textContent = 'Check your email for the sign-in link — or type the code from that email below.';
   } else {
     $('loginMsg').textContent = /signups? not allowed|disabled/i.test(error.message)
       ? 'New sign-ups are momentarily unavailable — ask your ROXIUM lead for an invitation instead.'
@@ -608,7 +608,7 @@ $('btnLogin').onclick = async ()=>{
 $('btnVerifyCode')?.addEventListener('click', async ()=>{
   const token = ($('loginCode').value || '').replace(/\D/g, '').trim();
   const email = pendingLoginEmail || $('loginEmail').value.trim();
-  if(!email || token.length < 6){ $('loginMsg').textContent = 'Enter the 6-digit code from your email.'; return; }
+  if(!email || token.length < 6){ $('loginMsg').textContent = 'Enter the code from your email.'; return; }
   $('btnVerifyCode').disabled = true; $('loginMsg').textContent = 'Verifying…';
   // Magic-link codes are type 'email'; invite emails are type 'invite' — try both.
   let { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
@@ -1696,14 +1696,16 @@ function renderSetupWizard(){
   let flash = '';
   try{
     const q = new URL(location.href).searchParams;
-    if(q.get('connected')){
-      const t = WIZARD_PROVIDERS.find(p=> p.key===q.get('connected'))?.title || 'Account';
-      flash = `<div class="wizard-flash ok">✓ ${esc(t)} connected — your numbers start appearing within a couple of hours.</div>`;
-    } else if(q.get('connect_error')){
+    if(q.get('connect_error')){
       flash = `<div class="wizard-flash err">That connection didn't complete (${esc(q.get('connect_error'))}). Nothing was changed — try again, or we'll help on a quick call.</div>`;
     }
   }catch(_){}
   const conn = k => (data.connections||[]).find(c=> c.provider===k);
+  // Green running summary of everything the client has connected so far.
+  const connectedNow = WIZARD_PROVIDERS.filter(p=> conn(p.key)?.status==='connected');
+  const summary = connectedNow.length
+    ? `<div class="wizard-flash ok">✓ Connected: ${connectedNow.map(p=> esc(p.title)).join(', ')} — your numbers start appearing within a couple of hours.</div>`
+    : '';
   const cards = WIZARD_PROVIDERS.map(p=>{
     const c = conn(p.key);
     const state = c && c.status==='connected'
@@ -1720,19 +1722,14 @@ function renderSetupWizard(){
   el.innerHTML = `
     <div class="wizard-head">
       <button type="button" class="modalx wizard-close" id="wizardClose" title="Close">✕</button>
-      <div class="eyebrow">Connect your marketing</div>
-      <p class="note">Use your own logins below — you never share a password, we only <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.</p>
+      <div class="eyebrow">${connectedNow.length ? 'Marketing connected' : 'Connect your marketing'}</div>
+      <p class="note">${connectedNow.length
+        ? 'You\'re all set — connect any others below if you like, then hit Finish. You can add or disconnect sources anytime.'
+        : 'Use your own logins below — you never share a password, we only <b>read</b> your numbers, and you can disconnect anytime. Takes about two minutes.'}</p>
     </div>
-    ${flash}
-    <div class="wizard-cards">${cards}
-      <div class="wizard-card wizard-card-rest">
-        <div class="wizard-card-title">Everything else</div>
-        <p class="note">YouTube, Microsoft Ads, call tracking and the rest — our team wires these up for you.</p>
-        <div class="wizard-card-state"><span class="note">Handled by ROXIUM ✓</span></div>
-      </div>
-    </div>
+    ${flash}${summary}
+    <div class="wizard-cards">${cards}</div>
     <div class="wizard-foot">
-      <button class="btn ghost sm" id="wizardSkip">Continue without connecting</button>
       <button class="btn sm" id="wizardDone">Finish</button>
     </div>`;
   el.querySelectorAll('.wizard-connect').forEach(b=> b.onclick = async ()=>{
@@ -1776,9 +1773,6 @@ function renderSetupWizard(){
     closeMarketingWizard();
     render();
   };
-  // "Continue without connecting" is a real opt-out: persist it so the CTA stops
-  // nagging on every visit. The Connections tab still lets them connect later.
-  $('wizardSkip').onclick = ()=>{ setMarketingDeclined(true); closeMarketingWizard(); render(); };
   $('wizardDone').onclick = finish;
   $('wizardClose').onclick = ()=> closeMarketingWizard();
 }
@@ -2130,7 +2124,7 @@ function renderConnectionsPage(){
     }
     if(act==='disconnect'){
       const t = platformInfo(provider).title;
-      if(!confirm(`Disconnect ${t}?\n\nFuture syncing stops, but every number already imported stays in your dashboards. You can reconnect anytime.`)) return;
+      if(!await uiConfirm(`Disconnect ${esc(t)}?`, 'Future syncing stops, but every number already imported <b>stays</b> in your dashboards. You can reconnect anytime.', { danger:true, confirmLabel:'Disconnect' })) return;
       b.disabled = true;
       try{
         const { data: res, error } = await sb.rpc('disconnect_platform', { p_practice: practiceId, p_provider: provider });
@@ -2234,6 +2228,9 @@ const UPD_ICON = {
   update:     '<circle cx="12" cy="12" r="3.2"/>',
 };
 function updIconSvg(ic, tone){
+  // A team-written comment reads as a human note, not an automated event — show a
+  // speech-bubble emoji so clients can tell it apart at a glance.
+  if(ic==='comment') return `<span class="up-ico up-ico-${tone||'muted'}"><span class="up-emoji">💬</span></span>`;
   return `<span class="up-ico up-ico-${tone||'muted'}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${UPD_ICON[ic]||UPD_ICON.update}</svg></span>`;
 }
 function updToneOf(ev){
@@ -2343,7 +2340,7 @@ function renderUpdates(isTeam){
 async function postUpdateFromFeed(){
   const inp = $('upNew'); if(!inp) return;
   const msg = inp.value.trim(); if(!msg) return;
-  const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: (me&&me.full_name)||'ROXIUM', source:'portal' });
+  const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: (me&&me.full_name)||'ROXIUM', source:'comment' });
   if(error){ uiAlert('Post failed', esc(error.message)); return; }
   inp.value=''; loadAll();
 }

@@ -1171,6 +1171,9 @@ a:focus-visible,button:focus-visible,.tab:focus-visible{outline-offset:3px}
 .sb-link.active::before{opacity:1;color:var(--gold)}
 /* active marker: a small gold dot on the right (reference), not a gold block */
 .sb-link.active::after{content:'';position:absolute;right:11px;width:6px;height:6px;border-radius:var(--r-full);background:var(--gold)}
+/* When a nav item is showing a count badge, drop the gold "active" dot so it doesn't
+   collide with the badge — the lit badge itself already signals the active tab. */
+.sb-link.active:has(.sb-count:not(.hidden))::after{display:none}
 .sb-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-foot{display:flex;align-items:center;gap:9px;padding:11px 10px;border-top:1px solid var(--line-soft);
   font-size:11px;color:var(--muted)}
@@ -1752,6 +1755,7 @@ h1,h2,h3,.stat .v,.tb-title,.sb-brandtext .mark{font-optical-sizing:auto;letter-
 .up-ico-orange{color:var(--tone-orange);border-color:oklch(0.72 0.16 48 / 35%)} /* other pivotal */
 .up-ico-gold{color:var(--gold);border-color:var(--gold-soft)}
 .up-ico-muted{color:var(--muted)}
+.up-emoji{font-size:16px;line-height:1}
 .up-item.up-nav{cursor:pointer}
 .up-compose{display:flex;align-items:center;gap:12px;margin-bottom:24px;
   background:var(--surface);background-image:var(--glass);border:1px solid var(--line);
