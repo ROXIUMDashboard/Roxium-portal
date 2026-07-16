@@ -400,7 +400,7 @@ function showView(name){
   if(name==='operations') loadOperationsData();
   if(name==='controls'){
     activateAdminTab(lastAdminTab);
-    renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings(); loadAccountApprovals();
+    renderAdminClients(); loadSheetSources(); loadPlatformAdmins(); loadAppSettings();
     enhanceSelectsIn($('adminPanel'));
     const pid = $('accessPractice')?.value;
     loadAccessRoster(pid);
@@ -5689,7 +5689,9 @@ $('btnClientInvite').onclick = async ()=>{
   try{
     const data = await sendPracticeInvite(practiceId, email, full_name, 'member');
     $('clientInviteEmail').value=''; $('clientInviteName').value='';
-    accessFlash(data?.invited===false ? `${email} linked and allowlisted.` : `Invite sent to ${email}.`);
+    accessFlash(data?.emailed === false
+      ? `${email} has access — but the invite email didn't send (${esc(data?.email_note||'email not configured')}).`
+      : (data?.invited===false ? `${email} linked and allowlisted.` : `✓ Invite sent to ${email}.`));
     loadClientAccessRoster();
   }catch(e){ uiAlert('Invite failed', esc(e.message||String(e))); }
   finally{ $('btnClientInvite').disabled = false; }
