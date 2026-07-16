@@ -4745,7 +4745,8 @@ async function updateOpsVideo(id, patch){
   return updateOpsRow('video_pipeline', id, patch);
 }
 function renderOpsAlertItem(a){
-  const icon = a.severity==='red' ? '🔴' : a.severity==='yellow' ? '🟡' : '🟢';
+  // Themed status dot (coloured by the .ops-alert-<severity> class) — not an OS emoji.
+  const icon = '<span class="ops-alert-dot"></span>';
   const pinned = opsAttentionState.pinned.includes(a.id);
   const muted = a.uiState==='snoozed' || a.uiState==='dismissed';
   const until = a.uiState==='snoozed' ? opsAttentionState.snoozed[a.id] : null;
@@ -4777,8 +4778,8 @@ function renderOpsAlertItem(a){
     <div class="ops-alert-actions">
       ${a.uiState==='active' ? `
       ${a.action==='sync' ? `<button type="button" class="ops-alert-verb" data-sync-alert="${esc(a.id)}" title="Run the reporting sync now">Sync now</button>` : ''}
-      <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}">📌</button>
-      <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow">⏸</button>
+      <button type="button" class="ops-alert-pin${pinned?' active':''}" data-pin-alert="${esc(a.id)}" title="${pinned?'Unpin':'Pin to top'}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1v2.34a2 2 0 0 1-.88 1.66l-2 1.36A2 2 0 0 0 5 15.7V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.3a2 2 0 0 0-1.12-1.7l-2-1.36A2 2 0 0 1 15 9.34Z"/></svg></button>
+      <button type="button" class="ops-alert-snooze" data-snooze-alert="${esc(a.id)}" title="Snooze until tomorrow"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
       <button type="button" class="ops-alert-dismiss" data-dismiss-alert="${esc(a.id)}" title="Dismiss">✕</button>` : `${resumeBtn}${restoreBtn}`}
     </div>
   </div>`;
