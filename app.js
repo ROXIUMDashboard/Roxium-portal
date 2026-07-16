@@ -1353,6 +1353,13 @@ function buildClientOverview(cur, prev){
   } else if((data.deliv||[]).length){
     next.push({ text:'Every deliverable is shipped — you\'re fully caught up.', tone:'good', view:'deliverables' });
   }
+  // Nearest scheduled video the client can look forward to. Clients see what's
+  // COMING (positive) — a "you're late" notice stays internal to the team.
+  const today0 = new Date(new Date().toDateString());
+  const upVideo = (data.video||[])
+    .filter(v=> v.stage!=='delivered' && v.stage!=='posted' && v.planned_shoot_date && new Date(v.planned_shoot_date) >= today0)
+    .sort((a,b)=> new Date(a.planned_shoot_date)-new Date(b.planned_shoot_date))[0];
+  if(upVideo) next.push({ text:`Next video: “${upVideo.item}” — scheduled ${prettyDate(upVideo.planned_shoot_date,'month')}.`, tone:'neutral', view:'video' });
   if(!next.length) next.push({ text:'Your roadmap will appear here at kickoff.', tone:'neutral' });
 
   return { changed, needs, next };
@@ -4487,13 +4494,18 @@ function buildOpsAlerts(){
       alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
     });
     videos.forEach(v=>{
-      const fin = v.stage==='posted' || v.stage==='delivered';
-      const sla = slaState(v.stage_since, fin);
-      if(sla){
-        const days = daysIn(v.stage_since);
-        const title = sla==='overdue' ? 'Video overdue' : 'Video stalled';
-        const detail = `${v.item} · ${days} day${days===1?'':'s'} in ${stageLabelOf(v.stage)}`;
-        alerts.push({ severity: sla==='overdue'?'red':'yellow', practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[sla==='overdue'?'red':'yellow'], days, linkView:'video', videoId:v.id });
+      // Due-date urgency off the scheduled date — same rules as deliverables.
+      const due = v.planned_shoot_date;
+      if(due){
+        const daysLeft = Math.ceil((new Date(due) - Date.now())/86400000);
+        let severity = '', title = '';
+        if(daysLeft < 0){ severity = 'red'; title = 'Video overdue'; }
+        else if(daysLeft <= 1){ severity = 'yellow'; title = 'Video due tomorrow'; }
+        else if(daysLeft <= 7){ severity = 'yellow'; title = 'Video approaching deadline'; }
+        if(severity){
+          const detail = `${v.item}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
+          alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'video', videoId:v.id });
+        }
       }
       if(v.blocked){
         const days = daysIn(v.stage_since);
@@ -4990,15 +5002,19 @@ function renderOpsClientDetail(r){
     </tr>`;
   }));
   const vidRows = videos.map(v=>{
-    const fin = v.stage==='posted' || v.stage==='delivered';
-    const sla = slaState(v.stage_since, fin);
+    // The scheduled date is the video's due date — mirror the deliverable logic
+    // exactly: days until it (negative = overdue), red past-due, yellow ≤3 days.
+    const due = v.planned_shoot_date;
+    const daysLeft = due ? Math.ceil((new Date(due)-Date.now())/86400000) : null;
+    const days = daysLeft==null? '—' : daysLeft < 0 ? `${Math.abs(daysLeft)} overdue` : String(daysLeft);
+    const rowCls = daysLeft!=null && daysLeft<0? 'ops-row-warn' : daysLeft!=null && daysLeft<=3? 'ops-row-caution' : '';
     const wait = v.blocked ? (v.blocked_reason||'Practice') : '—';
-    const st = sla==='overdue'? 'Overdue' : sla==='warn'? 'Watch' : v.blocked? 'Blocked' : 'On track';
-    return `<tr class="${sla? 'ops-row-'+sla:''}">
+    const st = daysLeft!=null && daysLeft<0? 'Overdue' : daysLeft!=null && daysLeft<=3? 'Due soon' : v.blocked? 'Blocked' : 'On track';
+    return `<tr class="${rowCls}">
       <td>${esc(v.item)}</td>
       <td class="ops-status-cell"><select class="stagesel ops-vid-stage" data-vid-id="${v.id}">${STAGES.map(([k,l])=>`<option value="${k}" ${k===v.stage?'selected':''}>${l}</option>`).join('')}</select></td>
-      <td>${daysIn(v.stage_since)}</td>
-      <td class="ops-due-cell"><input type="date" class="cellinput ops-shoot-date" data-vid-id="${v.id}" value="${v.planned_shoot_date? String(v.planned_shoot_date).slice(0,10):''}"></td>
+      <td>${days}</td>
+      <td class="ops-due-cell"><input type="date" class="cellinput ops-shoot-date" data-vid-id="${v.id}" value="${due? String(due).slice(0,10):''}"></td>
       <td>${esc(wait)}</td>
       <td>${esc(st)}</td>
     </tr>`;
@@ -5600,7 +5616,7 @@ $('btnAddClient').onclick = async ()=>{
     $('newClientName').value = '';
     await loadTeamPractices();
     renderAdminClients();
-    if(data){ practiceId = data; resetPracticeUiState(); showOnboardChecklist(data, name); }
+    if(data){ practiceId = data; resetPracticeUiState(); updateSwitcherLabel(); syncChrome(); showOnboardChecklist(data, name); }
     onbFlash(`Created "${name}". Looking for its workbook in the master folder…`);
     loadAll();
     if(data) autoDiscoverWorkbook(data, name);   // best-effort onboarding; safe if it can't
