@@ -599,9 +599,10 @@ $('btnLogin').onclick = async ()=>{
     $('loginCodeRow')?.classList.remove('hidden');
     $('loginMsg').textContent = 'Check your email for the sign-in link — or type the code from that email below.';
   } else {
-    $('loginMsg').textContent = /signups? not allowed|disabled/i.test(error.message)
-      ? 'New sign-ups are momentarily unavailable — ask your ROXIUM lead for an invitation instead.'
-      : error.message;
+    const m = String(error.message||'');
+    $('loginMsg').textContent = /signups? not allowed|disabled|not found|no user|invalid/i.test(m)
+      ? 'No account is set up for that email yet — please contact ROXIUM staff to get access.'
+      : m;
   }
 };
 
@@ -2224,13 +2225,12 @@ const UPD_ICON = {
   sync:       '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
   connection: '<path d="M8 8a4 4 0 0 0 0 8h2"/><path d="M16 8a4 4 0 0 1 0 8h-2"/><path d="M9 12h6"/>',
   video:      '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  // A team-written note reads as a human comment, not an automated event — a grey
+  // speech-bubble (theme-matching) tells it apart from a delivery/sync/video icon.
   comment:    '<path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.6 8.6 0 0 1-4-1L3 21l1.5-5.5a8.4 8.4 0 0 1-1-4A8.5 8.5 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>',
-  update:     '<circle cx="12" cy="12" r="3.2"/>',
+  update:     '<path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.6 8.6 0 0 1-4-1L3 21l1.5-5.5a8.4 8.4 0 0 1-1-4A8.5 8.5 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>',
 };
 function updIconSvg(ic, tone){
-  // A team-written comment reads as a human note, not an automated event — show a
-  // speech-bubble emoji so clients can tell it apart at a glance.
-  if(ic==='comment') return `<span class="up-ico up-ico-${tone||'muted'}"><span class="up-emoji">💬</span></span>`;
   return `<span class="up-ico up-ico-${tone||'muted'}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${UPD_ICON[ic]||UPD_ICON.update}</svg></span>`;
 }
 function updToneOf(ev){
@@ -2359,7 +2359,11 @@ function renderUpdatesBadge(){
   // week, so a fresh visitor gets a sensible "new this week" number (not the whole
   // history) and it clears to 0 the moment they open Updates.
   const floor = Math.max(seen, Date.now() - 7*86400000);
-  const n = buildEngagementTimeline(120).filter(e=> e.important && new Date(e.t).getTime() > floor).length;
+  // Count EVERY new item since last opened — comments and video moves included, not
+  // just "important" ones — so the sidebar tally matches what actually posted. It
+  // clears to 0 the moment Updates is opened (markUpdatesSeen) and returns when
+  // something new lands.
+  const n = buildEngagementTimeline(120).filter(e=> new Date(e.t).getTime() > floor).length;
   el.textContent = n > 9 ? '9+' : String(n);
   el.classList.toggle('hidden', n<=0);
 }

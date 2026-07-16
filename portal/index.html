@@ -21,16 +21,14 @@
 <div id="login" class="login hidden">
   <div class="login-card">
     <div class="mark big">ROX<b>I</b>UM</div>
-    <div class="eyebrow">Sign in or create your account</div>
-    <p class="note">Enter your email — we'll send a secure sign-in link. No password needed. Invited by your practice? Use the same email your invitation was sent to and you're in instantly. New to ROXIUM? Your account is created right away and unlocked as soon as our team approves it.</p>
+    <div class="eyebrow">Sign in</div>
+    <p class="note">Enter your email and we'll send a secure, passwordless sign-in link — no password to remember.</p>
     <input id="loginEmail" type="email" placeholder="you@practice.com">
     <button class="btn" id="btnLogin">Send sign-in link</button>
     <div id="loginCodeRow" class="hidden" style="margin-top:10px">
       <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code from your email">
       <button class="btn" id="btnVerifyCode">Enter code</button>
-      <p class="note" style="margin-top:6px">Outlook can be slow or block the button — the code above always works.</p>
     </div>
-    <p class="note login-persist">After you sign in once, this browser keeps you signed in until you choose Sign out.</p>
     <p class="note" id="loginMsg"></p>
     <p class="note" style="margin-top:14px"><a href="https://roxium.com" style="color:var(--gold);text-decoration:none">← Back to roxium.com</a></p>
   </div>
