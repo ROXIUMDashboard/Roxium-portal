@@ -629,6 +629,10 @@ $('btnVerifyCode')?.addEventListener('click', async ()=>{
   // Success: onAuthStateChange fires boot(); nothing else to do here.
 });
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
+// Brand icon is "home": clients / client-preview → Overview; real team → Operations.
+$('sbBrand')?.addEventListener('click', e=>{
+  if(me && me.role==='team' && !previewMode){ e.preventDefault(); location.hash = '#operations'; }
+});
 
 async function loadMyMembership(){
   if(!me || !practiceId) { myMembership = null; return; }
@@ -5452,6 +5456,7 @@ async function loadAccountApprovals(){
       <button class="btn sm apprapprove">Approve</button>
       <button class="btn ghost sm danger apprreject">Reject</button>
     </div>`).join('')}`;
+  enhanceSelectsIn(wrap);   // theme the practice / role dropdowns like the rest of the site
   wrap.querySelectorAll('.apprrow').forEach(row=>{
     const uid = row.dataset.uid;
     const rec = (data||[]).find(x=> x.id===uid);
