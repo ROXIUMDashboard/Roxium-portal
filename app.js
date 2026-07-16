@@ -445,6 +445,9 @@ function syncChrome(){
   // practice is open (client, or team viewing/previewing a client).
   $('sbOpsGroup')?.classList.toggle('hidden', !realTeam);
   $('sbClientGroup')?.classList.toggle('hidden', !(practiceId || (me && me.role==='client')));
+  // The "Live sync" footer reflects the OPEN client's reporting sync — hide it when
+  // no client is selected (team on the Operations dashboard), where it's meaningless.
+  $('sbFoot')?.classList.toggle('hidden', !practiceId);
   if(!teamView && TEAM_ONLY_VIEWS.includes(currentView())) location.hash = '#'+CLIENT_HOME;
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#'+CLIENT_HOME;
 }
@@ -491,10 +494,16 @@ function buildSwitcher(list){
   const draw = q=>{
     const ql = (q||'').trim().toLowerCase();
     const matches = practicesList.filter(p=> p.name.toLowerCase().includes(ql));
-    results.innerHTML = matches.length
+    // When a client is open, offer a way back to the team dashboard (deselect).
+    const backItem = practiceId
+      ? `<button type="button" class="switcher-item switcher-back" data-back="1">← Back to Operations (no client)</button>`
+      : '';
+    results.innerHTML = backItem + (matches.length
       ? matches.map(p=>`<button type="button" class="switcher-item${p.id===practiceId?' current':''}" data-id="${p.id}">${esc(p.name)}</button>`).join('')
-      : '<div class="switcher-empty">No matches — try another name</div>';
-    results.querySelectorAll('.switcher-item').forEach(b=> b.onclick = ()=>{
+      : '<div class="switcher-empty">No matches — try another name</div>');
+    const backBtn = results.querySelector('[data-back]');
+    if(backBtn) backBtn.onclick = ()=>{ setOpen(false); btn?.focus(); exitClientPortal(); };
+    results.querySelectorAll('.switcher-item[data-id]').forEach(b=> b.onclick = ()=>{
       practiceId = b.dataset.id;
       updateSwitcherLabel();
       setOpen(false);
@@ -629,10 +638,20 @@ $('btnVerifyCode')?.addEventListener('click', async ()=>{
   // Success: onAuthStateChange fires boot(); nothing else to do here.
 });
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
-// Brand icon is "home": clients / client-preview → Overview; real team → Operations.
+// Brand icon is "home": clients / client-preview → Overview; real team → Operations
+// with the client DESELECTED, so they fully leave the client portal.
 $('sbBrand')?.addEventListener('click', e=>{
-  if(me && me.role==='team' && !previewMode){ e.preventDefault(); location.hash = '#operations'; }
+  if(me && me.role==='team' && !previewMode){ e.preventDefault(); exitClientPortal(); }
 });
+// Team: drop the selected client and return to the Operations dashboard.
+function exitClientPortal(){
+  practiceId = null;
+  updateSwitcherLabel();
+  resetPracticeUiState();
+  syncChrome();
+  if(location.hash.replace('#','') !== 'operations') location.hash = '#operations';
+  else showView('operations');
+}
 
 async function loadMyMembership(){
   if(!me || !practiceId) { myMembership = null; return; }
@@ -6278,7 +6297,7 @@ async function deletePractice(id, name, opts={}){
     // Composio connections) are actually removed — an RPC can't delete auth
     // users, which is what made "deleted" clients reappear as pending accounts.
     const { data: res, error } = await sb.functions.invoke('delete-account', { body: { practice_id: id } });
-    if(error) throw error;
+    if(error) throw new Error(await fnErrorMessage(error, 'delete failed'));
     if(res && res.ok === false) throw new Error(res.error || 'delete failed');
     delete selByPractice[id];
     delete chanByPractice[id];
