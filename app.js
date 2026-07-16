@@ -4494,6 +4494,9 @@ function buildOpsAlerts(){
       alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
     });
     videos.forEach(v=>{
+      // A delivered / posted video is DONE — never flag it, whatever its date says.
+      // (This is the "mark it done and it clears from Needs Attention" fix.)
+      if(v.stage==='delivered' || v.stage==='posted') return;
       // Due-date urgency off the scheduled date — same rules as deliverables.
       const due = v.planned_shoot_date;
       if(due){
@@ -4745,8 +4748,9 @@ async function updateOpsVideo(id, patch){
   return updateOpsRow('video_pipeline', id, patch);
 }
 function renderOpsAlertItem(a){
-  // Themed status dot (coloured by the .ops-alert-<severity> class) — not an OS emoji.
-  const icon = '<span class="ops-alert-dot"></span>';
+  // Themed warning-triangle tile (coloured by .ops-alert-<severity>) — matches the
+  // reference design, not an OS emoji.
+  const icon = `<span class="ops-alert-tile"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>`;
   const pinned = opsAttentionState.pinned.includes(a.id);
   const muted = a.uiState==='snoozed' || a.uiState==='dismissed';
   const until = a.uiState==='snoozed' ? opsAttentionState.snoozed[a.id] : null;
@@ -5128,7 +5132,6 @@ function renderOperationsDashboard(){
     { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
     { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
     { v: connIssues, l:'Data connections', note: connIssues ? connNoteParts.join(' · ') : 'all sources flowing', cls: connErrors? 'r' : connIssues? 'a':'g', tier:'secondary' },
-    { v: (opsData.pendingAccounts||[]).length, l:'Account requests', note: (opsData.pendingAccounts||[]).length ? 'review in Team Controls → Access' : 'none waiting', cls: (opsData.pendingAccounts||[]).length? 'a':'', tier:'secondary' },
     { v: avgHealth, l:'Avg health score', note:'across filtered clients', tier:'secondary' },
   ];
   $('opsExecCards').innerHTML = cards.map(c=>`
@@ -5137,6 +5140,13 @@ function renderOperationsDashboard(){
       <div class="big">${esc(String(c.v))}</div>
       <div class="tgt">${esc(c.note)}</div>
     </div>`).join('');
+  // Severity summary cards (High / Medium / Low) — counts of the ACTIVE queue.
+  const sevHigh = activeAttention.filter(a=> a.severity==='red').length;
+  const sevMed  = activeAttention.filter(a=> a.severity==='yellow').length;
+  const sevLow  = activeAttention.filter(a=> a.severity==='green').length;
+  const sevEl = $('opsSevCards');
+  if(sevEl) sevEl.innerHTML = [['High',sevHigh,'red'],['Medium',sevMed,'yellow'],['Low',sevLow,'green']]
+    .map(([l,n,c])=>`<div class="ops-sev-card ops-sev-${c}"><div class="ops-sev-k">${l}</div><div class="ops-sev-n">${n}</div></div>`).join('');
   const feed = $('opsAttentionFeed');
   feed.innerHTML = attentionList.length
     ? attentionList.map(a=> renderOpsAlertItem(a)).join('')
