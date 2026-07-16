@@ -733,9 +733,10 @@ input[type=month]::-webkit-calendar-picker-indicator:hover{opacity:1}
 /* invite row — checkbox + button as separate grid cells, aligned with other fields */
 .invite-entry{align-items:end}
 .invite-entry .f{display:flex;flex-direction:column;justify-content:flex-end}
-.invite-check{display:inline-flex !important;align-items:center;gap:5px;margin-bottom:0 !important;
-  font-size:10px;letter-spacing:.18em;text-transform:uppercase;min-height:42px}
-.invite-check input[type=checkbox]{width:10px !important;height:10px !important;min-width:10px;min-height:10px}
+/* Match the Account Approvals "Send welcome email" checkbox exactly — inherit the
+   standard .checklabel look (12px themed gold box, normal-case label); only keep the
+   grid alignment so it lines up with the invite fields/button. */
+.invite-check{margin-bottom:0 !important;min-height:42px}
 .invite-send .invite-send-spacer{display:block;font-size:10px;line-height:1;margin-bottom:6px;visibility:hidden}
 .invite-send .btn{width:100%;min-height:42px;padding:10px 14px;box-sizing:border-box}
 .checklabel{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:8px;cursor:pointer;letter-spacing:.04em}
