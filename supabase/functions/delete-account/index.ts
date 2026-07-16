@@ -16,6 +16,7 @@
 // Deploy:  supabase functions deploy delete-account --no-verify-jwt
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, COMPOSIO_API_KEY (optional).
 // ============================================================
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { serviceClient, bearerToken, UUID_RE } from "../_shared/auth.ts";
 import { composioKey, deleteConnectedAccount } from "../_shared/composio.ts";
 import { cors, respond } from "../_shared/http.ts";
@@ -57,12 +58,23 @@ Deno.serve(async (req) => {
     const { data: prof } = await sb.from("profiles").select("role").eq("id", userData.user.id).single();
     if (prof?.role !== "team") return respond({ ok: false, error: "team only" }, 403);
 
+    // The delete_* RPCs are security-definer and gate on is_team(), which reads
+    // auth.uid(). Under the service-role client auth.uid() is NULL, so is_team()
+    // wrongly returns false ("Only team members can delete a practice"). Call them
+    // with the CALLER's JWT instead; the service client stays for the privileged
+    // auth.admin.deleteUser + connection reads.
+    const userClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } },
+    );
+
     const { practice_id, user_id } = await req.json().catch(() => ({}));
 
     if (practice_id) {
       if (!UUID_RE.test(String(practice_id))) return respond({ ok: false, error: "bad practice_id" }, 400);
       await revokePracticeConnections(sb, [String(practice_id)]);      // before rows cascade away
-      const { data: res, error } = await sb.rpc("delete_practice", { p_id: practice_id });
+      const { data: res, error } = await userClient.rpc("delete_practice", { p_id: practice_id });
       if (error) throw new Error(error.message);
       const ids = ((res as { deleted_user_ids?: string[] })?.deleted_user_ids) || [];
       const failed = await deleteAuthUsers(sb, ids);
@@ -71,7 +83,7 @@ Deno.serve(async (req) => {
 
     if (user_id) {
       if (!UUID_RE.test(String(user_id))) return respond({ ok: false, error: "bad user_id" }, 400);
-      const { data: res, error } = await sb.rpc("delete_client", { p_user: user_id });
+      const { data: res, error } = await userClient.rpc("delete_client", { p_user: user_id });
       if (error || (res as { ok?: boolean })?.ok === false)
         throw new Error(error?.message || (res as { error?: string })?.error || "delete_client failed");
       const failed = await deleteAuthUsers(sb, [String(user_id)]);
