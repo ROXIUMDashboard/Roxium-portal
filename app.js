@@ -5282,7 +5282,7 @@ function wireOpsSearch(){
 wireOpsSearch();
 
 /* ---- ONBOARDING & ACCESS (Team Controls + client owners) ---- */
-const onbFlash = t=>{ const el=$('onbMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
+const onbFlash = (t, ok)=>{ const el=$('onbMsg'); if(el){ el.textContent=t; el.classList.toggle('onb-ok', !!ok); setTimeout(()=>{ if(el.textContent===t){ el.textContent=''; el.classList.remove('onb-ok'); } }, 9000); } };
 const accessFlash = t=>{ const el=$('clientAccessMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 8000); } };
 
 function showOnboardChecklist(pid, name){
@@ -5387,17 +5387,15 @@ function renderRoster(wrap, roster, opts){
   if(opts.canRemove){
     wrap.querySelectorAll('[data-rmuser]').forEach(b=> b.onclick = async ()=>{
       if(!await uiConfirm('Remove member',
-        'This removes their access <b>and deletes their login</b> — their email will no longer work until you re-invite them. Continue?',
-        {danger:true, confirmLabel:'Remove & delete login'})) return;
-      // Route through the edge function so the auth.users row is actually deleted —
-      // an RPC alone leaves the login alive, so a "removed" person could sign back
-      // in and reappear as a pending account.
-      try{
-        const { data: res, error } = await sb.functions.invoke('delete-account', { body: { user_id: b.dataset.rmuser } });
-        if(error) throw new Error(await fnErrorMessage(error, 'Remove failed'));
-        if(res && res.ok === false) throw new Error(res.error || 'remove failed');
-        opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload();
-      }catch(e){ uiAlert('Cannot remove', esc(e.message||String(e))); }
+        'This removes their access to this practice. They can be re-invited anytime. (To delete the account and its login entirely, use “Delete selected client”.)',
+        {danger:true, confirmLabel:'Remove'})) return;
+      // remove_practice_member revokes membership + the invite. It works for
+      // practice OWNERS and team (delete-account is team-only, which is why routing
+      // removal through it broke owners). Full auth deletion stays a team-only
+      // "Delete client" action.
+      const { error } = await sb.rpc('remove_practice_member', { p_practice: opts.practiceId, p_user: b.dataset.rmuser });
+      if(error) uiAlert('Cannot remove', esc(error.message));
+      else { opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload(); }
     });
   }
   if(opts.canRevoke){
@@ -5625,14 +5623,17 @@ $('btnInvite').onclick = async ()=>{
   $('btnInvite').disabled = true; onbFlash(sendEmail ? 'Sending invite…' : 'Adding to allowlist…');
   try{
     const data = await sendPracticeInvite(practice_id, email, full_name, role, { sendEmail });
+    const pname = (practicesList||[]).find(p=> p.id===practice_id)?.name || 'the practice';
     $('accessEmail').value=''; $('accessName').value='';
-    onbFlash(sendEmail
-      ? (data?.emailed === false
-          ? `${email} is set up and has access — but the invite email didn't send (${esc(data?.email_note||'email not configured yet')}). Finish email setup to deliver sign-in links.`
-          : (data?.invited===false
-              ? `${email} already had an account — linked and allowlisted.`
-              : `Invite sent to ${email} (allowlisted).`))
-      : `${email} allowlisted — they can sign up with that email anytime.`);
+    if(sendEmail && data?.emailed === false){
+      onbFlash(`${email} is set up and has access to ${pname} — but the invite email didn't send (${esc(data?.email_note||'email not configured yet')}). Finish email setup to deliver sign-in links.`, false);
+    } else {
+      onbFlash(sendEmail
+        ? (data?.invited===false
+            ? `✓ ${email} already had an account — linked to ${pname} and emailed a sign-in link.`
+            : `✓ Invite sent — ${email} was emailed a sign-in link and added to ${pname}. They now appear in the list below.`)
+        : `✓ ${email} allowlisted for ${pname} — they can sign up with that email anytime.`, true);
+    }
     loadAccessRoster(practice_id);
     refreshOnboardChecklist(practice_id);
   }catch(e){
