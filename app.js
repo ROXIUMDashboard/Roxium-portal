@@ -805,7 +805,13 @@ async function afterLogin(){
   // pre-migration DBs — those clients always have a practice_id, so they pass.)
   if(me.role !== 'team'){
     if(('approval_status' in me) && me.approval_status === 'rejected'){ showPendingPane('rejected', authEmail); return; }
-    if(!me.practice_id){ showPendingPane('pending', authEmail); return; }
+    // Access IS a membership — check that directly, not the profile.practice_id
+    // pointer (a partial grant may set one without the other). No membership =
+    // no access = waiting room. When the team re-invites / approves, a membership
+    // is created and the very next sign-in sails straight through.
+    const { data: mems } = await sb.from('memberships').select('practice_id').eq('user_id', uid);
+    if(!mems || !mems.length){ showPendingPane('pending', authEmail); return; }
+    if(!me.practice_id) me.practice_id = mems[0].practice_id;   // heal a lagging pointer
   }
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
