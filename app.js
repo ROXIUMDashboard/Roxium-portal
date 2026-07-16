@@ -4485,11 +4485,13 @@ function buildOpsAlerts(){
     delivs.filter(d=> d.status!=='delivered' && d.due).forEach(d=>{
       const due = new Date(d.due);
       const daysLeft = Math.ceil((due - Date.now())/86400000);
-      let severity = 'green', title = 'Deliverable on track';
+      // Severity tiers: overdue = HIGH (red), ≤1 week = MEDIUM (yellow),
+      // 1–2 weeks out = LOW (green), beyond 2 weeks = not flagged yet.
+      let severity, title;
       if(daysLeft < 0){ severity = 'red'; title = 'Deliverable overdue'; }
-      else if(daysLeft <= 1){ severity = 'yellow'; title = 'Deliverable due tomorrow'; }
-      else if(daysLeft <= 7){ severity = 'yellow'; title = 'Deliverable approaching deadline'; }
-      if(severity==='green') return;
+      else if(daysLeft <= 7){ severity = 'yellow'; title = daysLeft<=1 ? 'Deliverable due tomorrow' : 'Deliverable approaching deadline'; }
+      else if(daysLeft <= 14){ severity = 'green'; title = 'Deliverable upcoming'; }
+      else return;
       const detail = `${d.name}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
       alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'deliverables', delivId:d.id, phase:d.phase });
     });
@@ -4503,8 +4505,8 @@ function buildOpsAlerts(){
         const daysLeft = Math.ceil((new Date(due) - Date.now())/86400000);
         let severity = '', title = '';
         if(daysLeft < 0){ severity = 'red'; title = 'Video overdue'; }
-        else if(daysLeft <= 1){ severity = 'yellow'; title = 'Video due tomorrow'; }
-        else if(daysLeft <= 7){ severity = 'yellow'; title = 'Video approaching deadline'; }
+        else if(daysLeft <= 7){ severity = 'yellow'; title = daysLeft<=1 ? 'Video due tomorrow' : 'Video approaching deadline'; }
+        else if(daysLeft <= 14){ severity = 'green'; title = 'Video upcoming'; }
         if(severity){
           const detail = `${v.item}${daysLeft < 0 ? ` · ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} overdue` : daysLeft<=1 ? '' : ` · ${daysLeft} days left`}`;
           alerts.push({ severity, practice:pname, practiceId:p.id, title, detail, sort: OPS_HEALTH_RANK[severity], days: daysLeft, linkView:'video', videoId:v.id });
@@ -5092,6 +5094,11 @@ function renderOperationsDashboard(){
   });
   const flaggedClients = new Set(alerts.map(a=> a.practiceId));
   const onTrack = healthRows.filter(r=> r.h.band==='green' && !flaggedClients.has(r.p.id)).length;
+  // Live "Completed" tally — delivered deliverables + delivered/posted videos across
+  // the visible clients. Updates the moment a deliverable/video is marked done.
+  const visibleIds = new Set(healthRows.map(r=> r.p.id));
+  const completedCount = (opsData.deliverables||[]).filter(d=> visibleIds.has(d.practice_id) && d.status==='delivered').length
+    + (opsData.videos||[]).filter(v=> visibleIds.has(v.practice_id) && (v.stage==='delivered' || v.stage==='posted')).length;
   const videosProd = (opsData.videos||[]).filter(v=> v.stage!=='posted' && v.stage!=='delivered').length;
   const videosWait = (opsData.videos||[]).filter(v=> v.blocked).length;
   const videosOver = (opsData.videos||[]).filter(v=>{
@@ -5127,7 +5134,7 @@ function renderOperationsDashboard(){
     { v: needAttentionCount, l:'Need attention', note: needAttentionCount ? `${needAttentionClients} client${needAttentionClients===1?'':'s'} · ${needAttentionCount} flag${needAttentionCount===1?'':'s'}` : 'nothing flagged', cls: needAttentionCount? 'a':'', tier:'primary' },
     { v: overdueDelivCount, l:'Overdue deliverables', note:'past due date', cls: overdueDelivCount? 'r':'', tier:'primary' },
     { v: upcomingDeliv, l:'Due within 14 days', note:'coming up soon', cls: upcomingDeliv? 'a':'', tier:'primary' },
-    { v: onTrack, l:'On track', note:'green health band', cls:'g', tier:'secondary' },
+    { v: completedCount, l:'Completed', note:'deliverables & videos done', cls:'g', tier:'secondary' },
     { v: videosProd, l:'Videos in production', note:'not yet delivered', tier:'secondary' },
     { v: videosWait, l:'Videos waiting', note:'blocked on client', cls: videosWait? 'a':'', tier:'secondary' },
     { v: videosOver, l:'Videos overdue', note:'SLA exceeded', cls: videosOver? 'r':'', tier:'secondary' },
