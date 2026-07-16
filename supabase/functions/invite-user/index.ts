@@ -115,59 +115,23 @@ Deno.serve(async (req) => {
   const role_label = role === "owner" ? "Owner" : "Member";
   const meta = { full_name, role, role_label };
 
+  // 1) Ensure the auth user exists. This is the part that MUST succeed — it is
+  //    deliberately DECOUPLED from email so a mis-configured mailer can never
+  //    hard-fail an invite. createUser doesn't send anything; email is step 3.
   let userId: string | null = null;
-  let didInvite = false;
-  let emailed = false;
-
-  // Preferred path: mint the link ourselves and deliver it via Resend (the proven
-  // sender). This does NOT depend on Supabase's built-in auth SMTP being set up.
-  if (RESEND) {
-    // 'invite' creates a brand-new user; an existing user needs 'magiclink'.
-    let gen = await admin.auth.admin.generateLink({ type: "invite", email, options: { data: meta, redirectTo: REDIRECT } });
-    if (gen.error && /already|registered|exist/i.test(gen.error.message)) {
-      didInvite = false;
-      gen = await admin.auth.admin.generateLink({ type: "magiclink", email, options: { redirectTo: REDIRECT } });
-    } else if (!gen.error) {
-      didInvite = true;
-    }
-    if (gen.error) return json({ error: gen.error.message }, 500);
-
-    const actionLink = (gen.data as { properties?: { action_link?: string } })?.properties?.action_link || "";
-    userId = (gen.data as { user?: { id?: string } })?.user?.id ?? null;
-    if (!userId) {
-      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      userId = list?.users?.find((u) => (u.email ?? "").toLowerCase() === email)?.id ?? null;
-    }
-    if (!userId) return json({ error: "Could not resolve invited user id" }, 500);
-    if (!actionLink) return json({ error: "Could not generate sign-in link" }, 500);
-
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: FROM, to: [email],
-        subject: "You're invited to your ROXIUM portal",
-        html: inviteHtml((practice as { name?: string }).name || "", actionLink),
-      }),
-    });
-    if (!res.ok) return json({ error: `resend ${res.status}: ${await res.text()}` }, 502);
-    emailed = true;
-  } else {
-    // Fallback: Supabase's built-in invite email (requires auth SMTP configured).
-    const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: meta, redirectTo: REDIRECT,
-    });
-    if (invited?.user) {
-      userId = invited.user.id; didInvite = true; emailed = true;
-    } else if (inviteErr && /already.*regist|exist/i.test(inviteErr.message)) {
-      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      userId = list?.users?.find((u) => (u.email ?? "").toLowerCase() === email)?.id ?? null;
-      if (!userId) return json({ error: "User exists but could not be located" }, 500);
-    } else {
-      return json({ error: inviteErr?.message ?? "Invite failed" }, 500);
-    }
+  let invited = false;
+  const { data: created, error: createErr } = await admin.auth.admin.createUser({
+    email, email_confirm: true, user_metadata: meta,
+  });
+  if (created?.user) {
+    userId = created.user.id; invited = true;
+  } else if (createErr && /already|registered|exist/i.test(createErr.message)) {
+    const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
+    userId = list?.users?.find((u) => (u.email ?? "").toLowerCase() === email)?.id ?? null;
   }
+  if (!userId) return json({ error: createErr?.message ?? "Could not create the account" }, 500);
 
+  // 2) Grant access: allowlist → profile → membership → approve.
   await admin.from("practice_invites")
     .update({ status: "sent" })
     .eq("practice_id", practice_id).ilike("email", email);
@@ -194,5 +158,34 @@ Deno.serve(async (req) => {
     .update({ status: "accepted", accepted_at: new Date().toISOString() })
     .eq("practice_id", practice_id).ilike("email", email);
 
-  return json({ ok: true, user_id: userId, invited: didInvite, emailed, email, practice_id, role });
+  // 3) Best-effort email — NEVER blocks the invite. Mint a magic sign-in link and
+  //    deliver it via Resend. If RESEND isn't configured (or delivery fails), the
+  //    account is already created; we just report emailed:false + a reason so the
+  //    UI can say "invited — email not sent yet".
+  let emailed = false;
+  let email_note = "";
+  try {
+    const gen = await admin.auth.admin.generateLink({ type: "magiclink", email, options: { redirectTo: REDIRECT } });
+    const actionLink = (gen.data as { properties?: { action_link?: string } })?.properties?.action_link || "";
+    if (gen.error || !actionLink) throw new Error(gen.error?.message || "could not generate sign-in link");
+    if (RESEND) {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: FROM, to: [email],
+          subject: "You're invited to your ROXIUM portal",
+          html: inviteHtml((practice as { name?: string }).name || "", actionLink),
+        }),
+      });
+      if (!res.ok) throw new Error(`resend ${res.status}: ${await res.text()}`);
+      emailed = true;
+    } else {
+      email_note = "Account created, but no invite email was sent — RESEND_API_KEY isn't configured yet.";
+    }
+  } catch (e) {
+    email_note = String((e as Error)?.message || e);
+  }
+
+  return json({ ok: true, user_id: userId, invited, emailed, email_note, email, practice_id, role });
 });

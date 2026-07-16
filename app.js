@@ -5322,12 +5322,21 @@ async function refreshOnboardChecklist(pid){
   mark('sync', !!data?.has_sync);
 }
 
+// Supabase functions.invoke gives a generic "Edge Function returned a non-2xx
+// status code" on failure — dig the function's real {error} message out of the
+// response body so the user sees what actually went wrong.
+async function fnErrorMessage(error, fallback = 'Request failed'){
+  if(!error) return fallback;
+  try{ const b = await error.context?.json?.(); if(b?.error) return b.error; }catch(_){ }
+  return error.message || fallback;
+}
+
 async function sendPracticeInvite(practice_id, email, full_name, role, { sendEmail = true } = {}){
   if(sendEmail){
     const { data, error } = await sb.functions.invoke('invite-user', {
       body: { email, practice_id, full_name, role }
     });
-    if(error) throw error;
+    if(error) throw new Error(await fnErrorMessage(error, 'Invite failed'));
     if(data && data.error) throw new Error(data.error);
     return data;
   }
@@ -5385,7 +5394,7 @@ function renderRoster(wrap, roster, opts){
       // in and reappear as a pending account.
       try{
         const { data: res, error } = await sb.functions.invoke('delete-account', { body: { user_id: b.dataset.rmuser } });
-        if(error) throw error;
+        if(error) throw new Error(await fnErrorMessage(error, 'Remove failed'));
         if(res && res.ok === false) throw new Error(res.error || 'remove failed');
         opts.flash?.('Member removed.') || onbFlash('Member removed.'); opts.reload();
       }catch(e){ uiAlert('Cannot remove', esc(e.message||String(e))); }
@@ -5618,9 +5627,11 @@ $('btnInvite').onclick = async ()=>{
     const data = await sendPracticeInvite(practice_id, email, full_name, role, { sendEmail });
     $('accessEmail').value=''; $('accessName').value='';
     onbFlash(sendEmail
-      ? (data?.invited===false
-          ? `${email} already had an account — linked and allowlisted.`
-          : `Invite sent to ${email} (allowlisted).`)
+      ? (data?.emailed === false
+          ? `${email} is set up and has access — but the invite email didn't send (${esc(data?.email_note||'email not configured yet')}). Finish email setup to deliver sign-in links.`
+          : (data?.invited===false
+              ? `${email} already had an account — linked and allowlisted.`
+              : `Invite sent to ${email} (allowlisted).`))
       : `${email} allowlisted — they can sign up with that email anytime.`);
     loadAccessRoster(practice_id);
     refreshOnboardChecklist(practice_id);
