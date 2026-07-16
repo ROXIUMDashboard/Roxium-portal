@@ -355,9 +355,15 @@ select option{background:var(--surface2);color:var(--cream)}
 .ops-alert-icon{flex-shrink:0;display:grid;place-items:center;align-self:center}
 /* Themed warning tile (replaces the OS 🔴🟡🟢 emoji) — colour from .ops-alert-<sev>. */
 .ops-alert-tile{width:34px;height:34px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--line);background:oklch(1 0 0 / 3%);color:var(--muted)}
-.ops-alert-red .ops-alert-tile{color:var(--red);border-color:oklch(0.66 0.19 25 / 42%);background:oklch(0.66 0.19 25 / 11%)}
-.ops-alert-yellow .ops-alert-tile{color:var(--amber);border-color:oklch(0.79 0.13 66 / 42%);background:oklch(0.79 0.13 66 / 11%)}
+.ops-alert-red .ops-alert-tile{color:var(--red);border-color:oklch(0.66 0.19 25 / 42%);background:oklch(0.66 0.19 25 / 11%);animation:ops-tile-pulse-red 1.6s ease-out infinite}
+.ops-alert-yellow .ops-alert-tile{color:var(--amber);border-color:oklch(0.79 0.13 66 / 42%);background:oklch(0.79 0.13 66 / 11%);animation:ops-tile-pulse-amber 2.4s ease-out infinite}
 .ops-alert-green .ops-alert-tile{color:var(--muted);border-color:var(--line)}
+/* Urgency pulse — a soft expanding ring so high/medium items read as "act now".
+   High pulses faster + stronger; low (green) stays calm. Muted for paused/dismissed. */
+@keyframes ops-tile-pulse-red{0%{box-shadow:0 0 0 0 oklch(0.66 0.19 25 / 55%)}70%,100%{box-shadow:0 0 0 7px oklch(0.66 0.19 25 / 0%)}}
+@keyframes ops-tile-pulse-amber{0%{box-shadow:0 0 0 0 oklch(0.79 0.13 66 / 40%)}70%,100%{box-shadow:0 0 0 6px oklch(0.79 0.13 66 / 0%)}}
+.ops-alert-muted .ops-alert-tile,.ops-alert-paused .ops-alert-tile,.ops-alert-dismissed-state .ops-alert-tile{animation:none}
+@media(prefers-reduced-motion:reduce){.ops-alert-tile{animation:none !important}}
 /* Needs-attention severity summary cards (High / Medium / Low). */
 .ops-sev-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:2px 0 18px}
 .ops-sev-card{border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 20px;background:var(--surface);background-image:var(--glass)}
