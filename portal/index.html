@@ -336,19 +336,19 @@
     <section id="adminPanel" class="view teamonly hidden" data-view="controls">
       <a href="#operations" class="adminback" id="btnAdminBack">← Back to Operations Dashboard</a>
       <h2>Team Controls · <em>configuration</em></h2>
-      <div class="sub">Management and platform configuration — create clients, manage access, configure KPI sources, and monitor sync. Not for day-to-day operations.</div>
+      <div class="sub">Management and platform configuration — create clients, manage access, configure manual/fallback reporting, and monitor sync. Not for day-to-day operations.</div>
 
       <nav class="admintabs" id="adminTabs">
         <button class="atab active" data-atab="clients">Clients</button>
         <button class="atab" data-atab="access">Access &amp; Invites</button>
-        <button class="atab" data-atab="reporting">Reporting &amp; KPI</button>
+        <button class="atab" data-atab="reporting">Manual Reporting</button>
         <button class="atab" data-atab="system">System</button>
       </nav>
 
       <!-- A · CLIENTS / ONBOARDING -->
       <div class="admin-tab" data-atab="clients">
         <h3>New client onboarding</h3>
-        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Reporting &amp; KPI</b>.</p>
+        <p class="note" style="margin-top:-2px">Creates the practice with standard deliverables, roadmap and video pipeline. On create, the portal tries to find the client's workbook in the master folder and detect its source tabs automatically — anything unclear is left for you to confirm under <b>Manual Reporting</b>.</p>
         <div class="entry">
           <div class="f"><label>Practice name</label><input id="newClientName" placeholder="e.g. Balikian Facial Plastics"></div>
           <div class="f"><label>Kickoff date</label><input id="newClientKickoff" type="date"></div>
@@ -392,10 +392,10 @@
         </div>
       </div>
 
-      <!-- C · REPORTING / KPI SOURCES -->
+      <!-- C · MANUAL / FALLBACK REPORTING -->
       <div class="admin-tab hidden" data-atab="reporting">
-        <h3>Reporting workbooks &amp; KPI sources</h3>
-        <p class="note" style="margin-top:-2px">Each client has one master workbook (in the global folder set under <b>System</b>) with a tab per channel. Use <b>Find in master folder</b> and <b>Detect tabs</b>, pick each source's tab from the dropdown, then <b>Deploy setup</b>. Sync also runs automatically every 2 hours.</p>
+        <h3>Manual &amp; fallback reporting</h3>
+        <p class="note" style="margin-top:-2px"><b>Marketing Connections is now the primary, automatic data source</b> (Meta, Instagram, Google Ads, GA4, YouTube, Microsoft Ads…). Use this section only as the <b>fallback</b> — for platforms we can't auto-connect yet (TikTok, LinkedIn, Pinterest, call tracking, email, custom metrics) or for hand-entered months. It runs through the <b>same Google master sheet</b>: each client has one master workbook (folder set under <b>System</b>) with a tab per channel — <b>Find in master folder</b>, <b>Detect tabs</b>, map each source's tab, then <b>Deploy setup</b>. Sync still runs automatically every 2 hours.</p>
         <h4 class="syncstatus-h">Auto-sync status</h4>
         <div id="syncStatus" class="syncstatus"></div>
         <div class="reporting-toolbar" id="reportingToolbar">
@@ -468,7 +468,7 @@
       </div>
 
       <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
-      <p class="note" style="margin-top:-2px">The primary KPI source is the client's reporting workbook + source tabs (<b>Team Controls → Reporting &amp; KPI</b>). Use this manual layer for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
+      <p class="note" style="margin-top:-2px">The primary data source is now <b>Marketing Connections</b> (automatic). This manual layer is the fallback — the client's reporting workbook + source tabs live under <b>Team Controls → Manual Reporting</b>. Use it for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
       <div class="entry" id="kpiMeta">
         <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
       </div>

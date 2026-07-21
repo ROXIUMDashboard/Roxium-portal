@@ -5056,7 +5056,7 @@ function renderOpsClientDetail(r){
     <div class="ops-client-section">
       <h4>Marketing connections</h4>
       ${connRows.length ? `<div class="ops-conn-list">${connRows.join('')}</div>`
-                        : '<p class="note">No reporting sources configured yet — add them in Team Controls → Reporting &amp; KPI.</p>'}
+                        : '<p class="note">No reporting sources configured yet — add them in Team Controls → Manual Reporting.</p>'}
     </div>
     <div class="ops-client-section">
       <h4>Open deliverables</h4>
@@ -5353,7 +5353,7 @@ function showOnboardChecklist(pid, name){
   el.innerHTML = `<div class="onboard-title">Onboarding · <b>${esc(name)}</b></div>
     <ol class="onboard-steps" id="onboardSteps">
       <li data-step="access" class="onboard-pending">Invite the doctor / owner (Access &amp; Invites tab)</li>
-      <li data-step="sheet" class="onboard-pending">Link workbook &amp; map source tabs (Reporting &amp; KPI tab)</li>
+      <li data-step="sheet" class="onboard-pending">Link workbook &amp; map source tabs (Manual Reporting tab)</li>
       <li data-step="coefficient" class="onboard-pending">Connect Coefficient to those tabs</li>
       <li data-step="sync" class="onboard-pending">Run first KPI sync</li>
     </ol>
@@ -5643,7 +5643,7 @@ $('btnAddClient').onclick = async ()=>{
 };
 // Best-effort onboarding: find the new client's workbook in the global folder, link it,
 // detect its tabs, and map the confidently-recognized ones. Anything ambiguous is left
-// for manual confirmation under Reporting & KPI (never a silent wrong guess).
+// for manual confirmation under Manual Reporting (never a silent wrong guess).
 async function autoDiscoverWorkbook(pid, name){
   if(!isTeamView()) return;
   const folder = (appSettings.master_reporting_drive_folder||'').trim();
@@ -5652,8 +5652,8 @@ async function autoDiscoverWorkbook(pid, name){
     const r = await invokeSyncFn({ action:'find_workbook', folder_id: folder, name });
     if(!r.match){                                  // none or multiple candidates → don't guess
       onbFlash(r.candidates && r.candidates.length
-        ? `Created "${name}". Found ${r.candidates.length} possible workbooks — confirm under Reporting & KPI.`
-        : `Created "${name}". No workbook matched yet — link it under Reporting & KPI.`);
+        ? `Created "${name}". Found ${r.candidates.length} possible workbooks — confirm under Manual Reporting.`
+        : `Created "${name}". No workbook matched yet — link it under Manual Reporting.`);
       return;
     }
     await sb.from('practices').update({ workbook_sheet_id: r.match.id }).eq('id', pid);
@@ -5669,7 +5669,7 @@ async function autoDiscoverWorkbook(pid, name){
       }
     }
     await loadSheetSources(); refreshOnboardChecklist(pid);
-    onbFlash(`Created "${name}" — linked workbook “${r.match.name}”${mapped?` and mapped ${mapped} source tab(s)`:''}. Review under Reporting & KPI.`);
+    onbFlash(`Created "${name}" — linked workbook “${r.match.name}”${mapped?` and mapped ${mapped} source tab(s)`:''}. Review under Manual Reporting.`);
   }catch(_){ /* best-effort; the manual Find/Detect flow remains available */ }
 }
 
@@ -5994,7 +5994,7 @@ function clientSourcesHTML(pid){
     </div>
   </div>`;
 }
-// Reporting tab · filter + sort helpers (many clients → find a surgeon without scrolling)
+// Manual Reporting tab · filter + sort helpers (many clients → find a surgeon without scrolling)
 let reportingListWired = false;
 let adminClientSort = 'name-asc';
 try{ adminClientSort = sessionStorage.getItem('roxium_admin_client_sort') || 'name-asc'; }catch(_){}
@@ -6206,7 +6206,7 @@ async function saveMasterFolder(){
 }
 $('btnSaveMasterFolder')?.addEventListener('click', saveMasterFolder);
 
-// Team Controls sub-tab switcher: Clients / Access & Invites / Reporting & KPI / System.
+// Team Controls sub-tab switcher: Clients / Access & Invites / Manual Reporting / System.
 $('adminTabs')?.addEventListener('click', e=>{
   const b = e.target.closest('.atab'); if(!b) return;
   activateAdminTab(b.dataset.atab);
