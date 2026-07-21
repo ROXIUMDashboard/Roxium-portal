@@ -43,7 +43,8 @@ a{color:inherit;text-decoration:none}
 .eyebrow{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}
 h1{font-family:'Fraunces','Cormorant Garamond',serif;font-weight:500;font-size:clamp(38px,5.6vw,66px);line-height:1.03;letter-spacing:-.02em}
 h2{font-family:'Fraunces','Cormorant Garamond',serif;font-weight:500;font-size:clamp(27px,3.5vw,40px);line-height:1.08;letter-spacing:-.02em}
-h1 em,h2 em{font-style:normal;background:linear-gradient(180deg,oklch(0.92 0.11 88),oklch(0.78 0.15 78));-webkit-background-clip:text;background-clip:text;color:transparent}
+h1 em,h2 em{font-style:normal;background:linear-gradient(110deg,oklch(0.78 0.15 78) 0%,oklch(0.95 0.1 92) 45%,oklch(0.78 0.15 78) 90%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:goldShimmer 7s ease-in-out infinite}
+@keyframes goldShimmer{0%,100%{background-position:0% 0}50%{background-position:100% 0}}
 .lede{margin-top:18px;font-size:17px;line-height:1.65;color:var(--muted);max-width:640px}
 .mark{font-family:'Fraunces',serif;font-weight:500;letter-spacing:.34em;font-size:15px}
 .mark b{color:var(--gold);font-weight:500}
@@ -301,6 +302,14 @@ body.ready{opacity:1}
 .panel-cell .rowline:hover{background:rgba(201,168,76,.05);padding-left:6px}
 
 /* (hero/CTA localized glow removed — the full-page .ambient layer handles it) */
+
+/* scroll-progress bar (thin gold sweep at the very top) */
+.scrollbar{position:fixed;top:0;left:0;height:2px;width:0;z-index:60;
+  background:linear-gradient(90deg,oklch(0.78 0.15 78),oklch(0.92 0.11 88));box-shadow:0 0 12px oklch(0.82 0.14 82 / .6)}
+
+/* cursor-tilt cards + magnetic buttons (JS-driven, desktop only) */
+.card{transform-style:preserve-3d;will-change:transform}
+.btn{will-change:transform}
 
 /* hero panel gentle float + parallax hook */
 .panel[data-float]{animation:floaty 7s ease-in-out infinite}
@@ -837,6 +846,49 @@ document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
       }, { passive:true });
     }
   }
+
+  // ---- scroll-progress bar (always on; not motion-sickness inducing) ----
+  var bar = document.createElement('div');
+  bar.className = 'scrollbar';
+  document.body.appendChild(bar);
+  var barTick = false;
+  function updateBar(){
+    var h = document.documentElement;
+    var max = (h.scrollHeight - h.clientHeight) || 1;
+    bar.style.width = Math.min(100, (h.scrollTop / max) * 100) + '%';
+  }
+  window.addEventListener('scroll', function(){
+    if(barTick) return; barTick = true;
+    requestAnimationFrame(function(){ updateBar(); barTick = false; });
+  }, { passive:true });
+  updateBar();
+
+  // ---- stagger the "supported sources" proof chips as they reveal ----
+  document.querySelectorAll('.prooflist .chip').forEach(function(c,i){
+    c.style.transition = 'transform .5s cubic-bezier(.22,1,.36,1) '+(i*45)+'ms, opacity .5s ease '+(i*45)+'ms, border-color .25s ease, color .25s ease';
+  });
+
+  // ---- cursor-tilt cards + magnetic buttons (desktop, motion-on) ----
+  if(!reduce && !isMobile && matchMedia('(pointer:fine)').matches){
+    document.querySelectorAll('.card').forEach(function(card){
+      card.addEventListener('mousemove', function(e){
+        var r = card.getBoundingClientRect();
+        var px = (e.clientX - r.left) / r.width - 0.5;
+        var py = (e.clientY - r.top) / r.height - 0.5;
+        card.style.transform = 'translateY(-6px) perspective(800px) rotateX('+(-py*4).toFixed(2)+'deg) rotateY('+(px*4).toFixed(2)+'deg)';
+      });
+      card.addEventListener('mouseleave', function(){ card.style.transform = ''; });
+    });
+    document.querySelectorAll('.btn').forEach(function(btn){
+      btn.addEventListener('mousemove', function(e){
+        var r = btn.getBoundingClientRect();
+        var x = (e.clientX - r.left - r.width/2) * 0.18;
+        var y = (e.clientY - r.top - r.height/2) * 0.28;
+        btn.style.transform = 'translate('+x.toFixed(1)+'px,'+(y-2).toFixed(1)+'px)';
+      });
+      btn.addEventListener('mouseleave', function(){ btn.style.transform = ''; });
+    });
+  }
 })();
 </script>
 
@@ -865,11 +917,13 @@ document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
   ov.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
   document.addEventListener('keydown', function(e){ if(e.key==='Escape' && ov.classList.contains('open')) close(); });
 
-  var form = document.getElementById('demoForm');
-  if(form) form.addEventListener('submit', function(e){
-    e.preventDefault();
-    // Faithful to the design: confirm receipt in-place. (No backend endpoint yet —
-    // wire a Supabase insert / edge function here to capture the lead when ready.)
+  // Submits to the book-demo edge function, which emails the ROXIUM team (Resend)
+  // and logs the lead. Anon key is public/safe. Graceful fallback keeps the form
+  // from ever "going nowhere" if the network/function is unavailable.
+  var DEMO_ENDPOINT = 'https://nchtmeqsjkpcvtuscxfy.supabase.co/functions/v1/book-demo';
+  var DEMO_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jaHRtZXFzamtwY3Z0dXNjeGZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDc0ODgsImV4cCI6MjA5Njc4MzQ4OH0.pkqxEXf3XdzESvRPtZWTaCIDyfQ3g6CJAFfUnEoIt9c';
+
+  function showDone(){
     var body = document.getElementById('demoBody');
     if(body) body.innerHTML =
       '<div class="modal-done">'+
@@ -877,6 +931,42 @@ document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
         '<h3>Request received.</h3>'+
         '<p class="modal-sub">We’ll reach out within one business day to schedule your walkthrough.</p>'+
       '</div>';
+  }
+
+  var form = document.getElementById('demoForm');
+  if(form) form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    if(!form.reportValidity()) return;
+    var btn = form.querySelector('button[type=submit]');
+    var errEl = document.getElementById('demoErr');
+    if(errEl) errEl.remove();
+    var payload = {
+      name: form.name.value.trim(),
+      practice: form.practice.value.trim(),
+      email: form.email.value.trim(),
+      channels: form.channels.value.trim()
+    };
+    var oldHtml = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = 'Sending…';
+    try{
+      var r = await fetch(DEMO_ENDPOINT, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'apikey':DEMO_ANON, 'Authorization':'Bearer '+DEMO_ANON },
+        body: JSON.stringify(payload)
+      });
+      var data = await r.json().catch(function(){ return {}; });
+      if(!r.ok || data.ok===false) throw new Error(data.error || ('HTTP '+r.status));
+      showDone();
+    }catch(err){
+      btn.disabled = false; btn.innerHTML = oldHtml;
+      var p = document.createElement('p');
+      p.id = 'demoErr'; p.className = 'modal-fine'; p.style.color = 'var(--red)';
+      p.innerHTML = 'Couldn’t send just now — please email us at '+
+        '<a href="mailto:hello@roxiumstudio.com?subject=ROXIUM%20demo&body='+
+        encodeURIComponent('Name: '+payload.name+'\nPractice: '+payload.practice+'\nEmail: '+payload.email+'\nChannels: '+payload.channels)+
+        '" style="color:var(--gold)">hello@roxiumstudio.com</a>.';
+      form.appendChild(p);
+    }
   });
 })();
 </script>
