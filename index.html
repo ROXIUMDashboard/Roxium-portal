@@ -25,30 +25,40 @@ document.documentElement.classList.add('js');
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  --ink:#0D0C10; --surface:#15141A; --surface2:#1B1A21; --line:rgba(201,168,76,.22);
-  --gold:#C9A84C; --gold-dim:#8A7440; --cream:#F2EDE3; --muted:#9A948A;
-  --green:#7BA87A; --amber:#D4A24E; --red:#C66A58;
+  /* Lovable design system — warm-brown dark base, faint white hairlines, bright gold */
+  --ink:oklch(0.14 0.008 60); --surface:oklch(0.17 0.009 60); --surface2:oklch(0.21 0.011 60);
+  --card:oklch(0.18 0.009 60); --line:oklch(1 0 0 / 8%); --line-strong:oklch(1 0 0 / 14%);
+  --gold:oklch(0.82 0.14 82); --gold-soft:oklch(0.88 0.09 85); --gold-dim:oklch(0.62 0.1 78);
+  --cream:oklch(0.96 0.005 80); --muted:oklch(0.72 0.015 70);
+  --green:oklch(0.74 0.13 155); --amber:oklch(0.82 0.14 82); --red:oklch(0.66 0.2 25);
+  --radius:14px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
-body{background:var(--ink);color:var(--cream);font-family:'Jost',sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
-::selection{background:var(--gold);color:var(--ink)}
-.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+body{background:var(--ink);color:var(--cream);font-family:'Inter',system-ui,sans-serif;font-weight:400;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:color-mix(in oklab,var(--gold) 40%,transparent);color:var(--cream)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
 a{color:inherit;text-decoration:none}
 
-.eyebrow{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}
-h1{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(36px,5.4vw,58px);line-height:1.05}
-h2{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:clamp(26px,3.4vw,38px);line-height:1.1}
-h1 em,h2 em{font-style:italic;color:var(--gold)}
+.eyebrow{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}
+h1{font-family:'Fraunces','Cormorant Garamond',serif;font-weight:500;font-size:clamp(38px,5.6vw,66px);line-height:1.03;letter-spacing:-.02em}
+h2{font-family:'Fraunces','Cormorant Garamond',serif;font-weight:500;font-size:clamp(27px,3.5vw,40px);line-height:1.08;letter-spacing:-.02em}
+h1 em,h2 em{font-style:normal;background:linear-gradient(180deg,oklch(0.92 0.11 88),oklch(0.78 0.15 78));-webkit-background-clip:text;background-clip:text;color:transparent}
 .lede{margin-top:18px;font-size:17px;line-height:1.65;color:var(--muted);max-width:640px}
-.mark{font-weight:500;letter-spacing:.42em;font-size:15px}
+.mark{font-family:'Fraunces',serif;font-weight:500;letter-spacing:.34em;font-size:15px}
 .mark b{color:var(--gold);font-weight:500}
 
-.btn{display:inline-block;background:var(--gold);color:var(--ink);border:1px solid var(--gold);padding:13px 26px;font-family:'Jost';font-size:13px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;transition:background .18s ease,color .18s ease}
-.btn:hover{background:transparent;color:var(--gold)}
-.btn.ghost{background:transparent;color:var(--cream);border-color:var(--line)}
-.btn.ghost:hover{border-color:var(--gold);color:var(--gold)}
-.btn.sm{padding:9px 16px;font-size:11px}
+/* pill "eyebrow badge" with pulsing dot (Lovable hero chip) */
+.badge{display:inline-flex;align-items:center;gap:9px;border:1px solid var(--line);background:oklch(1 0 0 / 3%);
+  border-radius:999px;padding:6px 14px;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:20px}
+.badge .bdot{width:6px;height:6px;border-radius:50%;background:var(--gold);animation:pulseDot 2.4s ease-in-out infinite}
+@keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.82)}}
+
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--gold);color:oklch(0.16 0.008 60);border:1px solid transparent;border-radius:10px;padding:12px 22px;font-family:'Inter';font-weight:500;font-size:13px;letter-spacing:.02em;text-transform:none;cursor:pointer;transition:filter .2s ease,transform .2s cubic-bezier(.22,1,.36,1),box-shadow .3s ease,background .2s ease,color .2s ease}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:oklch(1 0 0 / 2%);color:var(--cream);border-color:var(--line)}
+.btn.ghost:hover{filter:none;border-color:var(--line-strong);background:oklch(1 0 0 / 5%)}
+.btn.sm{padding:9px 15px;font-size:12px;border-radius:8px}
 
 header{border-bottom:1px solid var(--line);position:sticky;top:0;background:#0F0E13;z-index:10}
 .bar{display:flex;align-items:center;justify-content:space-between;height:64px}
@@ -156,6 +166,97 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
 .cta-final .ctarow{justify-content:center}
 
 /* ============================================================
+   LOVABLE SKIN — rounded surfaces, glass cards, glow, serif display.
+   Re-skins the existing markup to the Lovable design language.
+   ============================================================ */
+/* section rhythm — softer, no hard rulers between sections */
+section{border-bottom:none;padding:84px 0}
+.sectionhead{max-width:740px}
+
+/* header: translucent, blurred, hairline (fades in on scroll via JS) */
+header{background:oklch(0.15 0.008 60 / .55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+
+/* display serif for numbers & card titles */
+.stat .v,.card h3,.unify h3,.expect .x .n{font-family:'Fraunces','Cormorant Garamond',serif;letter-spacing:-.01em}
+
+/* panels — rounded, glass, gold glow */
+.panel{border-radius:18px;border:1px solid var(--line);background:linear-gradient(180deg,oklch(1 0 0 / 3.5%),oklch(1 0 0 / 1%));
+  box-shadow:0 0 0 1px oklch(1 0 0 / 4%),0 30px 60px -24px oklch(0 0 0 / 65%),0 0 90px -30px oklch(0.82 0.14 82 / 18%)}
+.panel-bar{border-bottom:1px solid var(--line)}
+.statgrid,.stat,.panel-cell + .panel-cell,.ribbon{border-color:var(--line)}
+.chip{border-radius:999px;background:oklch(1 0 0 / 3%);border:1px solid var(--line)}
+
+/* cards — glass, rounded, hairline */
+.card{border-radius:16px;border:1px solid var(--line);background:linear-gradient(180deg,oklch(1 0 0 / 3%),oklch(1 0 0 / 1%));backdrop-filter:blur(8px)}
+.card .tag{color:var(--gold)}
+.vsline .word{color:var(--gold)}
+
+/* unify / note / toggle / expect — rounded + hairline */
+.unify{border-radius:18px;border:1px solid var(--line);background:linear-gradient(180deg,oklch(1 0 0 / 3%),oklch(1 0 0 / 1%))}
+.unify li::before,.mark b{color:var(--gold)}
+.notepanel{border-radius:16px;border:1px solid var(--line)}
+.toggle{border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.toggle button.on{background:var(--gold);color:oklch(0.16 0.008 60)}
+
+/* ============================================================
+   AMBIENT BACKGROUND — fixed vignette · grid · aurora orbs · grain
+   ============================================================ */
+.ambient{position:fixed;inset:0;z-index:-10;overflow:hidden;pointer-events:none}
+.ambient .vignette{position:absolute;inset:0;
+  background:radial-gradient(1200px 800px at 50% -10%,oklch(0.24 0.02 60 / .9),transparent 60%),
+             radial-gradient(900px 600px at 90% 10%,oklch(0.82 0.14 82 / .06),transparent 60%)}
+.ambient .grid{position:absolute;inset:0;opacity:.4;
+  background-image:linear-gradient(to right,oklch(1 0 0 / 3%) 1px,transparent 1px),linear-gradient(to bottom,oklch(1 0 0 / 3%) 1px,transparent 1px);
+  background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse at center,black 30%,transparent 75%);mask-image:radial-gradient(ellipse at center,black 30%,transparent 75%)}
+.ambient .orb{position:absolute;border-radius:50%;filter:blur(110px)}
+.ambient .orb1{top:-160px;left:-160px;width:520px;height:520px;background:oklch(0.82 0.14 82 / .14);animation:orbA 22s ease-in-out infinite}
+.ambient .orb2{top:33%;right:-160px;width:560px;height:560px;background:oklch(0.55 0.15 40 / .12);animation:orbB 26s ease-in-out infinite}
+.ambient .orb3{bottom:-120px;left:33%;width:600px;height:600px;background:oklch(0.35 0.08 50 / .32);animation:orbC 30s ease-in-out infinite}
+@keyframes orbA{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(60px,30px,0)}}
+@keyframes orbB{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(-40px,40px,0)}}
+@keyframes orbC{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(50px,-30px,0)}}
+
+/* ============================================================
+   BOOK-A-DEMO MODAL
+   ============================================================ */
+.modal-ov{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;pointer-events:none;transition:opacity .25s ease}
+.modal-ov.open{opacity:1;pointer-events:auto}
+.modal-ov .backdrop{position:absolute;inset:0;background:oklch(0.14 0.008 60 / .7);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.modal-card{position:relative;z-index:1;width:100%;max-width:520px;border-radius:20px;border:1px solid var(--line);
+  background:oklch(0.17 0.009 60);padding:30px;transform:translateY(24px) scale(.96);opacity:0;
+  transition:transform .4s cubic-bezier(.22,1,.36,1),opacity .4s ease;
+  box-shadow:0 0 0 1px oklch(1 0 0 / 6%),0 40px 80px -28px oklch(0 0 0 / 75%),0 0 100px -30px oklch(0.82 0.14 82 / 22%)}
+.modal-ov.open .modal-card{transform:none;opacity:1}
+.modal-close{position:absolute;right:14px;top:14px;background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px;line-height:0;transition:background .2s,color .2s}
+.modal-close:hover{background:oklch(1 0 0 / 5%);color:var(--cream)}
+.modal-eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}
+.modal-card h3{font-family:'Fraunces',serif;font-weight:500;font-size:28px;letter-spacing:-.02em;margin-top:8px;line-height:1.1}
+.modal-card h3 em{font-style:normal;background:linear-gradient(180deg,oklch(0.92 0.11 88),oklch(0.78 0.15 78));-webkit-background-clip:text;background-clip:text;color:transparent}
+.modal-sub{margin-top:8px;font-size:14px;color:var(--muted);line-height:1.5}
+.modal-form{margin-top:22px;display:flex;flex-direction:column;gap:12px}
+.mf-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mf label{display:block}
+.mf .mf-l{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.mf input{margin-top:6px;width:100%;border-radius:10px;border:1px solid var(--line);background:oklch(1 0 0 / 2%);
+  padding:11px 14px;font:inherit;font-size:14px;color:var(--cream);outline:none;transition:border-color .2s,background .2s}
+.mf input::placeholder{color:oklch(0.72 0.015 70 / .6)}
+.mf input:focus{border-color:oklch(0.82 0.14 82 / .5);background:oklch(1 0 0 / 4%)}
+.modal-form .btn{width:100%;justify-content:center;margin-top:4px;padding:13px}
+.modal-fine{font-size:11px;color:var(--muted);text-align:center}
+.modal-done{text-align:center;padding:16px 0}
+.modal-check{width:56px;height:56px;border-radius:50%;background:oklch(0.82 0.14 82 / .15);color:var(--gold);display:grid;place-items:center;margin:0 auto;
+  transform:scale(0);animation:checkPop .5s cubic-bezier(.34,1.56,.64,1) forwards}
+@keyframes checkPop{to{transform:scale(1)}}
+.modal-done h3{margin-top:16px}
+@media(max-width:480px){.mf-grid{grid-template-columns:1fr}.modal-card{padding:24px}}
+@media(prefers-reduced-motion:reduce){
+  .ambient .orb{animation:none}
+  .badge .bdot{animation:none}
+  .modal-card,.modal-ov{transition:none}
+  .modal-check{animation:none;transform:scale(1)}
+}
+
+/* ============================================================
    MOTION LAYER — fluid, premium, additive. Everything degrades to
    the static page if JS is off or reduced-motion is requested.
    ============================================================ */
@@ -199,20 +300,7 @@ body.ready{opacity:1}
 .rowline{transition:background .25s ease,padding-left .25s ease}
 .panel-cell .rowline:hover{background:rgba(201,168,76,.05);padding-left:6px}
 
-/* ambient background glow — slow-drifting radial blobs behind hero & CTA */
-#top,#demo{position:relative;overflow:hidden}
-#top::before,#top::after,#demo::before{content:"";position:absolute;border-radius:50%;
-  filter:blur(70px);opacity:.5;pointer-events:none;z-index:0}
-#top::before{width:520px;height:520px;top:-160px;right:-120px;
-  background:radial-gradient(circle,rgba(201,168,76,.22),transparent 68%);animation:drift1 18s ease-in-out infinite}
-#top::after{width:420px;height:420px;bottom:-180px;left:-100px;
-  background:radial-gradient(circle,rgba(123,168,122,.14),transparent 68%);animation:drift2 22s ease-in-out infinite}
-#demo::before{width:640px;height:640px;top:50%;left:50%;transform:translate(-50%,-50%);
-  background:radial-gradient(circle,rgba(201,168,76,.16),transparent 65%);animation:pulseGlow 9s ease-in-out infinite}
-#top .wrap,#demo .wrap{position:relative;z-index:1}
-@keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,34px)}}
-@keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(36px,-30px)}}
-@keyframes pulseGlow{0%,100%{opacity:.12;transform:translate(-50%,-50%) scale(1)}50%{opacity:.22;transform:translate(-50%,-50%) scale(1.08)}}
+/* (hero/CTA localized glow removed — the full-page .ambient layer handles it) */
 
 /* hero panel gentle float + parallax hook */
 .panel[data-float]{animation:floaty 7s ease-in-out infinite}
@@ -254,6 +342,15 @@ body.ready{opacity:1}
 </head>
 <body>
 
+<!-- ambient background: vignette · grid · aurora orbs -->
+<div class="ambient" aria-hidden="true">
+  <div class="vignette"></div>
+  <div class="grid"></div>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+</div>
+
 <header><div class="wrap bar">
   <a class="mark" href="#top">ROX<b>I</b>UM</a>
   <button class="navtoggle" id="navToggle" type="button" aria-label="Menu" aria-expanded="false"><span></span><span></span><span></span></button>
@@ -263,7 +360,7 @@ body.ready{opacity:1}
     <a class="navlink" href="#tour">Tour</a>
     <a class="navlink" href="#onboarding">Onboarding</a>
     <a class="btn ghost sm" href="/portal/">Client sign in</a>
-    <a class="btn sm" href="#demo">Book a demo</a>
+    <button class="btn sm" data-demo type="button">Book a demo <span class="arw">→</span></button>
   </nav>
   </div>
   <nav class="mobile-menu" id="mobileMenu">
@@ -272,20 +369,20 @@ body.ready{opacity:1}
     <a href="#tour">Tour</a>
     <a href="#onboarding">Onboarding</a>
     <a href="/portal/">Client sign in</a>
-    <a href="#demo" class="mm-cta">Book a demo</a>
+    <a href="#demo" class="mm-cta" data-demo>Book a demo</a>
   </nav>
 </header>
 
 <!-- ============ HERO ============ -->
 <section id="top"><div class="wrap hero-grid">
   <div class="hero-copy">
-    <div class="eyebrow">The Practice Growth Portal</div>
+    <div class="badge"><span class="bdot"></span>The Practice Growth Portal</div>
     <h1>See what's live, what's late, and <em>what needs action next.</em></h1>
     <p class="lede">ROXIUM gives your practice one operating view of marketing performance,
     deliverables, video production, and reporting health — Meta, Google, and every channel,
     next to the work being done on your behalf.</p>
     <div class="ctarow">
-      <a class="btn" href="#demo">Book a demo <span class="arw">→</span></a>
+      <button class="btn" data-demo type="button">Book a demo <span class="arw">→</span></button>
       <a class="btn ghost" href="#tour">See the client view <span class="arw">→</span></a>
     </div>
     <p class="trustline">Built for surgeons &amp; practices · <b>No password sharing — ever.</b> Read-only access you can revoke anytime.</p>
@@ -502,10 +599,35 @@ body.ready{opacity:1}
   <h2>See your practice in <em>one view.</em></h2>
   <p class="lede" style="margin-left:auto;margin-right:auto">A 20-minute walkthrough with your own channels in mind — what gets connected, what you'll see, and when.</p>
   <div class="ctarow" style="margin-top:30px">
-    <a class="btn" href="mailto:hello@roxium.com?subject=ROXIUM%20demo">Book a demo <span class="arw">→</span></a>
+    <button class="btn" data-demo type="button">Book a demo <span class="arw">→</span></button>
     <a class="btn ghost" href="/portal/">Already a client? Sign in <span class="arw">→</span></a>
   </div>
 </div></section>
+
+<!-- ============ BOOK A DEMO MODAL ============ -->
+<div class="modal-ov" id="demoModal" role="dialog" aria-modal="true" aria-labelledby="demoTitle" hidden>
+  <div class="backdrop" data-close></div>
+  <div class="modal-card">
+    <button class="modal-close" data-close type="button" aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <div id="demoBody">
+      <div class="modal-eyebrow">Book a demo</div>
+      <h3 id="demoTitle">See <em>your practice</em> in one view.</h3>
+      <p class="modal-sub">A 20-minute walkthrough with your channels in mind. No prep required.</p>
+      <form class="modal-form" id="demoForm" novalidate>
+        <div class="mf-grid">
+          <label class="mf"><span class="mf-l">Name</span><input name="name" required placeholder="Dr. Avery"></label>
+          <label class="mf"><span class="mf-l">Practice</span><input name="practice" required placeholder="Avery Aesthetics"></label>
+        </div>
+        <label class="mf"><span class="mf-l">Work email</span><input name="email" type="email" required placeholder="you@practice.com"></label>
+        <label class="mf"><span class="mf-l">Which channels do you run today?</span><input name="channels" placeholder="Meta, Google, YouTube…"></label>
+        <button class="btn" type="submit">Request my walkthrough <span class="arw">→</span></button>
+        <p class="modal-fine">No password sharing — ever. Read-only access you can revoke anytime.</p>
+      </form>
+    </div>
+  </div>
+</div>
 
 <footer><div class="wrap foot">
   <span class="mark">ROX<b>I</b>UM</span>
@@ -715,6 +837,47 @@ document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
       }, { passive:true });
     }
   }
+})();
+</script>
+
+<script>
+/* ============ Book a Demo modal ============ */
+(function(){
+  var ov = document.getElementById('demoModal');
+  if(!ov) return;
+  var lastFocus = null;
+  function open(){
+    lastFocus = document.activeElement;
+    ov.hidden = false;
+    requestAnimationFrame(function(){ ov.classList.add('open'); });
+    document.body.style.overflow = 'hidden';
+    var first = ov.querySelector('input'); if(first) setTimeout(function(){ first.focus(); }, 60);
+  }
+  function close(){
+    ov.classList.remove('open');
+    document.body.style.overflow = '';
+    setTimeout(function(){ ov.hidden = true; }, 260);
+    if(lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  document.querySelectorAll('[data-demo]').forEach(function(b){
+    b.addEventListener('click', function(e){ e.preventDefault(); open(); });
+  });
+  ov.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && ov.classList.contains('open')) close(); });
+
+  var form = document.getElementById('demoForm');
+  if(form) form.addEventListener('submit', function(e){
+    e.preventDefault();
+    // Faithful to the design: confirm receipt in-place. (No backend endpoint yet —
+    // wire a Supabase insert / edge function here to capture the lead when ready.)
+    var body = document.getElementById('demoBody');
+    if(body) body.innerHTML =
+      '<div class="modal-done">'+
+        '<div class="modal-check"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div>'+
+        '<h3>Request received.</h3>'+
+        '<p class="modal-sub">We’ll reach out within one business day to schedule your walkthrough.</p>'+
+      '</div>';
+  });
 })();
 </script>
 </body>
