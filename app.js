@@ -333,11 +333,11 @@ const PAGE_META = {
   video:{t:'Video', s:'Your production pipeline, stage by stage'},
   metrics:{t:'Performance', s:'Live marketing KPIs against target'},
   updates:{t:'Updates', s:'The latest from your ROXIUM team'},
-  connections:{t:'Connections', s:'Every data source powering your dashboards'},
+  connections:{t:'Sync Health', s:'Every data source powering your dashboards'},
   access:{t:'Invite team', s:'Add colleagues to this practice'},
   operations:{t:'Operations', s:'Client health, delivery and attention at a glance'},
   controls:{t:'Team Controls', s:'Clients, access, approvals and reporting'},
-  team:{t:'Client Controls', s:'Controls for the practice you have open'},
+  team:{t:'Sync Health', s:'Every marketing connection, sync and data action — across all clients'},
 };
 function updatePageHeader(name){
   const meta = PAGE_META[name] || { t:'ROXIUM', s:'' };
@@ -530,7 +530,8 @@ function buildSwitcher(list){
 // Team: (re)load every practice and refresh the switcher + admin access dropdown.
 async function loadTeamPractices(){
   const { data: prax } = await sb.from('practices').select('*').order('name');
-  const list = prax || [];
+  // Hide archived practices from the active roster (column may not exist yet → no-op).
+  const list = (prax || []).filter(p=> !p.archived_at);
   practicesList = list;
   buildSwitcher(list);
   const sel = $('accessPractice');
@@ -2599,8 +2600,7 @@ function render(){
     syncChrome();
     if(isTeamView()){
       renderTeam(viewPeriod, latestPeriod);
-      const rt = $('dmTarget');
-      if(rt) rt.textContent = (data.practice && data.practice.name) ? data.practice.name : 'this practice';
+      ensureSyncHealth();          // Sync Health command-center (cross-practice)
     }
   });
   // theme every native select (deliverable status, milestone, video stage, …)
@@ -2666,6 +2666,7 @@ function monthOptions(period){
 function renderTeam(viewPeriod, latestPeriod){
   const period = viewPeriod || latestPeriod || currentPeriod();
   const mount = $('inMonth');
+  if(!mount) return;                         // manual-KPI form retired from Sync Health
   const opts = monthOptions(period);
   if(!monthSelApi || monthSelApi._mount !== mount){
     monthSelApi = themedSelect(mount, { options:opts, value:period, placeholder:'Pick a month',
@@ -2678,15 +2679,19 @@ function renderTeam(viewPeriod, latestPeriod){
 }
 function entryPeriod(){ return monthSelApi ? monthSelApi.value : currentPeriod(); }   // the month the team form targets
 function fillKpiForm(){
+  const wrap = $('entryFields'); if(!wrap) return;   // manual-KPI form retired from Sync Health
   // the manual entry form edits the primary (Meta / 'marketing') channel directly,
   // independent of the dashboard's channel selector / summed view
   const m = (data.kpiRaw||[]).find(x=> x.period===entryPeriod() && (x.source||'marketing')===KPI_SOURCE) || {};
-  $('entryFields').innerHTML = FIELDS.map(f=>
+  wrap.innerHTML = FIELDS.map(f=>
     `<div class="f"><label>${f.l}</label><input data-k="${f.k}" type="number" step="any" value="${m[f.k]??''}" placeholder="0"></div>`).join('');
 }
-const flash = t=>{ $('saveMsg').textContent=t; setTimeout(()=>$('saveMsg').textContent='',3500); };
+const flash = t=>{ const el=$('saveMsg'); if(!el) return; el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; },3500); };
 
-$('btnSaveKpi').onclick = async ()=>{
+// Manual monthly-KPI save — the visible form was retired from Sync Health, but the
+// capability (and its handler) is kept for the fallback/manual layer. Binds only if
+// the form is present, so it no longer throws when the widget is absent.
+$('btnSaveKpi')?.addEventListener('click', async ()=>{
   const period = entryPeriod();
   if(!period){ flash('Pick a month first.'); return; }
   const row = { practice_id: practiceId, period, source: KPI_SOURCE };
@@ -2694,7 +2699,7 @@ $('btnSaveKpi').onclick = async ()=>{
   const { error } = await sb.from('kpi_monthly').upsert(row, { onConflict:'practice_id,period,source' });
   if(!error) setSel(period);   // after saving a month, view it
   flash(error? error.message : `Saved ${periodLabel(period)}.`); if(!error) loadAll();
-};
+});
 
 // Manual KPI export — download the open practice's saved KPI months as CSV.
 // (The manual layer is entry/edit + download only; workbook import was removed.)
@@ -4243,11 +4248,13 @@ async function editFeedItem(id){
   if(error) uiAlert('Edit failed', esc(error.message)); else loadAll();
 }
 
-$('btnPost').onclick = async ()=>{
+// "Post an update" was retired from Sync Health (team posts updates from the client
+// Updates tab). Handler binds only if the widget is present, so it no longer throws.
+$('btnPost')?.addEventListener('click', async ()=>{
   const msg = $('updMsg').value.trim(); if(!msg) return;
   const { error } = await sb.from('activity').insert({ practice_id: practiceId, message: msg, author: me.full_name||'ROXIUM', source:'portal' });
   flash(error? error.message : 'Posted.'); $('updMsg').value=''; if(!error) loadAll();
-};
+});
 
 /* ---------------- Operations Dashboard (team workspace) ---------------- */
 let opsData = null;
@@ -6569,6 +6576,257 @@ $('btnExportAllJson')?.addEventListener('click', async ()=>{
   finally{ btn.disabled = false; }
 });
 
+/* ============================================================
+   SYNC HEALTH — the platform's single marketing-data command center (team).
+   Consolidates connections, sync status, per-source health and all practice
+   data actions across every client. Every number is live from
+   platform_connections — no placeholders. Reuses the existing connStateModel,
+   platformInfo, sync-platforms edge function and disconnect_platform RPC.
+   ============================================================ */
+let shConns = null;                       // cached cross-practice platform_connections
+let shSelApi = null;                      // themed client selector api
+let shFilter = 'all';                     // active status-filter chip
+let shSort = { key:'client', dir:1 };     // table sort
+const SH_STALE_MS = 26*3600*1000;         // "not synced within our required timeframe" (>26h; sync runs every 2h)
+
+const shClientName = pid => ((practicesList||[]).find(p=> p.id===pid)?.name) || '—';
+
+// Display state per connection, extending connStateModel with a derived 'stale'.
+function shRowState(c){
+  const m = connStateModel(c);            // connected | syncing | pending | failed | disconnected
+  if(m.key==='connected'){
+    const age = c.last_synced_at ? (Date.now()-new Date(c.last_synced_at).getTime()) : Infinity;
+    if(age > SH_STALE_MS) return { key:'stale', label:'Stale', tone:'stale' };
+  }
+  return m;
+}
+// filter-chip key -> which row states it matches
+const SH_FILTERS = [
+  ['all','All', ()=>true],
+  ['connected','Connected', k=> k==='connected'],
+  ['syncing','Syncing', k=> k==='syncing'],
+  ['pending','Pending', k=> k==='pending'],
+  ['stale','Stale', k=> k==='stale'],
+  ['failed','Failed', k=> k==='failed'],
+  ['disconnected','Disconnected', k=> k==='disconnected'],
+];
+
+async function loadSyncHealthConns(){
+  const { data: rows, error } = await sb.from('platform_connections')
+    .select('practice_id,provider,status,external_account_name,connected_at,last_synced_at,last_error');
+  shConns = error ? [] : (rows||[]);
+}
+async function ensureSyncHealth(force){
+  if(!isTeamView()) return;
+  if(force || shConns===null) await loadSyncHealthConns();
+  renderSyncHealth();
+}
+// Rows in the currently-selected client scope (or all clients).
+const shScopeRows = ()=> (shConns||[]).filter(c=> !practiceId || c.practice_id===practiceId);
+
+function shCardCounts(rows){
+  let healthy=0,syncing=0,pending=0,stale=0;
+  for(const c of rows){ const k=shRowState(c).key;
+    if(k==='connected') healthy++;
+    else if(k==='syncing') syncing++;
+    else if(k==='pending') pending++;
+    else if(k==='stale'||k==='failed') stale++; }
+  return { healthy, syncing, pending, stale };
+}
+
+function renderSyncHealth(){
+  if(!isTeamView()) return;
+  const cardsEl = $('shCards'); if(!cardsEl) return;
+
+  // ---- client selector (built once, then kept in sync) ----
+  const mount = $('shClient');
+  const opts = [{ value:'', label:'All clients' }, ...(practicesList||[]).map(p=> ({ value:p.id, label:p.name }))];
+  if(!shSelApi || shSelApi._mount !== mount){
+    shSelApi = themedSelect(mount, { options:opts, value:practiceId||'', placeholder:'All clients', onChange:v=> shSelectClient(v) });
+    shSelApi._mount = mount;
+  } else { shSelApi.setOptions(opts); shSelApi.setValue(practiceId||''); }
+
+  // ---- live health cards (scope-aware) ----
+  const scope = shScopeRows();
+  const cc = shCardCounts(scope);
+  const card = (label,n,tone,sub)=>
+    `<div class="sh-card sh-card-${tone}"><div class="sh-card-top"><span class="sh-dot dot-${tone}"></span><span class="sh-card-label">${label}</span></div>`+
+    `<div class="sh-card-n">${n}</div><div class="sh-card-sub">${sub}</div></div>`;
+  cardsEl.innerHTML =
+    card('Healthy', cc.healthy, 'ok', cc.healthy===1?'integration current':'integrations current') +
+    card('Syncing', cc.syncing, 'syncing', 'import in progress') +
+    card('Pending', cc.pending, 'muted', 'awaiting connection') +
+    card('Stale',   cc.stale,   'bad', 'failed / overdue');
+
+  renderShFilters(scope);
+  renderShTable();
+
+  // ---- practice data-management block (only for a specific client) ----
+  const dm = $('shDataMgmt');
+  if(dm){
+    dm.classList.toggle('hidden', !practiceId);
+    const t = $('dmTarget'); if(t) t.textContent = practiceId ? shClientName(practiceId) : 'this practice';
+  }
+}
+
+function renderShFilters(scope){
+  const el = $('shFilters'); if(!el) return;
+  const counts = {}; scope.forEach(c=>{ const k=shRowState(c).key; counts[k]=(counts[k]||0)+1; });
+  el.innerHTML = SH_FILTERS.map(([key,label,match])=>{
+    const n = key==='all' ? scope.length : (counts[key]||0);
+    return `<button type="button" class="sh-chip${shFilter===key?' active':''}" data-f="${key}">${label}<span class="sh-chip-n">${n}</span></button>`;
+  }).join('');
+  el.querySelectorAll('.sh-chip').forEach(b=> b.onclick = ()=>{ shFilter = b.dataset.f; renderSyncHealth(); });
+}
+
+function shVisibleRows(){
+  const scope = shScopeRows();
+  const q = ($('shSearch')?.value || '').trim().toLowerCase();
+  const filt = (SH_FILTERS.find(f=> f[0]===shFilter) || SH_FILTERS[0])[2];
+  let rows = scope.map(c=> ({ c, st: shRowState(c) }))
+    .filter(({st})=> filt(st.key))
+    .filter(({c})=> !q || platformInfo(c.provider).title.toLowerCase().includes(q) || shClientName(c.practice_id).toLowerCase().includes(q));
+  const dir = shSort.dir;
+  const keyFn = {
+    source: x=> platformInfo(x.c.provider).title.toLowerCase(),
+    client: x=> shClientName(x.c.practice_id).toLowerCase(),
+    status: x=> x.st.label.toLowerCase(),
+    sync:   x=> x.c.last_synced_at ? new Date(x.c.last_synced_at).getTime() : 0,
+  }[shSort.key] || (x=> x.c.provider);
+  rows.sort((a,b)=>{ const A=keyFn(a),B=keyFn(b); return (A<B?-1:A>B?1:0)*dir; });
+  return rows;
+}
+
+function renderShTable(){
+  const body = $('shRows'); if(!body) return;
+  const rows = shVisibleRows();
+  const empty = $('shEmpty');
+  if(!rows.length){
+    body.innerHTML = '';
+    if(empty){ empty.classList.remove('hidden'); empty.textContent = (shConns && shConns.length) ? 'No sources match this filter.' : 'No marketing sources connected yet.'; }
+    return;
+  }
+  if(empty) empty.classList.add('hidden');
+  body.innerHTML = rows.map(({c,st})=>{
+    const p = platformInfo(c.provider);
+    const when = c.last_synced_at ? (syncAgo(c.last_synced_at) || prettyDate(c.last_synced_at))
+      : (st.key==='pending' ? 'Awaiting approval' : st.key==='syncing' ? 'Syncing…' : st.key==='failed' ? 'Connection error' : '—');
+    const isConn = c.status==='connected';
+    const acts = [
+      (isConn) ? `<button class="btn ghost xs sh-act" data-a="refresh" data-p="${c.practice_id}" data-k="${c.provider}">Refresh</button>` : '',
+      (c.status==='error'||c.status==='pending'||c.status==='revoked') ? `<button class="btn xs sh-act" data-a="reconnect" data-p="${c.practice_id}" data-k="${c.provider}">Reconnect</button>` : '',
+      `<button class="btn ghost xs sh-act" data-a="metrics" data-p="${c.practice_id}" data-k="${c.provider}">Metrics</button>`,
+      isConn ? `<button class="btn ghost xs sh-act sh-act-danger" data-a="disconnect" data-p="${c.practice_id}" data-k="${c.provider}">Disconnect</button>` : '',
+    ].filter(Boolean).join('');
+    return `<tr>
+      <td class="sh-td-source"><span class="sh-mono">${esc(p.mono)}</span><span class="sh-src-name">${esc(p.title)}</span></td>
+      <td class="sh-td-client">${esc(shClientName(c.practice_id))}</td>
+      <td><span class="sh-pill sh-pill-${st.tone}"><span class="sh-dot dot-${st.tone}"></span>${esc(st.label)}</span></td>
+      <td class="sh-td-sync">${esc(when)}</td>
+      <td class="sh-td-act">${acts}</td>
+    </tr>`;
+  }).join('');
+}
+
+// Client selector → open that practice (so all data actions target it), or clear to All.
+async function shSelectClient(v){
+  if(v){
+    if(v !== practiceId){ practiceId = v; updateSwitcherLabel(); resetPracticeUiState(); syncChrome(); await loadAll(); }
+  } else {
+    practiceId = null; updateSwitcherLabel(); syncChrome();
+  }
+  renderSyncHealth();
+}
+
+// Row actions (delegated — rows are re-rendered on every refresh).
+$('shRows')?.addEventListener('click', async (e)=>{
+  const b = e.target.closest('.sh-act'); if(!b) return;
+  const pid = b.dataset.p, provider = b.dataset.k, act = b.dataset.a;
+  if(act==='metrics'){ await shSelectClient(pid); location.hash = '#metrics'; return; }
+  if(act==='reconnect'){ if(pid!==practiceId){ practiceId = pid; updateSwitcherLabel(); syncChrome(); } startPlatformConnect(provider, b); return; }
+  if(act==='refresh'){
+    b.disabled = true; b.textContent = '…';
+    try{ const { error } = await sb.functions.invoke('sync-platforms', { body:{ practice_id:pid, provider } }); if(error) throw error; flash(`${platformInfo(provider).title} refreshed.`); }
+    catch(_){ flash('Refresh will retry automatically.'); }
+    await ensureSyncHealth(true);
+    if(pid===practiceId) loadAll();
+    return;
+  }
+  if(act==='disconnect'){
+    const t = platformInfo(provider).title;
+    if(!await uiConfirm(`Disconnect ${esc(t)} for ${esc(shClientName(pid))}?`, 'Future syncing stops, but every number already imported <b>stays</b>. Reconnect anytime.', { danger:true, confirmLabel:'Disconnect' })) return;
+    b.disabled = true;
+    try{ const { data:res, error } = await sb.rpc('disconnect_platform', { p_practice:pid, p_provider:provider }); if(error||res?.ok===false) throw new Error(error?.message||res?.error||'failed'); flash(`${t} disconnected.`); }
+    catch(_){ flash('Couldn’t disconnect — try again.'); }
+    await ensureSyncHealth(true);
+    if(pid===practiceId){ reloadConnections(); }
+    return;
+  }
+});
+
+// Search + column-sort + export-table wiring (static elements → bind once).
+$('shSearch')?.addEventListener('input', ()=> renderShTable());
+document.querySelectorAll('#teamPanel .sh-sortable').forEach(th=> th.addEventListener('click', ()=>{
+  const k = th.dataset.sort;
+  shSort = { key:k, dir: shSort.key===k ? -shSort.dir : 1 };
+  document.querySelectorAll('#teamPanel .sh-sortable').forEach(x=> x.classList.remove('sh-sort-asc','sh-sort-desc'));
+  th.classList.add(shSort.dir>0?'sh-sort-asc':'sh-sort-desc');
+  renderShTable();
+}));
+$('shExport')?.addEventListener('click', ()=>{
+  if(!isTeamView()) return;
+  const rows = shVisibleRows();
+  if(!rows.length){ flash('Nothing to export.'); return; }
+  const hdr = ['Source','Client','Status','Last sync','Last synced (ISO)'];
+  const body = rows.map(({c,st})=> [platformInfo(c.provider).title, shClientName(c.practice_id), st.label, (c.last_synced_at? (syncAgo(c.last_synced_at)||'') : ''), c.last_synced_at||'']);
+  downloadBlob('roxium_sync_health.csv', csvSection('Sync Health — sources', hdr, body), 'text/csv');
+  flash(`Exported ${rows.length} source row(s).`);
+});
+
+// Refresh / re-sync / connections (practice-scoped, safe).
+async function shRunSync(label){
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  resetFlash(label+'…');
+  try{
+    const { error } = await sb.functions.invoke('sync-platforms', { body:{ practice_id:practiceId } });
+    if(error) throw error;
+    resetFlash(label+' — dashboards updating.');
+  }catch(_){ resetFlash('Sync queued — it will complete on the next scheduled run.'); }
+  await ensureSyncHealth(true); await loadAll();
+}
+$('btnRefreshData')?.addEventListener('click', ()=> shRunSync('Refreshing data'));
+$('btnResyncPractice')?.addEventListener('click', ()=> shRunSync('Re-syncing'));
+$('btnRefreshConns')?.addEventListener('click', async ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  resetFlash('Refreshing connections…');
+  await reloadConnections(); await ensureSyncHealth(true);
+  resetFlash('Connection statuses refreshed.');
+});
+
+// Archive practice — hides it from the active roster, keeps every record.
+$('btnArchivePractice')?.addEventListener('click', async ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  const name = dmName(), pid = practiceId;
+  const ok = await uiConfirm(`Archive “${name}”?`,
+    `<b>Hides</b> this practice from the active client roster and stops its scheduled syncs. <b>Every record is kept</b> — un-archive anytime to restore it exactly as it was.`,
+    { confirmLabel:'Archive', cancelLabel:'Cancel' });
+  if(!ok) return;
+  const btn = $('btnArchivePractice'); btn.disabled = true; resetFlash('Archiving…');
+  try{
+    const { error } = await sb.rpc('set_practice_archived', { p_id: pid, p_archived: true });
+    if(error) throw new Error(error.message);
+    resetFlash(`"${name}" archived.`);
+    shConns = null;
+    await loadTeamPractices();       // drops archived from the roster + switcher
+    practiceId = null; updateSwitcherLabel(); syncChrome();
+    await ensureSyncHealth(true);
+  }catch(e){
+    resetFlash('Archive unavailable: '+e.message);
+    uiAlert('Archive needs a quick update', 'The archive database function isn’t deployed yet. Apply migration <b>2026-07-21_practice_archive.sql</b> in Supabase, then try again.');
+  }
+  finally{ btn.disabled = false; }
+});
+
 /* ---- Deliverables info-guide (explains promised vs delivered, the ⓘ layer, phases) ---- */
 (function setupDelivGuide(){
   const guide = $('delivGuide'), btn = $('delivGuideBtn');
@@ -6628,7 +6886,7 @@ $('btnExportAllJson')?.addEventListener('click', async ()=>{
       // global team surfaces + actions + client switcher
       cmds.push({ k:'view', label:'Operations Dashboard', run:()=>{ location.hash='#operations'; } });
       cmds.push({ k:'view', label:'Team Controls', run:()=>{ location.hash='#controls'; } });
-      cmds.push({ k:'view', label:'Client Controls', run:()=>{ location.hash='#team'; } });
+      cmds.push({ k:'view', label:'Sync Health', run:()=>{ location.hash='#team'; } });
       cmds.push({ k:'action', label:'Sync now — pull all reporting sources', run:async ()=>{
         try{ await invokeSyncFn({ action:'sync', trigger:'manual' }); await loadSheetSources(); if(currentView()==='operations') loadOperationsData(true); if(practiceId) loadAll(); }
         catch(e){ uiAlert('Sync failed', esc(e?.message||String(e))); }

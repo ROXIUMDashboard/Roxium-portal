@@ -62,7 +62,7 @@
         <div class="sb-group-label">Operations</div>
         <a href="#operations" class="sb-link" data-view="operations" data-i="ops"><span class="sb-txt">Operations</span></a>
         <a href="#controls"   class="sb-link" data-view="controls"   data-i="controls"><span class="sb-txt">Team Controls</span></a>
-        <a href="#team"       class="sb-link" data-view="team"       data-i="wrench"><span class="sb-txt">Client Controls</span></a>
+        <a href="#team"       class="sb-link" data-view="team"       data-i="wrench"><span class="sb-txt">Sync Health</span></a>
       </div>
       <div class="sb-group" id="sbClientGroup">
         <div class="sb-group-label">Client Portal</div>
@@ -72,7 +72,7 @@
         <a href="#video"        class="sb-link" data-view="video"        data-i="video"><span class="sb-txt">Video</span></a>
         <a href="#metrics"      class="sb-link" data-view="metrics"      data-i="metrics"><span class="sb-txt">Metrics</span></a>
         <a href="#updates"      class="sb-link" data-view="updates"      data-i="updates"><span class="sb-txt">Updates</span><span class="sb-count hidden" id="sbUpdCount"></span></a>
-        <a href="#connections"  class="sb-link accessonly hidden" data-view="connections" data-i="plug"><span class="sb-txt">Connections</span><span class="sb-count sb-count-warn hidden" id="sbConnCount"></span></a>
+        <a href="#connections"  class="sb-link accessonly hidden" data-view="connections" data-i="plug"><span class="sb-txt">Sync Health</span><span class="sb-count sb-count-warn hidden" id="sbConnCount"></span></a>
         <a href="#access"       class="sb-link accessonly hidden" data-view="access"      data-i="invite"><span class="sb-txt">Invite team</span></a>
       </div>
     </nav>
@@ -164,7 +164,7 @@
       <a href="#video"        class="tab" data-view="video">Video</a>
       <a href="#metrics"      class="tab" data-view="metrics">Metrics</a>
       <a href="#updates"      class="tab" data-view="updates">Updates</a>
-      <a href="#connections"  class="tab accessonly hidden" data-view="connections">Connections</a>
+      <a href="#connections"  class="tab accessonly hidden" data-view="connections">Sync Health</a>
       <a href="#access"       class="tab accessonly hidden" data-view="access">Invite team</a>
       <a href="#team"         class="tab teamonly hidden" data-view="team">Team</a>
     </nav>
@@ -455,91 +455,130 @@
 
     <!-- TEAM-ONLY · controls for the practice currently open -->
     <section id="teamPanel" class="view teamonly hidden" data-view="team">
-      <h2>Team · <em>controls</em></h2>
-      <div class="sub">Controls for the practice you currently have open. Everything you save updates that client's view instantly. (Client &amp; access management lives in <b>Team Controls</b>.)</div>
+      <h2>Sync Health · <em>marketing data center</em></h2>
+      <div class="sub">Every marketing connection, sync status and data action across all clients — in one place. <span id="saveMsg" class="note"></span></div>
 
-      <h3>Deliverables, roadmap & video pipeline</h3>
-      <p class="note" style="margin-top:-2px">Deliverables: edit any field, dropdown to change status, ✕ to remove, "+ Add" for new ones. <b>Roadmap milestones:</b> click any milestone on the Roadmap tab to edit all fields, drag to reorder, or use <b>+ Add milestone</b>. Video pipeline: drag a card between stage columns to move it, or click a card to rename it / flag it blocked. The surgeon sees clean, read-only versions.</p>
+      <!-- LIVE HEALTH SUMMARY (all real values from platform_connections) -->
+      <div class="sh-cards" id="shCards"></div>
 
-      <h3>Post an update</h3>
-      <div class="entry">
-        <div class="f" style="grid-column:1/-1"><label>Message (client sees this)</label><input id="updMsg" placeholder="e.g. Facelift LP is live — first leads expected this week."></div>
-        <div class="f"><button class="btn" id="btnPost">Post update</button></div>
-      </div>
-
-      <h3>Manual Monthly KPIs <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— fallback / manual layer</span></h3>
-      <p class="note" style="margin-top:-2px">The primary data source is now <b>Marketing Connections</b> (automatic). This manual layer is the fallback — the client's reporting workbook + source tabs live under <b>Team Controls → Manual Reporting</b>. Use it for hand-entered months or overrides when automation isn't available. Each month is its own saved snapshot — editing one never changes another. Pick the month, enter values, Save. <b>Download KPI CSV</b> exports the saved months.</p>
-      <div class="entry" id="kpiMeta">
-        <div class="f"><label>Reporting month</label><div id="inMonth" class="monthsel"></div></div>
-      </div>
-      <div class="entry" id="entryFields"></div>
-      <div class="actions">
-        <button class="btn" id="btnSaveKpi">Save month</button>
-        <button class="btn ghost" id="btnExportKpi">⤓ Download KPI CSV</button>
-        <span id="saveMsg"></span>
-      </div>
-
-      <h3>Data management <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— <b id="dmTarget">this practice</b></span></h3>
-      <p class="note" style="margin-top:-2px">Scoped, clearly-labelled actions. Green = safe / reversible, amber = clears one kind of data, red = permanent. Every destructive action asks you to confirm and spells out exactly what <b>is</b> and <b>isn't</b> removed.</p>
-
-      <!-- Export ------------------------------------------------------------ -->
-      <div class="dm-group">
-        <div class="dm-row">
-          <div class="dm-copy">
-            <div class="dm-name">Export this practice</div>
-            <div class="note">Downloads a full copy — KPI months, deliverables, roadmap, video pipeline and updates. Nothing is changed or removed. Keep before any reset.</div>
-          </div>
-          <div class="dm-btns">
-            <button class="btn ghost sm" id="btnExportPractice">⤓ CSV</button>
-            <button class="btn ghost sm" id="btnExportPracticeJson">⤓ JSON</button>
-          </div>
+      <!-- CONTROLS: client selector · search · export -->
+      <div class="sh-controls">
+        <div class="sh-ctl sh-ctl-client">
+          <label class="sh-ctl-label">Client</label>
+          <div id="shClient" class="monthsel"></div>
+        </div>
+        <div class="sh-ctl sh-grow">
+          <label class="sh-ctl-label">Search</label>
+          <input id="shSearch" class="sh-search" placeholder="Search source or client…" autocomplete="off">
+        </div>
+        <div class="sh-ctl sh-ctl-export">
+          <label class="sh-ctl-label" aria-hidden="true">&nbsp;</label>
+          <button class="btn ghost sm" id="shExport">⤓ Export table</button>
         </div>
       </div>
+      <div class="sh-filters" id="shFilters"></div>
 
-      <!-- Scoped resets (amber) --------------------------------------------- -->
-      <div class="dm-group dm-warn">
-        <div class="dm-row">
-          <div class="dm-copy">
-            <div class="dm-name">Reset practice metrics</div>
-            <div class="note"><b>Removes:</b> all saved KPI months, the activity / updates feed and notifications. <b>Keeps:</b> deliverables, roadmap, videos and marketing connections. Use to clear reporting data without touching the project.</div>
-          </div>
-          <div class="dm-btns"><button class="btn warn sm" id="btnResetMetrics">Reset metrics</button></div>
-        </div>
-        <div class="dm-row">
-          <div class="dm-copy">
-            <div class="dm-name">Reset practice connections</div>
-            <div class="note"><b>Removes:</b> every linked marketing platform (Meta, Google, GA4…) so future syncs stop. <b>Keeps:</b> all KPI history already imported, and everything else. The client can reconnect anytime.</div>
-          </div>
-          <div class="dm-btns"><button class="btn warn sm" id="btnResetConnections">Reset connections</button></div>
-        </div>
+      <!-- SOURCE TABLE -->
+      <div class="sh-table-wrap">
+        <table class="sh-table">
+          <thead><tr>
+            <th class="sh-sortable" data-sort="source">Source</th>
+            <th class="sh-sortable sh-th-client" data-sort="client">Client</th>
+            <th class="sh-sortable" data-sort="status">Status</th>
+            <th class="sh-sortable" data-sort="sync">Last sync</th>
+            <th class="sh-th-act">Actions</th>
+          </tr></thead>
+          <tbody id="shRows"></tbody>
+        </table>
+        <div id="shEmpty" class="sh-empty hidden"></div>
       </div>
 
-      <!-- Danger (red) ------------------------------------------------------ -->
-      <div class="dm-group dm-danger">
-        <div class="dm-row">
-          <div class="dm-copy">
-            <div class="dm-name danger-title">Full reset to a clean slate</div>
-            <div class="note"><b>Removes:</b> everything under both resets above. <b>Also resets:</b> deliverables, milestones and videos back to their starting state. <b>Keeps:</b> the practice and its client logins. This cannot be undone.</div>
-          </div>
-          <div class="dm-btns"><button class="btn danger sm" id="btnResetData">Reset all data</button></div>
-        </div>
-        <div class="dm-row">
-          <div class="dm-copy">
-            <div class="dm-name danger-title">Delete this practice</div>
-            <div class="note"><b>Removes:</b> the practice, every client login, and all of its data permanently. There is no undo — export first if you might need it.</div>
-          </div>
-          <div class="dm-btns"><button class="btn danger sm" id="btnDeletePracticeDM">Delete practice</button></div>
-        </div>
-      </div>
-      <div class="actions"><span id="resetMsg" class="note"></span></div>
+      <!-- PRACTICE DATA MANAGEMENT — appears once a specific client is selected -->
+      <div id="shDataMgmt" class="sh-datamgmt hidden">
+        <h3>Practice data management <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— <b id="dmTarget">this practice</b></span></h3>
+        <p class="note" style="margin-top:-2px">Scoped, clearly-labelled actions for the selected client. Neutral = safe / reversible, amber = clears one kind of data, red = permanent. Every destructive action confirms and spells out exactly what <b>is</b> and <b>isn't</b> removed.</p>
 
-      <!-- Global (all practices) -------------------------------------------- -->
+        <!-- Refresh / re-sync (safe) -->
+        <div class="dm-group">
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name">Refresh &amp; re-sync</div>
+              <div class="note">Pulls the latest numbers from every connected platform right now, instead of waiting for the 2-hour schedule. Nothing is removed.</div>
+            </div>
+            <div class="dm-btns">
+              <button class="btn ghost sm" id="btnRefreshData">↻ Refresh data</button>
+              <button class="btn ghost sm" id="btnResyncPractice">↻ Re-sync all</button>
+              <button class="btn ghost sm" id="btnRefreshConns">↻ Connections</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Export (safe) -->
+        <div class="dm-group">
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name">Export practice data</div>
+              <div class="note">Downloads a full copy — KPI months, deliverables, roadmap, video pipeline and updates. Nothing is changed. Keep one before any reset.</div>
+            </div>
+            <div class="dm-btns">
+              <button class="btn ghost sm" id="btnExportPractice">⤓ CSV</button>
+              <button class="btn ghost sm" id="btnExportPracticeJson">⤓ JSON</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scoped resets (amber) -->
+        <div class="dm-group dm-warn">
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name">Reset metrics</div>
+              <div class="note"><b>Removes:</b> all saved KPI months, the activity / updates feed and notifications. <b>Keeps:</b> deliverables, roadmap, videos and marketing connections.</div>
+            </div>
+            <div class="dm-btns"><button class="btn warn sm" id="btnResetMetrics">Reset metrics</button></div>
+          </div>
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name">Reset connections</div>
+              <div class="note"><b>Removes:</b> every linked marketing platform (Meta, Google, GA4…) so future syncs stop. <b>Keeps:</b> all KPI history already imported. The client can reconnect anytime.</div>
+            </div>
+            <div class="dm-btns"><button class="btn warn sm" id="btnResetConnections">Reset connections</button></div>
+          </div>
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name">Archive practice</div>
+              <div class="note"><b>Hides</b> the practice from the active roster and stops its scheduled syncs, but <b>keeps every record</b>. Un-archive anytime to bring it back exactly as it was.</div>
+            </div>
+            <div class="dm-btns"><button class="btn warn sm" id="btnArchivePractice">Archive</button></div>
+          </div>
+        </div>
+
+        <!-- Danger (red) -->
+        <div class="dm-group dm-danger">
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name danger-title">Full reset to a clean slate</div>
+              <div class="note"><b>Removes:</b> everything under both resets above. <b>Also resets:</b> deliverables, milestones and videos to their starting state. <b>Keeps:</b> the practice and its client logins. Cannot be undone.</div>
+            </div>
+            <div class="dm-btns"><button class="btn danger sm" id="btnResetData">Reset all data</button></div>
+          </div>
+          <div class="dm-row">
+            <div class="dm-copy">
+              <div class="dm-name danger-title">Delete practice data</div>
+              <div class="note"><b>Removes:</b> the practice, every client login, and all of its data permanently. There is no undo — export first if you might need it.</div>
+            </div>
+            <div class="dm-btns"><button class="btn danger sm" id="btnDeletePracticeDM">Delete practice</button></div>
+          </div>
+        </div>
+        <div class="actions"><span id="resetMsg" class="note"></span></div>
+      </div>
+
+      <!-- GLOBAL (all practices) -->
       <div class="dm-global">
         <h4 class="syncstatus-h">Global — all practices</h4>
         <div class="dm-row">
           <div class="dm-copy">
             <div class="dm-name">Export all practices</div>
-            <div class="note">One combined CSV of every practice's KPI months across the whole account. Read-only — nothing is changed.</div>
+            <div class="note">One combined file of every practice's KPI months across the whole account. Read-only — nothing is changed.</div>
           </div>
           <div class="dm-btns">
             <button class="btn ghost sm" id="btnExportAll">⤓ CSV</button>
