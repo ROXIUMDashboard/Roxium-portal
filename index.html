@@ -14,6 +14,8 @@
     location.replace('/portal/' + s + h);
   }
 })();
+// Flag JS-on before paint so scroll-reveal initial states apply without a flash.
+document.documentElement.classList.add('js');
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ROXIUM — One operating view for your practice's marketing</title>
@@ -152,6 +154,102 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
 .foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
 .cta-final{text-align:center;padding:96px 0}
 .cta-final .ctarow{justify-content:center}
+
+/* ============================================================
+   MOTION LAYER — fluid, premium, additive. Everything degrades to
+   the static page if JS is off or reduced-motion is requested.
+   ============================================================ */
+/* page-load fade so first paint doesn't pop */
+body{opacity:0;transition:opacity .5s ease}
+body.ready{opacity:1}
+
+/* scroll-reveal: elements start slightly down + blurred, settle on view */
+.js .reveal{opacity:0;transform:translateY(22px);filter:blur(6px);
+  transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1),filter .7s ease;
+  transition-delay:var(--d,0ms);will-change:opacity,transform}
+.js .reveal.in{opacity:1;transform:none;filter:none}
+
+/* buttons — interactive: lift, glow, arrow slide */
+.btn{position:relative;transition:background .18s ease,color .18s ease,transform .2s cubic-bezier(.22,1,.36,1),box-shadow .3s ease}
+.btn:hover{transform:translateY(-2px)}
+.btn:not(.ghost):hover{box-shadow:0 10px 30px -8px rgba(201,168,76,.5),0 0 0 1px rgba(201,168,76,.4)}
+.btn.ghost:hover{box-shadow:0 8px 24px -10px rgba(201,168,76,.35)}
+.btn:active{transform:translateY(0) scale(.98)}
+.btn .arw{display:inline-block;transition:transform .25s cubic-bezier(.22,1,.36,1);margin-left:0}
+.btn:hover .arw{transform:translateX(5px)}
+
+/* cards & panels — subtle float + glow on hover */
+.card{transition:transform .35s cubic-bezier(.22,1,.36,1),border-color .3s ease,box-shadow .35s ease,background .3s ease}
+.card:hover{transform:translateY(-6px);border-color:rgba(201,168,76,.5);
+  box-shadow:0 22px 50px -24px rgba(0,0,0,.75),0 0 40px -20px rgba(201,168,76,.35)}
+.keyhole:hover{opacity:1}
+.panel{transition:transform .5s cubic-bezier(.22,1,.36,1),box-shadow .5s ease,border-color .4s ease}
+.panel:hover{box-shadow:0 30px 70px -40px rgba(0,0,0,.85),0 0 60px -30px rgba(201,168,76,.28)}
+.unify{transition:transform .4s cubic-bezier(.22,1,.36,1),box-shadow .4s ease}
+.unify:hover{transform:translateY(-3px);box-shadow:0 26px 60px -34px rgba(0,0,0,.8)}
+.expect .x{transition:transform .3s cubic-bezier(.22,1,.36,1)}
+.expect .x:hover{transform:translateY(-4px)}
+.expect .x:hover .n{color:var(--gold)}
+.expect .x .n{transition:color .3s ease}
+.chip{transition:transform .25s ease,border-color .25s ease,color .25s ease}
+.prooflist .chip:hover{transform:translateY(-3px);border-color:rgba(201,168,76,.5);color:var(--cream)}
+.nav a.navlink{position:relative;transition:color .2s ease}
+.nav a.navlink::after{content:"";position:absolute;left:0;right:100%;bottom:-6px;height:1px;background:var(--gold);transition:right .3s cubic-bezier(.22,1,.36,1)}
+.nav a.navlink:hover::after{right:0}
+.rowline{transition:background .25s ease,padding-left .25s ease}
+.panel-cell .rowline:hover{background:rgba(201,168,76,.05);padding-left:6px}
+
+/* ambient background glow — slow-drifting radial blobs behind hero & CTA */
+#top,#demo{position:relative;overflow:hidden}
+#top::before,#top::after,#demo::before{content:"";position:absolute;border-radius:50%;
+  filter:blur(70px);opacity:.5;pointer-events:none;z-index:0}
+#top::before{width:520px;height:520px;top:-160px;right:-120px;
+  background:radial-gradient(circle,rgba(201,168,76,.22),transparent 68%);animation:drift1 18s ease-in-out infinite}
+#top::after{width:420px;height:420px;bottom:-180px;left:-100px;
+  background:radial-gradient(circle,rgba(123,168,122,.14),transparent 68%);animation:drift2 22s ease-in-out infinite}
+#demo::before{width:640px;height:640px;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:radial-gradient(circle,rgba(201,168,76,.16),transparent 65%);animation:pulseGlow 9s ease-in-out infinite}
+#top .wrap,#demo .wrap{position:relative;z-index:1}
+@keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,34px)}}
+@keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(36px,-30px)}}
+@keyframes pulseGlow{0%,100%{opacity:.12;transform:translate(-50%,-50%) scale(1)}50%{opacity:.22;transform:translate(-50%,-50%) scale(1.08)}}
+
+/* hero panel gentle float + parallax hook */
+.panel[data-float]{animation:floaty 7s ease-in-out infinite}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+
+/* animated phase bar (fills on reveal) */
+.phasebar i{width:34%;transition:width 1.1s cubic-bezier(.22,1,.36,1) .2s}
+.js .phasebar:not(.filled) i{width:0}
+
+/* sparkline draw-in */
+.js .spark polyline{stroke-dasharray:340;stroke-dashoffset:340;transition:stroke-dashoffset 1.4s ease .3s}
+.js .spark.drawn polyline{stroke-dashoffset:0}
+
+/* live-demo row that flips status (Syncing -> Connected etc.) */
+.st{transition:color .4s ease}
+.rowline.flip .st{animation:flipIn .5s ease}
+@keyframes flipIn{0%{opacity:0;transform:translateY(-4px)}100%{opacity:1;transform:none}}
+
+/* a new update row sliding into the Updates list */
+.rowline.appear{animation:rowAppear .55s cubic-bezier(.22,1,.36,1)}
+@keyframes rowAppear{0%{opacity:0;transform:translateY(-8px);max-height:0}100%{opacity:1;transform:none;max-height:60px}}
+
+/* syncing dot pulse */
+.dot.warn{animation:dotPulse 1.5s ease-in-out infinite}
+@keyframes dotPulse{0%,100%{box-shadow:0 0 0 0 rgba(212,162,78,.5)}70%{box-shadow:0 0 0 6px rgba(212,162,78,0)}}
+
+/* respect reduced motion — kill all of the above movement */
+@media(prefers-reduced-motion:reduce){
+  body{opacity:1}
+  .js .reveal{opacity:1;transform:none;filter:none;transition:none}
+  .btn:hover,.card:hover,.panel:hover,.unify:hover,.expect .x:hover,.prooflist .chip:hover{transform:none}
+  #top::before,#top::after,#demo::before,.panel[data-float]{animation:none}
+  .js .phasebar:not(.filled) i{width:34%}
+  .js .spark polyline{stroke-dashoffset:0}
+  .dot.warn{animation:none}
+  html{scroll-behavior:auto}
+}
 </style>
 </head>
 <body>
@@ -187,14 +285,14 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
     deliverables, video production, and reporting health — Meta, Google, and every channel,
     next to the work being done on your behalf.</p>
     <div class="ctarow">
-      <a class="btn" href="#demo">Book a demo</a>
-      <a class="btn ghost" href="#tour">See the client view</a>
+      <a class="btn" href="#demo">Book a demo <span class="arw">→</span></a>
+      <a class="btn ghost" href="#tour">See the client view <span class="arw">→</span></a>
     </div>
     <p class="trustline">Built for surgeons &amp; practices · <b>No password sharing — ever.</b> Read-only access you can revoke anytime.</p>
   </div>
 
   <div>
-    <div class="panel" aria-label="Example ROXIUM client dashboard">
+    <div class="panel" data-float aria-label="Example ROXIUM client dashboard">
       <div class="panel-bar">
         <span class="panel-title"><b>Dr. Avery — Aesthetics</b> · Client Dashboard</span>
         <div class="chiprow" role="group" aria-label="Reporting period">
@@ -404,8 +502,8 @@ footer{padding:44px 0 60px;color:var(--muted);font-size:12px;letter-spacing:.08e
   <h2>See your practice in <em>one view.</em></h2>
   <p class="lede" style="margin-left:auto;margin-right:auto">A 20-minute walkthrough with your own channels in mind — what gets connected, what you'll see, and when.</p>
   <div class="ctarow" style="margin-top:30px">
-    <a class="btn" href="mailto:hello@roxium.com?subject=ROXIUM%20demo">Book a demo</a>
-    <a class="btn ghost" href="/portal/">Already a client? Sign in</a>
+    <a class="btn" href="mailto:hello@roxium.com?subject=ROXIUM%20demo">Book a demo <span class="arw">→</span></a>
+    <a class="btn ghost" href="/portal/">Already a client? Sign in <span class="arw">→</span></a>
   </div>
 </div></section>
 
@@ -456,6 +554,168 @@ document.querySelectorAll('.mchip').forEach(b=>b.onclick=()=>{
     const el=document.getElementById('d'+id);el.textContent=dv[0];el.className='d '+dv[1];};
   set('Spend',d.spend,d.spendD); set('Reach',d.reach,d.reachD); set('Clicks',d.clicks,d.clicksD);
 });
+</script>
+
+<script>
+/* ============================================================
+   MOTION ENGINE — scroll reveals, live count-ups, animated charts,
+   status flips, parallax. Purely additive; guarded by reduced-motion.
+   ============================================================ */
+(function(){
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var isMobile = matchMedia('(max-width:600px)').matches;
+
+  // page-load fade-in
+  requestAnimationFrame(function(){ document.body.classList.add('ready'); });
+
+  // ---- tag elements for scroll-reveal (non-overlapping groups, staggered) ----
+  function tag(el, i){ if(!el) return; el.classList.add('reveal'); if(i) el.style.setProperty('--d', (i*70)+'ms'); }
+  // hero copy: stagger each line
+  document.querySelectorAll('.hero-copy > *').forEach(tag);
+  // hero panel wrapper
+  tag(document.querySelector('.hero-grid > div:last-child'), 3);
+  // section heads
+  document.querySelectorAll('.sectionhead').forEach(function(e){ tag(e); });
+  // card grids — stagger children
+  document.querySelectorAll('.grid3, .grid4').forEach(function(g){
+    g.querySelectorAll('.card').forEach(function(c,i){ tag(c,i); });
+  });
+  // standalone blocks
+  ['.vsline','.unify','.toggle','.tourview.on .panel','.notepanel','.prooflist','.mockcaption'].forEach(function(sel){
+    document.querySelectorAll(sel).forEach(function(e){ tag(e); });
+  });
+  document.querySelectorAll('.expect .x').forEach(function(e,i){ tag(e,i); });
+
+  // ---- IntersectionObserver reveals + one-shot demos ----
+  var seen = new WeakSet();
+  function onReveal(el){
+    if(seen.has(el)) return; seen.add(el);
+    el.classList.add('in');
+    // trigger any live demos contained in this element
+    if(el.matches('.hero-grid > div:last-child') || el.querySelector) runDemosIn(el);
+  }
+  if('IntersectionObserver' in window && !reduce){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){ if(en.isIntersecting){ onReveal(en.target); io.unobserve(en.target); } });
+    }, { threshold:.16, rootMargin:'0px 0px -8% 0px' });
+    document.querySelectorAll('.reveal').forEach(function(e){ io.observe(e); });
+    // safety net: never leave anything hidden
+    setTimeout(function(){ document.querySelectorAll('.reveal:not(.in)').forEach(onReveal); }, 4000);
+  } else {
+    document.querySelectorAll('.reveal').forEach(onReveal);
+  }
+
+  // ---- number count-up ($0 -> $41.8K, 0 -> 14,208) ----
+  function parseNum(str){
+    var m = String(str).match(/^([^0-9-]*)([-0-9.,]+)\s*([A-Za-z%]*)$/);
+    if(!m) return null;
+    var prefix=m[1]||'', body=m[2], suffix=m[3]||'';
+    var comma = body.indexOf(',')>-1;
+    var num = parseFloat(body.replace(/,/g,''));
+    var dec = (body.split('.')[1]||'').length;
+    return { prefix:prefix, num:num, suffix:suffix, comma:comma, dec:dec, raw:str };
+  }
+  function render(p, v){
+    var val = v.dec ? p.toFixed(v.dec) : String(Math.round(p));
+    if(v.comma) val = val.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return v.prefix + val + v.suffix;
+  }
+  function countUp(el){
+    var v = parseNum(el.textContent.trim()); if(!v) return;
+    if(reduce){ return; }
+    var dur = 1300, t0 = null, from = 0, to = v.num, final = v.raw;
+    function step(ts){
+      if(t0===null) t0 = ts;
+      var k = Math.min(1, (ts - t0)/dur);
+      var e = 1 - Math.pow(1-k, 3);                 // easeOutCubic
+      el.textContent = render(from + (to-from)*e, v);
+      if(k<1) requestAnimationFrame(step); else el.textContent = final;
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ---- live demos: count-ups, phase bar, sparklines, status flips ----
+  function runDemosIn(root){
+    // count-up hero KPIs
+    root.querySelectorAll('#vSpend,#vReach,#vClicks').forEach(countUp);
+    // fill phase bars
+    root.querySelectorAll('.phasebar').forEach(function(b){ requestAnimationFrame(function(){ b.classList.add('filled'); }); });
+    // draw sparklines
+    root.querySelectorAll('.spark').forEach(function(s){ requestAnimationFrame(function(){ s.classList.add('drawn'); }); });
+  }
+
+  // Tour: when the team panel is revealed, flip the pending GA4 source to synced,
+  // and add a fresh update row on the client panel — a mini live demo.
+  var tourObserved = false;
+  function wireTourDemo(){
+    if(tourObserved || reduce) return; tourObserved = true;
+    var teamPanel = document.querySelector('#viewTeam .panel');
+    var clientPanel = document.querySelector('#viewClient .panel');
+    if(!('IntersectionObserver' in window)) return;
+    var to = new IntersectionObserver(function(ents){
+      ents.forEach(function(en){
+        if(!en.isIntersecting) return; to.unobserve(en.target);
+        // flip GA4 pending -> synced on the team view
+        en.target.querySelectorAll('.rowline').forEach(function(r){
+          var st = r.querySelector('.st');
+          if(st && /Pending access/i.test(st.textContent)){
+            setTimeout(function(){
+              st.textContent = 'Syncing…'; st.className='st warn'; r.classList.add('flip');
+              setTimeout(function(){ st.textContent='✓ Synced just now'; st.className='st ok'; r.classList.add('flip'); }, 1600);
+            }, 700);
+          }
+        });
+      });
+    }, { threshold:.3 });
+    if(teamPanel) to.observe(teamPanel);
+
+    // add a new update row to the client "Latest updates" when it enters
+    if(clientPanel){
+      var co = new IntersectionObserver(function(ents){
+        ents.forEach(function(en){
+          if(!en.isIntersecting) return; co.unobserve(en.target);
+          var cells = en.target.querySelectorAll('.panel-cell');
+          var updates = cells[cells.length-1];
+          if(!updates) return;
+          setTimeout(function(){
+            var row = document.createElement('div');
+            row.className = 'rowline appear';
+            row.innerHTML = '<span>New lead from Meta campaign</span><span class="st ok">Just now</span>';
+            var label = updates.querySelector('.cell-label');
+            if(label && label.nextSibling) updates.insertBefore(row, label.nextSibling);
+            else updates.appendChild(row);
+          }, 1200);
+        });
+      }, { threshold:.3 });
+      co.observe(clientPanel);
+    }
+  }
+  wireTourDemo();
+
+  // ---- subtle parallax on the hero panel column (desktop only) ----
+  // Parallax the WRAPPER so it never fights the floaty animation on the panel itself.
+  if(!reduce && !isMobile){
+    var floatCol = document.querySelector('.hero-grid > div:last-child');
+    if(floatCol){
+      var ticking = false;
+      window.addEventListener('scroll', function(){
+        if(ticking) return; ticking = true;
+        requestAnimationFrame(function(){
+          var y = window.scrollY || 0;
+          if(y < 700 && floatCol.classList.contains('in')) floatCol.style.transform = 'translateY('+(y*-0.03)+'px)';
+          ticking = false;
+        });
+      }, { passive:true });
+    }
+    // header shadow deepens once scrolled
+    var hdr = document.querySelector('header');
+    if(hdr){
+      window.addEventListener('scroll', function(){
+        hdr.style.boxShadow = (window.scrollY>10) ? '0 10px 30px -18px rgba(0,0,0,.8)' : 'none';
+      }, { passive:true });
+    }
+  }
+})();
 </script>
 </body>
 </html>
