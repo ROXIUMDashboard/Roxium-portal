@@ -2599,8 +2599,8 @@ function render(){
     syncChrome();
     if(isTeamView()){
       renderTeam(viewPeriod, latestPeriod);
-      const rt = $('resetTarget');
-      if(rt) rt.textContent = (data.practice && data.practice.name) ? `"${data.practice.name}"` : 'this practice';
+      const rt = $('dmTarget');
+      if(rt) rt.textContent = (data.practice && data.practice.name) ? data.practice.name : 'this practice';
     }
   });
   // theme every native select (deliverable status, milestone, video stage, …)
@@ -6416,6 +6416,158 @@ $('btnResetData').onclick = async ()=>{
     $('btnResetData').disabled = false;
   }
 };
+
+/* ============================================================
+   DATA MANAGEMENT — scoped, clearly-labelled actions (team only)
+   Every destructive action confirms first and spells out what IS
+   and ISN'T removed. Resets reuse the same RLS-gated table writes
+   the full reset uses; nothing here needs a new backend path.
+   ============================================================ */
+const globalFlash = t=>{ const el=$('globalMsg'); if(el){ el.textContent=t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 6000); } };
+const dmName = ()=> (data.practice && data.practice.name) || ((practicesList||[]).find(p=>p.id===practiceId)?.name) || 'this practice';
+
+// ---- shared file/CSV helpers ---------------------------------------------
+const csvCell = v => v==null ? '' : (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v));
+function csvSection(title, headers, rows){
+  const head = `# ${title}\n${headers.map(csvCell).join(',')}`;
+  const body = rows.map(r=> r.map(csvCell).join(',')).join('\n');
+  return rows.length ? `${head}\n${body}` : `${head}\n(none)`;
+}
+function downloadBlob(filename, text, mime){
+  const blob = new Blob([text], { type:(mime||'text/plain')+';charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+const safeFile = s => String(s||'practice').replace(/[^a-z0-9]+/gi,'_').replace(/^_+|_+$/g,'') || 'practice';
+
+// Build the full ordered set of sections for the currently-open practice.
+function practiceExportSections(){
+  const pid = practiceId;
+  const kpi = (data.kpiRaw||[]).filter(r=> r.practice_id===pid);
+  const kpiKeys = ['period','source', ...FIELDS.map(f=>f.k)];
+  const kpiHdr  = ['Period','Source', ...FIELDS.map(f=>f.l)];
+  return [
+    ['KPI months', kpiHdr, kpi.slice().sort((a,b)=> String(a.period).localeCompare(String(b.period))).map(r=> kpiKeys.map(k=> r[k]))],
+    ['Deliverables', ['Title','Status','Due','Delivered at','Phase'],
+      (data.deliv||[]).map(d=> [d.name, d.status, d.due, d.delivered_at, d.phase])],
+    ['Roadmap milestones', ['Title','Status','Phase','Sort','Completed on'],
+      [...(data.miles||[])].sort((a,b)=>(a.sort||0)-(b.sort||0)).map(m=> [m.name, m.status, m.phase, m.sort, m.completed_on])],
+    ['Video pipeline', ['Title','Stage','Blocked','Planned shoot','Shot','Posted'],
+      (data.video||[]).map(v=> [v.item, v.stage, v.blocked?'yes':'', v.planned_shoot_date, v.shot_date, v.posted_date])],
+    ['Updates / activity', ['When','Source','Message'],
+      (data.feed||[]).map(f=> [f.created_at, f.source, f.message])],
+  ];
+}
+
+// Export this practice — CSV (multi-section, opens in Excel) or JSON (full dump).
+$('btnExportPractice')?.addEventListener('click', ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  const name = dmName();
+  const secs = practiceExportSections();
+  const csv = `# ROXIUM export — ${name}\n\n` + secs.map(([t,h,rows])=> csvSection(t,h,rows)).join('\n\n');
+  downloadBlob(`${safeFile(name)}_full_export.csv`, csv, 'text/csv');
+  resetFlash(`Exported "${name}" (CSV).`);
+});
+$('btnExportPracticeJson')?.addEventListener('click', ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  const name = dmName();
+  const dump = {
+    exported_at: null, practice: data.practice,
+    kpi_monthly: (data.kpiRaw||[]).filter(r=> r.practice_id===practiceId),
+    deliverables: data.deliv||[], milestones: data.miles||[],
+    video_pipeline: data.video||[], activity: data.feed||[],
+  };
+  downloadBlob(`${safeFile(name)}_full_export.json`, JSON.stringify(dump, null, 2), 'application/json');
+  resetFlash(`Exported "${name}" (JSON).`);
+});
+
+// Reset practice metrics — clears reporting data, keeps the project intact.
+$('btnResetMetrics')?.addEventListener('click', async ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  const name = dmName(), pid = practiceId;
+  const ok = await uiConfirm(`Reset metrics for “${name}”?`,
+    `<b>This removes:</b> every saved KPI month, the activity / updates feed, and all notifications.<br><br><b>This keeps:</b> deliverables, roadmap, videos and marketing connections — the project itself is untouched.<br><br>This cannot be undone. Export first if you might need the data.`,
+    { danger:true, confirmLabel:'Reset metrics', cancelLabel:'Cancel' });
+  if(!ok) return;
+  const btn = $('btnResetMetrics'); btn.disabled = true; resetFlash('Resetting metrics…');
+  try{
+    const wipes = await Promise.all([
+      sb.from('kpi_monthly').delete().eq('practice_id', pid),
+      sb.from('activity').delete().eq('practice_id', pid),
+      sb.from('notifications').delete().eq('practice_id', pid),
+    ]);
+    const err = wipes.find(r=>r.error);
+    if(err) throw new Error(err.error.message);
+    resetFlash(`Metrics for "${name}" were reset.`);
+    await loadAll();
+  }catch(e){ resetFlash('Reset failed: '+e.message); uiAlert('Reset failed', esc(e.message)); }
+  finally{ btn.disabled = false; }
+});
+
+// Reset practice connections — disconnect every linked platform, keep KPI history.
+$('btnResetConnections')?.addEventListener('click', async ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  const name = dmName(), pid = practiceId;
+  const ok = await uiConfirm(`Disconnect all platforms for “${name}”?`,
+    `<b>This removes:</b> every linked marketing platform (Meta, Google, GA4…), so automatic syncing stops.<br><br><b>This keeps:</b> all KPI history already imported, and everything else. The client can reconnect anytime from Marketing Connections.`,
+    { danger:true, confirmLabel:'Disconnect all', cancelLabel:'Cancel' });
+  if(!ok) return;
+  const btn = $('btnResetConnections'); btn.disabled = true; resetFlash('Disconnecting…');
+  try{
+    const { data: conns, error } = await sb.from('platform_connections')
+      .select('provider,status').eq('practice_id', pid);
+    if(error) throw new Error(error.message);
+    const live = (conns||[]).filter(c=> c.status!=='revoked' && c.status!=='disconnected');
+    if(!live.length){ resetFlash('No connected platforms to disconnect.'); return; }
+    let failed = 0;
+    for(const c of live){
+      try{ const { error: e } = await sb.rpc('disconnect_platform', { p_practice: pid, p_provider: c.provider }); if(e) failed++; }
+      catch(_){ failed++; }
+    }
+    resetFlash(failed ? `Disconnected ${live.length-failed}/${live.length} — ${failed} failed.` : `Disconnected ${live.length} platform(s).`);
+    await reloadConnections(); await loadAll();
+  }catch(e){ resetFlash('Disconnect failed: '+e.message); uiAlert('Disconnect failed', esc(e.message)); }
+  finally{ btn.disabled = false; }
+});
+
+// Delete this practice (mirrors the Access-tab delete; operates on the open practice).
+$('btnDeletePracticeDM')?.addEventListener('click', async ()=>{
+  if(!isTeamView() || !practiceId){ resetFlash('Select a client first.'); return; }
+  await deletePractice(practiceId, dmName(), { flash: resetFlash });
+});
+
+// Export ALL practices — combined KPI table across the whole account (team only).
+$('btnExportAll')?.addEventListener('click', async ()=>{
+  if(!isTeamView()){ return; }
+  const btn = $('btnExportAll'); btn.disabled = true; globalFlash('Gathering…');
+  try{
+    const byId = Object.fromEntries((practicesList||[]).map(p=> [p.id, p.name]));
+    const { data: rows, error } = await sb.from('kpi_monthly')
+      .select('practice_id,period,source,'+FIELDS.map(f=>f.k).join(','))
+      .order('practice_id').order('period');
+    if(error) throw new Error(error.message);
+    const hdr = ['Practice','Period','Source', ...FIELDS.map(f=>f.l)];
+    const body = (rows||[]).map(r=> [byId[r.practice_id]||r.practice_id, r.period, r.source, ...FIELDS.map(f=> r[f.k])]);
+    downloadBlob('roxium_all_practices_kpis.csv', csvSection('All practices — KPI months', hdr, body), 'text/csv');
+    globalFlash(`Exported ${body.length} KPI row(s) across ${new Set((rows||[]).map(r=>r.practice_id)).size} practice(s).`);
+  }catch(e){ globalFlash('Export failed: '+e.message); }
+  finally{ btn.disabled = false; }
+});
+$('btnExportAllJson')?.addEventListener('click', async ()=>{
+  if(!isTeamView()){ return; }
+  const btn = $('btnExportAllJson'); btn.disabled = true; globalFlash('Gathering…');
+  try{
+    const { data: rows, error } = await sb.from('kpi_monthly').select('*').order('practice_id').order('period');
+    if(error) throw new Error(error.message);
+    const byId = Object.fromEntries((practicesList||[]).map(p=> [p.id, p.name]));
+    const grouped = {};
+    for(const r of (rows||[])){ (grouped[r.practice_id] ||= { practice_id:r.practice_id, name:byId[r.practice_id]||null, kpi_monthly:[] }).kpi_monthly.push(r); }
+    downloadBlob('roxium_all_practices.json', JSON.stringify({ exported_at:null, practices:Object.values(grouped) }, null, 2), 'application/json');
+    globalFlash(`Exported ${Object.keys(grouped).length} practice(s).`);
+  }catch(e){ globalFlash('Export failed: '+e.message); }
+  finally{ btn.disabled = false; }
+});
 
 /* ---- Deliverables info-guide (explains promised vs delivered, the ⓘ layer, phases) ---- */
 (function setupDelivGuide(){
