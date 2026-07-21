@@ -288,6 +288,24 @@ select option{background:var(--surface2);color:var(--cream)}
 .danger-title{color:var(--red) !important}
 .dangerzone{border:1px solid rgba(198,106,88,.4);border-radius:4px;padding:14px 16px;margin-top:4px;background:rgba(198,106,88,.05)}
 .dangerzone .actions{margin-top:12px}
+/* amber "warn" button — clears one kind of data (between ghost and danger) */
+.btn.warn{background:none;border:1px solid var(--amber);color:var(--amber)}
+.btn.warn:hover{background:var(--amber);color:#171410}
+.btn.warn:disabled{opacity:.5;cursor:default}
+/* Data-management scoped-action groups */
+.dm-group{border:1px solid var(--line);border-radius:6px;margin-top:10px;overflow:hidden}
+.dm-group.dm-warn{border-color:rgba(214,170,90,.4);background:rgba(214,170,90,.04)}
+.dm-group.dm-danger{border-color:rgba(198,106,88,.4);background:rgba(198,106,88,.05)}
+.dm-row{display:flex;align-items:center;gap:16px;padding:12px 14px}
+.dm-row + .dm-row{border-top:1px solid var(--line)}
+.dm-group.dm-warn .dm-row + .dm-row{border-top-color:rgba(214,170,90,.25)}
+.dm-group.dm-danger .dm-row + .dm-row{border-top-color:rgba(198,106,88,.25)}
+.dm-copy{flex:1;min-width:0}
+.dm-name{font-weight:600;color:var(--cream);margin-bottom:2px}
+.dm-btns{display:flex;gap:8px;flex-shrink:0}
+.dm-global{margin-top:20px;padding-top:14px;border-top:1px solid var(--line)}
+.dm-global .dm-row{padding:12px 0}
+@media(max-width:640px){.dm-row{flex-direction:column;align-items:stretch}.dm-btns{justify-content:flex-end}}
 /* notification banner (client) */
 .notifybar{display:flex;align-items:center;gap:12px;background:linear-gradient(90deg,rgba(201,168,76,.16),rgba(201,168,76,.04));border-bottom:1px solid var(--gold);padding:12px 28px;color:var(--cream);font-size:14px}
 .notifybar .noteicon{color:var(--gold);font-size:10px}

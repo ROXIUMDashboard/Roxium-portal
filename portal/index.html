@@ -479,13 +479,74 @@
         <span id="saveMsg"></span>
       </div>
 
-      <h3 class="danger-title">Danger zone</h3>
-      <div class="dangerzone">
-        <p class="note">Reset returns <b id="resetTarget">this practice</b> to a clean slate: it permanently deletes every KPI month, the activity feed, all notifications and stage history, and resets all deliverables, milestones and videos to their starting state. This cannot be undone.</p>
-        <div class="actions">
-          <button class="btn danger" id="btnResetData">Reset all data for this practice</button>
-          <span id="resetMsg" class="note"></span>
+      <h3>Data management <span class="note" style="text-transform:none;letter-spacing:0;font-size:12px">— <b id="dmTarget">this practice</b></span></h3>
+      <p class="note" style="margin-top:-2px">Scoped, clearly-labelled actions. Green = safe / reversible, amber = clears one kind of data, red = permanent. Every destructive action asks you to confirm and spells out exactly what <b>is</b> and <b>isn't</b> removed.</p>
+
+      <!-- Export ------------------------------------------------------------ -->
+      <div class="dm-group">
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name">Export this practice</div>
+            <div class="note">Downloads a full copy — KPI months, deliverables, roadmap, video pipeline and updates. Nothing is changed or removed. Keep before any reset.</div>
+          </div>
+          <div class="dm-btns">
+            <button class="btn ghost sm" id="btnExportPractice">⤓ CSV</button>
+            <button class="btn ghost sm" id="btnExportPracticeJson">⤓ JSON</button>
+          </div>
         </div>
+      </div>
+
+      <!-- Scoped resets (amber) --------------------------------------------- -->
+      <div class="dm-group dm-warn">
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name">Reset practice metrics</div>
+            <div class="note"><b>Removes:</b> all saved KPI months, the activity / updates feed and notifications. <b>Keeps:</b> deliverables, roadmap, videos and marketing connections. Use to clear reporting data without touching the project.</div>
+          </div>
+          <div class="dm-btns"><button class="btn warn sm" id="btnResetMetrics">Reset metrics</button></div>
+        </div>
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name">Reset practice connections</div>
+            <div class="note"><b>Removes:</b> every linked marketing platform (Meta, Google, GA4…) so future syncs stop. <b>Keeps:</b> all KPI history already imported, and everything else. The client can reconnect anytime.</div>
+          </div>
+          <div class="dm-btns"><button class="btn warn sm" id="btnResetConnections">Reset connections</button></div>
+        </div>
+      </div>
+
+      <!-- Danger (red) ------------------------------------------------------ -->
+      <div class="dm-group dm-danger">
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name danger-title">Full reset to a clean slate</div>
+            <div class="note"><b>Removes:</b> everything under both resets above. <b>Also resets:</b> deliverables, milestones and videos back to their starting state. <b>Keeps:</b> the practice and its client logins. This cannot be undone.</div>
+          </div>
+          <div class="dm-btns"><button class="btn danger sm" id="btnResetData">Reset all data</button></div>
+        </div>
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name danger-title">Delete this practice</div>
+            <div class="note"><b>Removes:</b> the practice, every client login, and all of its data permanently. There is no undo — export first if you might need it.</div>
+          </div>
+          <div class="dm-btns"><button class="btn danger sm" id="btnDeletePracticeDM">Delete practice</button></div>
+        </div>
+      </div>
+      <div class="actions"><span id="resetMsg" class="note"></span></div>
+
+      <!-- Global (all practices) -------------------------------------------- -->
+      <div class="dm-global">
+        <h4 class="syncstatus-h">Global — all practices</h4>
+        <div class="dm-row">
+          <div class="dm-copy">
+            <div class="dm-name">Export all practices</div>
+            <div class="note">One combined CSV of every practice's KPI months across the whole account. Read-only — nothing is changed.</div>
+          </div>
+          <div class="dm-btns">
+            <button class="btn ghost sm" id="btnExportAll">⤓ CSV</button>
+            <button class="btn ghost sm" id="btnExportAllJson">⤓ JSON</button>
+          </div>
+        </div>
+        <div class="actions"><span id="globalMsg" class="note"></span></div>
       </div>
     </section>
 
