@@ -27,6 +27,17 @@ export interface SupabaseCredentials {
 
 export class SupabaseConfigError extends Error {}
 
+/**
+ * Accept the project root, and also the REST endpoint that the Supabase
+ * dashboard shows on the API page — supabase-js appends `/rest/v1` itself, so
+ * leaving it on would produce requests to `/rest/v1/rest/v1`.
+ */
+function normaliseUrl(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim().replace(/\/+$/, '');
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\/(rest|auth|realtime|storage)\/v1$/, '');
+}
+
 /** Read the `role` claim from a legacy JWT key without verifying it. */
 function jwtRole(key: string): string | null {
   const parts = key.split('.');
@@ -55,7 +66,7 @@ export function classifyKey(key: string): KeyKind {
 export function readSupabaseCredentials(
   env: Record<string, string | undefined> = process.env,
 ): SupabaseCredentials {
-  const url = env.SUPABASE_URL?.trim();
+  const url = normaliseUrl(env.SUPABASE_URL);
   const key = (env.SUPABASE_SECRET_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY)?.trim();
 
   if (!url) {
