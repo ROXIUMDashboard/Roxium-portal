@@ -1,0 +1,285 @@
+/* Name gate, change-history panel, and toasts. */
+
+/* --------------------------------------------------------------- name gate */
+
+.gate {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px var(--gutter);
+}
+
+.gateCard {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+  align-items: center;
+}
+
+.gateMark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+
+.gateMark span:first-child {
+  font-family: var(--font-display);
+  font-size: 38px;
+  letter-spacing: 0.03em;
+}
+
+.gateMark span:last-child {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.58em;
+  text-indent: 0.58em;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.gateTitle {
+  font-size: clamp(26px, 6vw, 34px);
+  font-weight: 500;
+}
+
+.gateCopy {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.gateField {
+  width: 100%;
+  text-align: left;
+  margin-top: 14px;
+}
+
+.gateCard button[type='submit'] {
+  width: 100%;
+  min-height: var(--tap);
+}
+
+.gateCard button[type='submit']:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gateNote {
+  font-size: 12.5px;
+  color: var(--muted-soft);
+  max-width: 34ch;
+}
+
+/* ----------------------------------------------------------- history panel */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(57, 63, 30, 0.24);
+}
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 41;
+  width: min(440px, 100%);
+  background: var(--paper-raised);
+  border-left: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lift);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px var(--gutter) 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panelTitle {
+  font-size: 22px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.panelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px var(--gutter) 40px;
+}
+
+.panelEmpty {
+  padding: 30px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.historyList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.historyItem {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.historyItem[data-undone] {
+  opacity: 0.55;
+}
+
+.historyMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.historyActor {
+  color: var(--ink);
+}
+
+.historyTime {
+  color: var(--muted-soft);
+}
+
+.historySummary {
+  margin-top: 6px;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.historyActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.historyFlag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.historyRestore {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--acid);
+  min-height: 34px;
+  padding: 6px 0;
+}
+
+.historyRestore:disabled {
+  color: var(--muted-soft);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------- toasts */
+
+.toastStack {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 12px 12px 18px;
+  background: var(--olive-deep);
+  color: var(--ivory);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lift);
+  animation: toastIn 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.toast[data-tone='alert'] {
+  background: var(--alert);
+}
+
+.toastMessage {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.toastAction {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ivory);
+  padding: 8px 14px;
+  min-height: 36px;
+  border: 1px solid rgba(244, 238, 223, 0.4);
+  border-radius: 999px;
+}
+
+.toastAction:hover {
+  background: rgba(244, 238, 223, 0.14);
+}
+
+.toastClose {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: rgba(244, 238, 223, 0.7);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.toastClose:hover {
+  color: var(--ivory);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 780px) {
+  .toastStack {
+    bottom: 12px;
+  }
+
+  .toast {
+    border-radius: 14px;
+    padding: 12px 10px 12px 16px;
+  }
+}

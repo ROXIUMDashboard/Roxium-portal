@@ -1,0 +1,447 @@
+/* Shell, header, day selector, day header, footer. */
+
+.shell {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------------------ header */
+
+/* Header and day selector travel together, so no offset has to be guessed. */
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--ground) 94%, transparent);
+  backdrop-filter: saturate(1.1) blur(10px);
+}
+
+.header {
+  /* Sits above the day selector so the ••• menu can overlap it. */
+  position: relative;
+  z-index: 2;
+  border-bottom: 1px solid var(--rule);
+}
+
+.headerInner {
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 14px var(--gutter);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.lockup {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+  padding-right: 18px;
+  border-right: 1px solid var(--rule);
+}
+
+.lockupMark {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.lockupSub {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.programTitle {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.programMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.statusLabel {
+  color: var(--acid);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.status,
+.presence {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.statusWarn {
+  color: var(--amber);
+}
+
+.presence {
+  padding-left: 14px;
+  border-left: 1px solid var(--rule);
+  color: var(--slate);
+}
+
+.menuWrap {
+  position: relative;
+}
+
+.menuButton {
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 999px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.menuButton:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 250px;
+  padding: 6px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-lift);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+}
+
+.menu button {
+  text-align: left;
+  padding: 11px 12px;
+  min-height: var(--tap);
+  font-size: 14px;
+  border-radius: var(--radius);
+}
+
+.menu button:hover {
+  background: var(--tint);
+}
+
+.menuNote {
+  padding: 10px 12px 6px;
+  border-top: 1px solid var(--rule);
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-soft);
+}
+
+.rotated {
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 12px var(--gutter) 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+.rotated code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--ink);
+}
+
+.rotatedActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* -------------------------------------------------------------- day selector */
+
+.dayNav {
+  position: relative;
+  z-index: 1;
+  border-bottom: 1px solid var(--rule);
+}
+
+.dayNavInner {
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.dayTab {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 10px;
+  min-height: var(--tap);
+  text-align: left;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.dayTab:hover {
+  color: var(--ink);
+}
+
+.dayTab[data-active] {
+  color: var(--ink);
+  border-bottom-color: var(--acid);
+}
+
+.dayTab[data-drop] {
+  border-bottom-color: var(--acid-tint);
+}
+
+.dayTab[data-over] {
+  background: var(--acid-tint);
+  border-bottom-color: var(--acid);
+  color: var(--ink);
+}
+
+.dayTabNumber {
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 1;
+}
+
+.dayTabText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dayTabWeekday {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+.dayTabLabel {
+  font-size: 13.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dayTabConflicts {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: 1px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--alert);
+  color: #fffdf7;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 17px;
+  text-align: center;
+}
+
+.dayNavHint {
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 8px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--acid);
+}
+
+/* ---------------------------------------------------------------- day header */
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.dayHeader {
+  padding: 46px 0 26px;
+}
+
+.dayHeaderTop {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.dayEyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dayNumeral {
+  font-family: var(--font-display);
+  font-size: clamp(46px, 11vw, 78px);
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+.dayTitle {
+  margin-top: 14px;
+  font-size: clamp(23px, 4.6vw, 34px);
+  font-weight: 500;
+  line-height: 1.14;
+  max-width: 22ch;
+}
+
+.daySubtitle {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--muted);
+  max-width: 46ch;
+}
+
+.dayMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dayMetaAlert {
+  color: var(--alert);
+}
+
+.dayMetaWarn {
+  color: var(--amber);
+}
+
+/* -------------------------------------------------------------------- footer */
+
+.footer {
+  max-width: var(--shell-max);
+  width: 100%;
+  margin: 60px auto 0;
+  padding: 22px var(--gutter) 48px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+/* ------------------------------------------------------------------- mobile */
+
+@media (max-width: 780px) {
+  .headerInner {
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    padding: 12px var(--gutter);
+  }
+
+  .lockup {
+    padding-right: 12px;
+  }
+
+  .programTitle {
+    font-size: 15px;
+  }
+
+  /* The date and place are restated in the day header — the masthead stays
+     one line tall on a phone. */
+  .programMeta,
+  .presence {
+    display: none;
+  }
+
+  .status {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+  }
+
+  .dayNavInner {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .dayNavInner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dayTab {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    padding: 12px 14px 12px 0;
+    margin-right: 18px;
+  }
+
+  .dayTabLabel {
+    font-size: 13px;
+  }
+
+  .dayHeader {
+    padding: 30px 0 18px;
+  }
+
+  .footer {
+    flex-direction: column;
+    gap: 6px;
+  }
+}

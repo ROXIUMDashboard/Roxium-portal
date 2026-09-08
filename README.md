@@ -125,3 +125,12 @@ Two ways to land it in the portal:
 Add an Asana rule: *when a task is completed in the client's project → webhook → Zapier/Make
 → insert a row into the `activity` table* (`source = 'asana'`). Updates then appear in the
 client feed automatically with zero copying.
+
+---
+
+## Also in this repository
+
+**`bhfa-2027/`** — the Beverly Hills Face Academy 2027 scientific-program planning room:
+a separate Next.js application (Supabase + Railway) where founders, chairs and faculty
+edit the working agenda together over one private link. It shares no code or database
+tables with the portal above. See [`bhfa-2027/README.md`](bhfa-2027/README.md).

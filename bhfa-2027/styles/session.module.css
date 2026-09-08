@@ -1,0 +1,664 @@
+/* Agenda rows and the in-place editor.
+
+   The collapsed row carries no chrome at all: a hairline above it, a time
+   column, and type. Controls only appear once the row is touched. */
+
+.agenda {
+  padding-bottom: 20px;
+}
+
+.rowGroup {
+  position: relative;
+}
+
+.row {
+  position: relative;
+  border-top: 1px solid var(--rule);
+  background: transparent;
+  transition: background 160ms ease;
+}
+
+.rowGroup:last-child .row {
+  border-bottom: 1px solid var(--rule);
+}
+
+.row:hover {
+  background: var(--tint);
+}
+
+.row[data-open] {
+  background: var(--paper);
+  box-shadow: inset 2px 0 0 var(--acid);
+}
+
+.row[data-dragging] {
+  opacity: 0.3;
+}
+
+.row[data-conflict] {
+  box-shadow: inset 2px 0 0 var(--alert);
+}
+
+.rowTrigger {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* -------------------------------------------------------------- drag handle */
+
+.handle {
+  position: absolute;
+  left: -26px;
+  top: 20px;
+  width: 26px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  color: var(--muted-soft);
+  cursor: grab;
+  touch-action: none;
+  transition: opacity 160ms ease;
+}
+
+.handle span {
+  width: 10px;
+  height: 10px;
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 5px 5px;
+}
+
+.row:hover .handle,
+.handle:focus-visible {
+  opacity: 1;
+}
+
+.handle:active {
+  cursor: grabbing;
+}
+
+/* On touch there is no hover, so the handle sits quietly inside the row. */
+@media (pointer: coarse), (max-width: 980px) {
+  .handle {
+    left: auto;
+    right: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.45;
+    width: var(--tap);
+    height: var(--tap);
+  }
+}
+
+/* ------------------------------------------------------------ collapsed card */
+
+.card {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr) auto;
+  grid-template-areas: 'time content type';
+  gap: 22px;
+  padding: 20px 0 22px;
+  align-items: start;
+}
+
+.card[data-lifted] {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-lift);
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  cursor: grabbing;
+}
+
+.timeCol {
+  grid-area: time;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.duration {
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+.contentCol {
+  grid-area: content;
+  min-width: 0;
+}
+
+.title {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.004em;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.typeLabel {
+  grid-area: type;
+  padding-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  white-space: nowrap;
+}
+
+/* Category differentiation stays inside the brand system: weight and tone,
+   never colour-coding for its own sake. */
+.card[data-tone='quiet'] .title {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.card[data-tone='accent'] .typeLabel {
+  color: var(--acid);
+}
+
+.card[data-tone='accent'] .title {
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+
+.speakers {
+  margin-top: 6px;
+  font-size: 14.5px;
+  color: var(--ink-soft);
+}
+
+.separator {
+  padding: 0 7px;
+  color: var(--muted-soft);
+}
+
+.speakerStatus {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--slate);
+  vertical-align: 1px;
+}
+
+.description {
+  margin-top: 8px;
+  max-width: 68ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.sponsor {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.room {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.conflict,
+.gap,
+.editingBy {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+
+.conflict {
+  color: var(--alert);
+  background: var(--alert-tint);
+  border: 1px solid rgba(142, 43, 30, 0.28);
+}
+
+.gap {
+  color: var(--amber);
+  background: var(--amber-tint);
+  border: 1px solid rgba(148, 113, 29, 0.26);
+}
+
+.editingBy {
+  color: var(--slate);
+  border: 1px solid var(--rule);
+}
+
+/* ------------------------------------------------------------- conflict fix */
+
+.fixWrap {
+  position: relative;
+  padding: 0 0 16px 190px;
+}
+
+.fixButton {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--alert);
+  padding: 6px 12px;
+  min-height: 32px;
+  border: 1px solid rgba(142, 43, 30, 0.3);
+  border-radius: 999px;
+}
+
+.fixButton:hover {
+  background: var(--alert-tint);
+}
+
+.fixMenu {
+  position: absolute;
+  left: 190px;
+  top: 36px;
+  z-index: 15;
+  min-width: 280px;
+  padding: 6px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-lift);
+  display: flex;
+  flex-direction: column;
+}
+
+.fixMenu button {
+  text-align: left;
+  padding: 11px 12px;
+  min-height: var(--tap);
+  font-size: 14px;
+}
+
+.fixMenu button:hover {
+  background: var(--tint);
+}
+
+/* -------------------------------------------------------------- add session */
+
+.addSlot {
+  position: relative;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.addSlot:hover,
+.addSlot:focus-within,
+.addSlot[data-always] {
+  opacity: 1;
+}
+
+.addSlot[data-always] {
+  height: auto;
+  padding: 16px 0 8px;
+  justify-content: flex-start;
+  opacity: 0.75;
+}
+
+.addButton {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--acid);
+  padding: 8px 14px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--ground);
+}
+
+.addButton:hover {
+  border-color: var(--acid-tint);
+  background: var(--acid-tint);
+}
+
+.emptyDay {
+  padding: 40px 0;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ editor */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 20px 20px;
+}
+
+.editorField {
+  display: block;
+  min-width: 0;
+}
+
+.editorTimes {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.editorTimes .editorField {
+  width: 140px;
+}
+
+.editorDash {
+  padding-bottom: 12px;
+  color: var(--muted);
+}
+
+.editorDuration {
+  padding-bottom: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.editorHint {
+  margin-left: 10px;
+  color: var(--slate);
+}
+
+.editorError {
+  font-size: 13px;
+  color: var(--alert);
+}
+
+.titleInput {
+  font-size: 17px;
+}
+
+.textarea {
+  min-height: 84px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.editorEmpty {
+  font-size: 13.5px;
+  color: var(--muted-soft);
+  padding: 2px 0 8px;
+}
+
+.speakerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px 128px auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.compactSelect {
+  min-height: var(--tap);
+  padding: 8px 10px;
+}
+
+.speakerActions {
+  display: flex;
+  gap: 2px;
+}
+
+.iconButton {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--tint-strong);
+  color: var(--ink);
+}
+
+.iconButton:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.addSpeaker {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--acid);
+  padding: 8px 0;
+  min-height: 36px;
+}
+
+.moreToggle {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 0;
+  min-height: 36px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.moreToggle:hover {
+  color: var(--ink);
+  border-bottom-color: var(--acid);
+}
+
+.morePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--rule);
+}
+
+.moreGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.moreActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.editorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.moveControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.moveControls .fieldLabel {
+  margin-bottom: 0;
+}
+
+.moveControls select {
+  width: auto;
+  min-width: 168px;
+}
+
+.editorMeta {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+/* --------------------------------------------------------- shift prompt */
+
+.shiftPrompt {
+  margin: 0 20px 20px;
+  padding: 16px 18px;
+  background: var(--paper-raised);
+  border: 1px solid var(--acid-tint);
+  border-left: 2px solid var(--acid);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.shiftMessage {
+  font-size: 15px;
+}
+
+.shiftActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------------ mobile */
+
+@media (max-width: 780px) {
+  .card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'time type'
+      'content content';
+    gap: 8px 12px;
+    padding: 18px 40px 20px 0;
+  }
+
+  .typeLabel {
+    padding-top: 1px;
+    text-align: right;
+  }
+
+  /* On a phone the default category adds nothing the title does not already
+     say, so only the distinctive ones keep their label. */
+  .card[data-type='scientific_session'] .typeLabel,
+  .card[data-type='other'] .typeLabel {
+    display: none;
+  }
+
+  .timeCol {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .title {
+    font-size: 17px;
+  }
+
+  .editor {
+    padding: 18px 0 16px 14px;
+  }
+
+  .editorTimes .editorField {
+    width: calc(50% - 26px);
+  }
+
+  .speakerRow {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px dashed var(--rule);
+  }
+
+  .speakerRow > input {
+    grid-column: 1 / -1;
+  }
+
+  .speakerActions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .moreGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .fixWrap,
+  .fixMenu {
+    padding-left: 0;
+    left: 0;
+  }
+
+  .fixWrap {
+    padding-bottom: 14px;
+  }
+
+  .fixMenu {
+    min-width: min(320px, calc(100vw - 48px));
+  }
+
+  .shiftPrompt {
+    margin: 0 0 18px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .shiftActions button {
+    width: 100%;
+  }
+
+  .editorFooter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .moveControls {
+    justify-content: space-between;
+  }
+}
