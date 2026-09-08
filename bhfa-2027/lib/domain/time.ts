@@ -31,11 +31,28 @@ export function formatTime(minute: number): string {
   return `${hour12}:${String(mins).padStart(2, '0')} ${suffix}`;
 }
 
-/** Value for an <input type="time">: 570 → "09:30". Midnight clamps to 23:59. */
+/**
+ * Value for an <input type="time">: 570 → "09:30".
+ *
+ * Times at or past midnight wrap into the clock face — 1440 becomes "00:00",
+ * which the browser renders as 12:00 AM. The day it lands on is carried
+ * separately by `isNextDay`, so the underlying minute value (1440 for the
+ * Day 03 White Party) survives editing untouched.
+ */
 export function toInputValue(minute: number): string {
-  const m = Math.min(clampMinute(minute), MINUTES_IN_DAY - 1);
-  const wrapped = m % MINUTES_IN_DAY;
+  const wrapped = clampMinute(minute) % MINUTES_IN_DAY;
   return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+}
+
+/** True when this minute falls on the morning after the session's own date. */
+export function isNextDay(minute: number): boolean {
+  return clampMinute(minute) >= MINUTES_IN_DAY;
+}
+
+/** Combine a clock-face time with the day it lands on. */
+export function composeMinute(clockMinute: number, nextDay: boolean): number {
+  const wrapped = clampMinute(clockMinute) % MINUTES_IN_DAY;
+  return nextDay ? wrapped + MINUTES_IN_DAY : wrapped;
 }
 
 /**

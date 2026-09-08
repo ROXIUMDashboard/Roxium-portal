@@ -188,6 +188,94 @@ test.describe('BHFA 2027 planning room', () => {
     await contextB.close();
   });
 
+  test('midnight reads and edits as midnight', async ({ browser }) => {
+    const context = await browser.newContext();
+    const page = await enter(context, 'Marc');
+
+    await page.getByRole('button', { name: /03\s*SAT\s*Eyes \+ Anatomy/i }).click();
+    const party = row(page, 'Closing Ceremony');
+    await expect(party.getByText('8:00 PM – Midnight')).toBeVisible();
+
+    await party.click();
+    // 12:00 AM on the following day — never 11:59 PM.
+    await expect(page.getByLabel('End', { exact: true })).toHaveValue('00:00');
+    await expect(page.getByRole('button', { name: 'Next day' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('ends at midnight')).toBeVisible();
+    await expect(page.locator('p[aria-live="polite"]')).toContainText('4 hr');
+
+    // Editing something else must not round midnight down to 23:59.
+    await page.getByLabel('Topic').fill('Closing Ceremony · White Party');
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await page.getByRole('button', { name: /03\s*SAT\s*Eyes \+ Anatomy/i }).click();
+    await expect(row(page, 'Closing Ceremony · White Party').getByText('8:00 PM – Midnight')).toBeVisible();
+
+    // And the end time can be moved into the following morning explicitly.
+    await row(page, 'Closing Ceremony · White Party').click();
+    await page.getByLabel('End', { exact: true }).fill('01:00');
+    await expect(page.locator('p[aria-live="polite"]')).toContainText('5 hr');
+    await page.keyboard.press('Escape');
+    await expect(row(page, 'Closing Ceremony · White Party').getByText('8:00 PM – 1:00 AM')).toBeVisible();
+
+    await context.close();
+  });
+
+  test('the second writer is told what they replaced', async ({ browser }) => {
+    const contextA = await browser.newContext();
+    const contextB = await browser.newContext();
+
+    // Max's realtime stream is down, so he never sees Ashkan's change arrive —
+    // the case where a save really can land on top of someone else's work.
+    // (With the stream up, the editor adopts changes to fields he has not
+    // touched and simply shows them instead.)
+    await contextA.route('**/api/program/*/stream', (route) => route.abort());
+
+    const max = await enter(contextA, 'Max');
+    const ashkan = await enter(contextB, 'Ashkan');
+
+    await max.getByRole('button', { name: /04\s*SUN\s*Practice Growth/i }).click();
+    await ashkan.getByRole('button', { name: /04\s*SUN\s*Practice Growth/i }).click();
+
+    // Max opens the session and starts rewriting the topic.
+    await row(max, 'Team Systems').click();
+    await expect(max.getByLabel('Topic')).toHaveValue('Team Systems');
+
+    // Ashkan saves a change to the same session while Max has it open.
+    await row(ashkan, 'Team Systems').click();
+    await ashkan.getByLabel('Topic').fill('Team Systems and Accountability');
+    await ashkan.keyboard.press('Escape');
+    await expect(ashkan.getByText('Team Systems and Accountability')).toBeVisible();
+
+    // Max saves over it. His typing is kept, and he is told exactly what he replaced.
+    await max.getByLabel('Topic').fill('Team Operating Systems');
+    const notice = max.getByRole('alert', { name: 'Session changed by another collaborator' });
+    await expect(notice).toBeVisible({ timeout: 15_000 });
+    await expect(notice).toContainText('Ashkan changed this session while you were editing');
+    await expect(notice).toContainText('nothing is lost');
+    await expect(notice).toContainText('Ashkan: Team Systems and Accountability');
+    await expect(notice).toContainText('Yours: Team Operating Systems');
+
+    // He can put Ashkan's version back in one click.
+    await notice.getByRole('button', { name: 'Use their version' }).click();
+    await expect(max.getByRole('alert', { name: 'Session changed by another collaborator' })).toHaveCount(0);
+    await expect(max.getByLabel('Topic')).toHaveValue('Team Systems and Accountability');
+
+    await max.keyboard.press('Escape');
+    await max.reload();
+    await max.getByRole('button', { name: /04\s*SUN\s*Practice Growth/i }).click();
+    await expect(row(max, 'Team Systems and Accountability')).toHaveCount(1);
+
+    // Both versions survive in the history.
+    await max.getByRole('button', { name: 'Program options' }).click();
+    await max.getByRole('menuitem', { name: 'Change history' }).click();
+    const historyPanel = max.getByLabel('Change history');
+    await expect(historyPanel.getByText(/Team Operating Systems/).first()).toBeVisible();
+    await expect(historyPanel.getByText(/Team Systems and Accountability/).first()).toBeVisible();
+
+    await contextA.close();
+    await contextB.close();
+  });
+
   test('an invalid link reveals nothing', async ({ page }) => {
     const response = await page.goto('/program/not_a_real_token_not_a_real_token_xxxx');
     expect(response?.status()).toBe(404);

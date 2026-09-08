@@ -9,6 +9,7 @@
 import 'server-only';
 import type {
   Day,
+  Faculty,
   HistoryAction,
   HistoryEntry,
   ProgramSnapshot,
@@ -148,6 +149,79 @@ async function linkSpeakerNames(context: ProgramContext, patch: SessionPatch): P
 
 /* ----------------------------------------------------------------- mutations */
 
+/**
+ * What one collaborator overwrote when their save landed on a version someone
+ * else had already saved. Nothing is lost — the prior state is in the history —
+ * but the losing editor is told, and can put the other version back.
+ */
+export interface EditConflict {
+  actorName: string;
+  at: string;
+  fields: { label: string; theirs: string; yours: string }[];
+  /** The state that was overwritten, so the editor can review or restore it. */
+  latest: Session;
+}
+
+const CONFLICT_LABELS: Record<string, string> = {
+  title: 'Topic',
+  description: 'Description',
+  startMinute: 'Time',
+  endMinute: 'Time',
+  sessionType: 'Session type',
+  sponsorName: 'Sponsor',
+  sponsorUrl: 'Sponsor link',
+  room: 'Room',
+  internalNotes: 'Internal notes',
+  speakers: 'Speakers',
+};
+
+function fieldSummary(session: Session, field: string, faculty: Faculty[]): string {
+  switch (field) {
+    case 'startMinute':
+    case 'endMinute':
+      return formatRange(session.startMinute, session.endMinute);
+    case 'sessionType':
+      return SESSION_TYPE_LABELS[session.sessionType];
+    case 'speakers':
+      return (
+        session.speakers
+          .map((s) => s.displayName ?? faculty.find((f) => f.id === s.facultyId)?.name ?? 'To be confirmed')
+          .join(', ') || 'No speaker'
+      );
+    default: {
+      const value = (session as unknown as Record<string, unknown>)[field];
+      return typeof value === 'string' && value.trim() ? value : '—';
+    }
+  }
+}
+
+async function describeConflict(
+  context: ProgramContext,
+  before: Session,
+  after: Session,
+  touched: string[],
+): Promise<EditConflict> {
+  const faculty = await context.repository.listFaculty(context.workspace.programId);
+  const seen = new Set<string>();
+  const fields: EditConflict['fields'] = [];
+
+  for (const field of touched) {
+    const label = CONFLICT_LABELS[field] ?? field;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    const theirs = fieldSummary(before, field, faculty);
+    const yours = fieldSummary(after, field, faculty);
+    if (theirs !== yours) fields.push({ label, theirs, yours });
+  }
+
+  return {
+    actorName: before.updatedBy ?? 'Another collaborator',
+    at: before.updatedAt,
+    fields,
+    latest: before,
+  };
+}
+
 export interface MutationResult {
   session?: Session;
   sessions?: Session[];
@@ -242,7 +316,8 @@ export async function updateSession(
   context: ProgramContext,
   sessionId: string,
   rawPatch: SessionPatch,
-): Promise<MutationResult & { conflictWith?: string | null }> {
+  baseUpdatedAt: string | null = null,
+): Promise<MutationResult & { conflict?: EditConflict | null }> {
   const before = await requireSession(context, sessionId);
   const patch = await linkSpeakerNames(context, rawPatch);
   const changes = effectiveChanges(before, patch);
@@ -267,14 +342,19 @@ export async function updateSession(
     after: { kind: 'fields', sessionId, fields: fieldsOf(updated, touched) } satisfies HistoryPayload,
   });
 
+  // Did this save land on a version someone else had already written? The write
+  // still goes through — refusing it would throw away the surgeon's typing — but
+  // the editor is told exactly what it replaced.
+  const stale =
+    baseUpdatedAt !== null &&
+    Date.parse(before.updatedAt) > Date.parse(baseUpdatedAt) &&
+    before.updatedBy !== null &&
+    before.updatedBy !== context.actor.name;
+
+  const conflict = stale ? await describeConflict(context, before, updated, touched as string[]) : null;
+
   const revision = await announce(context, summary, [updated]);
-  return {
-    session: updated,
-    revision,
-    history,
-    // Someone else saved this row between the editor opening and this write.
-    conflictWith: before.updatedBy && before.updatedBy !== context.actor.name ? before.updatedBy : null,
-  };
+  return { session: updated, revision, history, conflict };
 }
 
 export async function deleteSession(context: ProgramContext, sessionId: string): Promise<MutationResult> {

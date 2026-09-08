@@ -63,7 +63,16 @@ For anything real, configure Supabase.
    overwrites a day that already has sessions (pass `--force-sessions` if you really want to
    reset a day back to the printed draft).
 
-5. Need a new link later? `npm run token:issue` — or use **••• → Rotate collaboration link**
+5. Check what actually landed against the transcribed draft:
+
+   ```bash
+   npm run db:verify
+   ```
+
+   It compares every day, session, time, type, description and speaker status in the database
+   with the 2027 draft and exits non-zero on any mismatch, so it can gate a deploy. It only reads.
+
+6. Need a new link later? `npm run token:issue` — or use **••• → Rotate collaboration link**
    inside the app. The previous link stops working immediately.
 
 ---
@@ -95,7 +104,9 @@ Session times are **integer minutes from midnight of that session's own calendar
 (`start_minute`, `end_minute`) — never `Date` objects, never strings like `"10:30–11:15"`.
 
 - No timezone can move a session onto the wrong day.
-- Midnight is representable: the Day 03 White Party ends at exactly `1440`.
+- Midnight is representable: the Day 03 White Party ends at exactly `1440`. The editor shows it
+  as **12:00 AM** with a **Next day** toggle beside the end time — never `11:59 PM` — and the
+  agenda prints it as **Midnight**. Editing any other field leaves the 1440 untouched.
 - Duration is always `end − start`, so it can never disagree with the displayed times.
 - Anything up to `1740` (5:00 AM the next morning) is accepted for events that run late.
 
@@ -133,8 +144,15 @@ optimistically).
 
 - **Identity** — a name in `localStorage`. Not authentication; it labels history entries and
   powers "Marc is editing".
-- **Autosave** — 650 ms after typing stops, and immediately when the editor closes.
-  A transient failure keeps the change on screen and says so in plain language.
+- **Autosave** — 650 ms after typing stops, and immediately when the editor closes. It writes
+  only the fields you actually touched, so a change arriving from another collaborator can
+  never turn into an automatic save of your stale copy. A transient failure keeps the change
+  on screen and says so in plain language.
+- **Two people, one session** — fields you have not touched update live in your open editor.
+  If your save does land on a newer version (you were offline, or you were both typing in the
+  same field), the write still goes through — your typing is never thrown away — and an amber
+  notice names who changed it, shows *theirs* beside *yours* field by field, and offers
+  **Use their version** in one click. Both versions stay in the change history.
 - **History** — every mutation records actor, action, summary and the prior state. Restoring
   writes a *new* entry; nothing is ever deleted from the record.
 - **Undo** — one tap on the toast for deletes, cross-day moves and bulk shifts.

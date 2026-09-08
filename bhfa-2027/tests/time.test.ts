@@ -3,6 +3,8 @@ import {
   MAX_END_MINUTE,
   MINUTES_IN_DAY,
   clampMinute,
+  composeMinute,
+  isNextDay,
   describeDelta,
   formatDuration,
   formatIsoDate,
@@ -88,9 +90,22 @@ describe('bounds', () => {
     expect(clampMinute(Number.NaN)).toBe(0);
   });
 
-  it('keeps the time input inside a representable value', () => {
+  it('shows midnight on the clock face as 00:00, never 23:59', () => {
     expect(toInputValue(330)).toBe('05:30');
-    expect(toInputValue(MINUTES_IN_DAY)).toBe('23:59');
+    // The Day 03 White Party ends at exactly midnight.
+    expect(toInputValue(MINUTES_IN_DAY)).toBe('00:00');
+    expect(toInputValue(MINUTES_IN_DAY + 60)).toBe('01:00');
+  });
+
+  it('separates the clock time from the day it lands on', () => {
+    expect(isNextDay(MINUTES_IN_DAY)).toBe(true);
+    expect(isNextDay(MINUTES_IN_DAY - 1)).toBe(false);
+
+    // Round-tripping midnight through the editor preserves 1440 exactly.
+    expect(composeMinute(0, true)).toBe(MINUTES_IN_DAY);
+    expect(composeMinute(MINUTES_IN_DAY, true)).toBe(MINUTES_IN_DAY);
+    expect(composeMinute(MINUTES_IN_DAY, false)).toBe(0);
+    expect(composeMinute(60, true)).toBe(MINUTES_IN_DAY + 60);
   });
 });
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
 import { sessionsForDay } from '../domain/schedule';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
-import { ApiError, createApi, type MutationResponse } from './api';
+import { ApiError, createApi, type EditConflict, type MutationResponse } from './api';
 import { readClientId, readCollaboratorName, writeCollaboratorName } from './identity';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'reconnecting';
@@ -49,6 +49,8 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [pendingShift, setPendingShift] = useState<PendingShift | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // Sessions where this collaborator's save replaced someone else's newer one.
+  const [conflicts, setConflicts] = useState<Record<string, EditConflict>>({});
 
   const inFlight = useRef(0);
   const identityRef = useRef({ name: 'Someone', clientId: '' });
@@ -114,12 +116,6 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
         applyResponse(response);
         options.onSuccess?.(response);
         if (options.toast) pushToast(options.toast);
-        if (response.conflictWith) {
-          pushToast({
-            tone: 'neutral',
-            message: `${response.conflictWith} had also edited this session. Both versions are kept in the change history.`,
-          });
-        }
         setLastSavedAt(Date.now());
         return response;
       } catch (error) {
@@ -249,13 +245,28 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
   );
 
   const updateSession = useCallback(
-    async (sessionId: string, patch: Record<string, unknown>) => {
+    async (sessionId: string, patch: Record<string, unknown>, baseUpdatedAt?: string | null) => {
       const optimistic = (sessions: Session[]) =>
         sessions.map((session) => (session.id === sessionId ? { ...session, ...(patch as Partial<Session>) } : session));
-      return run(optimistic, () => api.updateSession(sessionId, patch));
+      return run(optimistic, () => api.updateSession(sessionId, patch, baseUpdatedAt), {
+        onSuccess: (response) => {
+          if (!response.conflict) return;
+          // Nothing was lost — but the person who saved last needs to know they
+          // wrote over a newer version, and be able to look at it.
+          setConflicts((current) => ({ ...current, [sessionId]: response.conflict as EditConflict }));
+        },
+      });
     },
     [api, run],
   );
+
+  const dismissConflict = useCallback((sessionId: string) => {
+    setConflicts((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
 
   const createSession = useCallback(
     async (input: Record<string, unknown>) => {
@@ -422,6 +433,8 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
     setPendingShift,
     history,
     loadHistory,
+    conflicts,
+    dismissConflict,
     updateSession,
     createSession,
     deleteSession,

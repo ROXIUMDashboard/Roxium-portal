@@ -316,6 +316,106 @@ describe('smart time changes', () => {
   });
 });
 
+/* ------------------------------------------------- concurrent editing */
+
+describe('two collaborators editing the same session', () => {
+  it('warns the second writer that they replaced a newer version, and hands it back', async () => {
+    const session = await findSession('Vector Debate');
+    const baseline = session.updatedAt;
+
+    // Ashkan saves first.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await patchSession(request({ title: 'Vector Selection' }, 'Ashkan'), params({ token: TOKEN, sessionId: session.id }));
+
+    // Max saves from the version he opened, before Ashkan's change existed.
+    const response = await patchSession(
+      request({ title: 'Vector Strategy', baseUpdatedAt: baseline }, 'Max'),
+      params({ token: TOKEN, sessionId: session.id }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    // The write is not refused — Max's typing is never thrown away…
+    expect((await findSession('Vector Strategy')).id).toBe(session.id);
+
+    // …but he is told exactly what he replaced, and can put it back.
+    expect(body.conflict).toBeTruthy();
+    expect(body.conflict.actorName).toBe('Ashkan');
+    expect(body.conflict.fields).toContainEqual({
+      label: 'Topic',
+      theirs: 'Vector Selection',
+      yours: 'Vector Strategy',
+    });
+    expect(body.conflict.latest.title).toBe('Vector Selection');
+
+    // And the overwritten version is still in the history.
+    const entries = await history();
+    expect(entries.some((entry) => entry.actorName === 'Ashkan' && entry.summary.includes('Vector Selection'))).toBe(true);
+  });
+
+  it('says nothing when the save is the first since the editor opened', async () => {
+    const session = await findSession('Revision Forum');
+    const response = await patchSession(
+      request({ title: 'Revision Panel', baseUpdatedAt: session.updatedAt }, 'Max'),
+      params({ token: TOKEN, sessionId: session.id }),
+    );
+    expect((await response.json()).conflict).toBeNull();
+  });
+
+  it('does not warn a collaborator about their own earlier save', async () => {
+    const session = await findSession('Neck Masterclass');
+    const baseline = session.updatedAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await patchSession(request({ room: 'Theatre A' }, 'Max'), params({ token: TOKEN, sessionId: session.id }));
+
+    const response = await patchSession(
+      request({ title: 'Neck Masterclass II', baseUpdatedAt: baseline }, 'Max'),
+      params({ token: TOKEN, sessionId: session.id }),
+    );
+    expect((await response.json()).conflict).toBeNull();
+  });
+
+  it('describes a replaced time range and speaker list in words', async () => {
+    const session = await findSession('Eyes Forum');
+    const baseline = session.updatedAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await patchSession(
+      request({ startMinute: 1000, endMinute: 1040, speakers: [{ displayName: 'Dr. Marc Mani' }] }, 'Ashkan'),
+      params({ token: TOKEN, sessionId: session.id }),
+    );
+
+    const response = await patchSession(
+      request({ startMinute: 1005, endMinute: 1050, baseUpdatedAt: baseline }, 'Max'),
+      params({ token: TOKEN, sessionId: session.id }),
+    );
+    const { conflict } = await response.json();
+    const time = conflict.fields.find((f: { label: string }) => f.label === 'Time');
+    expect(time.theirs).toBe('4:40 PM – 5:20 PM');
+    expect(time.yours).toBe('4:45 PM – 5:30 PM');
+  });
+});
+
+describe('midnight', () => {
+  it('stores and returns the White Party ending as 1440, not 1439', async () => {
+    const party = await findSession('Closing Ceremony');
+    expect(party.endMinute).toBe(1440);
+
+    // Saving an unrelated field must not round midnight down.
+    await patchSession(request({ room: 'Rooftop' }), params({ token: TOKEN, sessionId: party.id }));
+    expect((await findSession('Closing Ceremony')).endMinute).toBe(1440);
+  });
+
+  it('accepts an end time on the following morning', async () => {
+    const party = await findSession('Closing Ceremony');
+    const response = await patchSession(
+      request({ endMinute: 1440 + 60 }),
+      params({ token: TOKEN, sessionId: party.id }),
+    );
+    expect(response.status).toBe(200);
+    expect((await findSession('Closing Ceremony')).endMinute).toBe(1500);
+  });
+});
+
 /* ------------------------------------------------------ history and undo */
 
 describe('revision history', () => {

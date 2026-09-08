@@ -128,6 +128,17 @@ function parseSharedFields(body: Record<string, unknown>): SessionPatch {
   return patch;
 }
 
+/**
+ * The `updated_at` the editor was working from, used to detect a save landing
+ * on top of a newer version. Anything unparseable is treated as "no baseline"
+ * rather than an error — a missing baseline only costs the warning.
+ */
+export function parseBaseUpdatedAt(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
 export function parseSessionPatch(body: unknown): SessionPatch {
   if (!body || typeof body !== 'object') throw new ValidationError('Expected a session update.');
   const record = body as Record<string, unknown>;

@@ -184,12 +184,108 @@ describe('the agenda', () => {
     expect(screen.getByLabelText(/move to another day/i)).toBeInTheDocument();
   });
 
+  it('shows midnight as midnight — never 11:59 PM', async () => {
+    const user = await enter();
+    await user.click(screen.getByRole('button', { name: /03.*eyes \+ anatomy/i }));
+
+    // The agenda names it.
+    const party = await screen.findByRole('button', { name: /edit closing ceremony/i });
+    expect(within(party).getByText('8:00 PM – Midnight')).toBeInTheDocument();
+
+    // And the editor shows 12:00 AM on the following day, not 23:59.
+    await user.click(party);
+    const end = await screen.findByLabelText(/^end$/i);
+    expect(end).toHaveValue('00:00');
+    expect(end).not.toHaveValue('23:59');
+    expect(screen.getByRole('button', { name: /next day/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('ends at midnight')).toBeInTheDocument();
+    expect(screen.getByText('4 hr')).toBeInTheDocument();
+  });
+
   it('shows a TBD speaker as unconfirmed without inventing a name', async () => {
     const user = await enter();
     await user.click(screen.getByRole('button', { name: /03.*eyes \+ anatomy/i }));
     const row = await screen.findByRole('button', { name: /edit live surgery iii/i });
     expect(within(row).getByText('To be confirmed')).toBeInTheDocument();
     expect(within(row).getByText('TBD')).toBeInTheDocument();
+  });
+});
+
+describe('two collaborators on one session', () => {
+  it('warns the losing editor, shows what was replaced, and offers their version back', async () => {
+    const snapshot = buildSnapshot();
+    const target = snapshot.sessions.find((s) => s.title === 'Vector Debate')!;
+    const patches: Record<string, unknown>[] = [];
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          patches.push(body);
+          // The first save comes back reporting it replaced Ashkan's newer one.
+          const conflict =
+            patches.length === 1
+              ? {
+                  actorName: 'Ashkan',
+                  at: '2027-01-02T00:00:00.000Z',
+                  fields: [{ label: 'Topic', theirs: 'Vector Selection', yours: 'Vector Strategy' }],
+                  latest: { ...target, title: 'Vector Selection' },
+                }
+              : null;
+          return new Response(
+            JSON.stringify({ session: { ...target, ...body }, revision: 2, history: null, conflict }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ProgramRoom token="test_token_test_token_test_token_test_token" initialSnapshot={snapshot} />);
+    await user.type(screen.getByLabelText(/your name/i), 'Max');
+    await user.click(screen.getByRole('button', { name: /enter program/i }));
+    await user.click(screen.getByRole('button', { name: /02.*deep plane/i }));
+    await user.click(await screen.findByRole('button', { name: /edit vector debate/i }));
+
+    await user.clear(screen.getByLabelText(/^topic$/i));
+    await user.type(screen.getByLabelText(/^topic$/i), 'Vector Strategy');
+
+    const alert = await screen.findByRole('alert', {}, { timeout: 4000 });
+    expect(alert).toHaveTextContent(/Ashkan changed this session while you were editing/i);
+    expect(alert).toHaveTextContent(/nothing is lost/i);
+    expect(alert).toHaveTextContent('Ashkan: Vector Selection');
+    expect(alert).toHaveTextContent('Yours: Vector Strategy');
+
+    // Their version can be put back in one click.
+    await user.click(within(alert).getByRole('button', { name: /use their version/i }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByLabelText(/^topic$/i)).toHaveValue('Vector Selection');
+  });
+
+  it('sends the version the editor opened on with every save', async () => {
+    const snapshot = buildSnapshot();
+    const patches: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') patches.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({ revision: 2, history: null, conflict: null, entries: [] }), {
+          status: 200,
+        });
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ProgramRoom token="test_token_test_token_test_token_test_token" initialSnapshot={snapshot} />);
+    await user.type(screen.getByLabelText(/your name/i), 'Max');
+    await user.click(screen.getByRole('button', { name: /enter program/i }));
+    await user.click(screen.getByRole('button', { name: /edit opening ceremony/i }));
+    await user.type(screen.getByLabelText(/^topic$/i), '!');
+
+    await waitFor(() => expect(patches.length).toBeGreaterThan(0));
+    expect(patches[0].baseUpdatedAt).toBe('2027-01-01T00:00:00.000Z');
   });
 });
 

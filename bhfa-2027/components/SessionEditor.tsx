@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Day, Faculty, Session, SessionType, SpeakerRole, SpeakerStatus } from '@/lib/domain/types';
 import { SESSION_TYPES, SESSION_TYPE_LABELS, SPEAKER_ROLES, SPEAKER_STATUSES, SPEAKER_STATUS_LABELS } from '@/lib/domain/types';
-import { formatDuration, formatTime, parseTimeInput, toInputValue, MINUTES_IN_DAY } from '@/lib/domain/time';
+import {
+  composeMinute,
+  formatDuration,
+  formatTime,
+  isNextDay,
+  parseTimeInput,
+  toInputValue,
+  MINUTES_IN_DAY,
+} from '@/lib/domain/time';
 import type { ProgramRoomState } from '@/lib/client/useProgramRoom';
 import styles from '@/styles/session.module.css';
 
@@ -51,23 +59,38 @@ function toDraft(session: Session, faculty: Faculty[]): Draft {
   };
 }
 
-/** Only the fields that actually differ from the saved session. */
-function diff(draft: Draft, session: Session, faculty: Faculty[]): Record<string, unknown> {
+const speakerShape = (list: DraftSpeaker[]) =>
+  JSON.stringify(list.map((s) => [s.name.trim(), s.role, s.status]));
+
+/**
+ * Only the fields this editor actually touched, and only where they differ from
+ * what the server holds.
+ *
+ * Restricting the patch to touched fields is what stops an incoming change from
+ * another collaborator turning into an automatic save of this editor's stale
+ * copy — which would quietly undo their work without anyone pressing anything.
+ */
+function diff(
+  draft: Draft,
+  session: Session,
+  faculty: Faculty[],
+  touched: Set<keyof Draft>,
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const saved = toDraft(session, faculty);
+  const changed = (field: keyof Draft) => touched.has(field) && draft[field] !== saved[field];
 
-  if (draft.title !== saved.title) patch.title = draft.title;
-  if (draft.description !== saved.description) patch.description = draft.description || null;
-  if (draft.startMinute !== saved.startMinute) patch.startMinute = draft.startMinute;
-  if (draft.endMinute !== saved.endMinute) patch.endMinute = draft.endMinute;
-  if (draft.sessionType !== saved.sessionType) patch.sessionType = draft.sessionType;
-  if (draft.sponsorName !== saved.sponsorName) patch.sponsorName = draft.sponsorName || null;
-  if (draft.sponsorUrl !== saved.sponsorUrl) patch.sponsorUrl = draft.sponsorUrl || null;
-  if (draft.room !== saved.room) patch.room = draft.room || null;
-  if (draft.internalNotes !== saved.internalNotes) patch.internalNotes = draft.internalNotes || null;
+  if (changed('title')) patch.title = draft.title;
+  if (changed('description')) patch.description = draft.description || null;
+  if (changed('startMinute')) patch.startMinute = draft.startMinute;
+  if (changed('endMinute')) patch.endMinute = draft.endMinute;
+  if (changed('sessionType')) patch.sessionType = draft.sessionType;
+  if (changed('sponsorName')) patch.sponsorName = draft.sponsorName || null;
+  if (changed('sponsorUrl')) patch.sponsorUrl = draft.sponsorUrl || null;
+  if (changed('room')) patch.room = draft.room || null;
+  if (changed('internalNotes')) patch.internalNotes = draft.internalNotes || null;
 
-  const shape = (list: DraftSpeaker[]) => JSON.stringify(list.map((s) => [s.name.trim(), s.role, s.status]));
-  if (shape(draft.speakers) !== shape(saved.speakers)) {
+  if (touched.has('speakers') && speakerShape(draft.speakers) !== speakerShape(saved.speakers)) {
     patch.speakers = draft.speakers
       .filter((speaker) => speaker.name.trim() || speaker.status === 'tbd')
       .map((speaker) => ({
@@ -107,18 +130,45 @@ export default function SessionEditor({
   // The last times we successfully saved, so a duration change can be measured
   // against what the schedule actually had — not against an intermediate keystroke.
   const savedTimes = useRef({ start: session.startMinute, end: session.endMinute });
+  // The version this editor opened on. Sent with every save so the server can
+  // tell us if we just wrote over someone else's newer version.
+  const baseUpdatedAt = useRef(session.updatedAt);
+  // Fields this collaborator has changed since opening, and therefore the only
+  // fields autosave is allowed to write.
+  const touched = useRef(new Set<keyof Draft>());
+
+  /** Change draft fields and mark them as this editor's own. */
+  const edit = useCallback((fields: (keyof Draft)[], update: (current: Draft) => Draft) => {
+    for (const field of fields) touched.current.add(field);
+    setDraft(update);
+  }, []);
 
   const followingCount = daySessions.length - index - 1;
 
   const save = useCallback(async () => {
-    const patch = diff(draftRef.current, sessionRef.current, faculty);
+    const patch = diff(draftRef.current, sessionRef.current, faculty, touched.current);
     if (Object.keys(patch).length === 0) return;
+    const sent = { ...draftRef.current };
 
     const timesChanged = 'startMinute' in patch || 'endMinute' in patch;
     const previous = { ...savedTimes.current };
 
-    const response = await room.updateSession(sessionRef.current.id, patch);
-    if (!response || !timesChanged) return;
+    const response = await room.updateSession(sessionRef.current.id, patch, baseUpdatedAt.current);
+    if (!response) return;
+    baseUpdatedAt.current = response.session?.updatedAt ?? baseUpdatedAt.current;
+
+    // A field is no longer "ours to write" once it is saved — unless the
+    // collaborator has typed in it again while the request was in flight.
+    for (const field of Object.keys(patch) as (keyof Draft)[]) {
+      const key = field === 'speakers' ? 'speakers' : field;
+      const unchangedSinceSend =
+        key === 'speakers'
+          ? speakerShape(sent.speakers) === speakerShape(draftRef.current.speakers)
+          : sent[key] === draftRef.current[key];
+      if (unchangedSinceSend) touched.current.delete(key);
+    }
+
+    if (!timesChanged) return;
 
     const nextStart = draftRef.current.startMinute;
     const nextEnd = draftRef.current.endMinute;
@@ -144,30 +194,78 @@ export default function SessionEditor({
 
   useEffect(() => () => void save(), [save]);
 
+  /**
+   * Someone else saved this session while it is open here. Fields this editor
+   * has not touched simply update on screen; fields it has touched are left
+   * alone, and the baseline is deliberately not advanced so the next save
+   * reports what it replaced.
+   */
+  useEffect(() => {
+    const incoming = toDraft(session, faculty);
+    const holdsOwnEdits = [...touched.current].some((field) =>
+      field === 'speakers'
+        ? speakerShape(incoming.speakers) !== speakerShape(draftRef.current.speakers)
+        : incoming[field] !== draftRef.current[field],
+    );
+
+    setDraft((current) => {
+      let next = current;
+      for (const field of Object.keys(incoming) as (keyof Draft)[]) {
+        if (touched.current.has(field)) continue;
+        const same =
+          field === 'speakers'
+            ? speakerShape(incoming.speakers) === speakerShape(current.speakers)
+            : incoming[field] === current[field];
+        if (same) continue;
+        if (next === current) next = { ...current };
+        (next as unknown as Record<string, unknown>)[field] = incoming[field];
+      }
+      return next;
+    });
+
+    if (!holdsOwnEdits) {
+      // Everything this editor holds now matches the server: it is up to date.
+      baseUpdatedAt.current = session.updatedAt;
+      savedTimes.current = { start: session.startMinute, end: session.endMinute };
+    }
+  }, [session, faculty]);
+
   const setTime = (field: 'startMinute' | 'endMinute', raw: string) => {
     const parsed = parseTimeInput(raw);
     if (parsed === null) {
       setTimeError('Enter a time such as 10:30 AM.');
       return;
     }
-    setDraft((current) => {
-      const next = { ...current, [field]: parsed };
+    edit([field], (current) => {
+      // A time typed into the end field keeps whichever day that field is on,
+      // so 12:00 AM on the next day stays midnight rather than becoming 0.
+      const value =
+        field === 'endMinute' ? composeMinute(parsed, isNextDay(current.endMinute)) : parsed;
+      const next = { ...current, [field]: value };
       setTimeError(next.endMinute <= next.startMinute ? 'The end time must come after the start time.' : null);
       return next;
     });
   };
 
+  /** Move the end time between this evening and the following morning. */
+  const setEndsNextDay = (nextDay: boolean) =>
+    edit(['endMinute'], (current) => {
+      const next = { ...current, endMinute: composeMinute(current.endMinute, nextDay) };
+      setTimeError(next.endMinute <= next.startMinute ? 'The end time must come after the start time.' : null);
+      return next;
+    });
+
   const duration = draft.endMinute - draft.startMinute;
   const facultyNames = useMemo(() => faculty.map((f) => f.name), [faculty]);
 
   const updateSpeaker = (key: string, patch: Partial<DraftSpeaker>) =>
-    setDraft((current) => ({
+    edit(['speakers'], (current) => ({
       ...current,
       speakers: current.speakers.map((speaker) => (speaker.key === key ? { ...speaker, ...patch } : speaker)),
     }));
 
   const moveSpeaker = (key: string, direction: -1 | 1) =>
-    setDraft((current) => {
+    edit(['speakers'], (current) => {
       const from = current.speakers.findIndex((speaker) => speaker.key === key);
       const to = from + direction;
       if (from === -1 || to < 0 || to >= current.speakers.length) return current;
@@ -177,8 +275,72 @@ export default function SessionEditor({
       return { ...current, speakers };
     });
 
+  const conflict = room.conflicts[session.id];
+
+  /** Put the other collaborator's version back, and carry on from theirs. */
+  const useTheirVersion = async () => {
+    const latest = conflict.latest;
+    touched.current.clear();
+    setDraft(toDraft(latest, faculty));
+    savedTimes.current = { start: latest.startMinute, end: latest.endMinute };
+    room.dismissConflict(session.id);
+    await room.updateSession(
+      session.id,
+      {
+        title: latest.title,
+        description: latest.description,
+        startMinute: latest.startMinute,
+        endMinute: latest.endMinute,
+        sessionType: latest.sessionType,
+        sponsorName: latest.sponsorName,
+        sponsorUrl: latest.sponsorUrl,
+        room: latest.room,
+        internalNotes: latest.internalNotes,
+        speakers: latest.speakers.map((speaker) => ({
+          facultyId: speaker.facultyId,
+          displayName: speaker.displayName,
+          role: speaker.role,
+          status: speaker.status,
+        })),
+      },
+      null,
+    );
+  };
+
   return (
     <div className={styles.editor}>
+      {conflict ? (
+        <div className={styles.conflictNotice} role="alert" aria-label="Session changed by another collaborator">
+          <p className={styles.conflictHeadline}>
+            {conflict.actorName} changed this session while you were editing. Your version was saved over
+            theirs — nothing is lost, and both are in the change history.
+          </p>
+
+          {conflict.fields.length > 0 ? (
+            <dl className={styles.conflictFields}>
+              {conflict.fields.map((field) => (
+                <div key={field.label}>
+                  <dt>{field.label}</dt>
+                  <dd>
+                    <span className={styles.conflictTheirs}>{conflict.actorName}: {field.theirs}</span>
+                    <span className={styles.conflictYours}>Yours: {field.yours}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+
+          <div className={styles.conflictActions}>
+            <button type="button" className="btn" onClick={() => void useTheirVersion()}>
+              Use their version
+            </button>
+            <button type="button" className="btn btn--quiet" onClick={() => room.dismissConflict(session.id)}>
+              Keep mine
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* ---------------------------------------------------------- time */}
       <div className={styles.editorTimes}>
         <label className={styles.editorField}>
@@ -207,9 +369,19 @@ export default function SessionEditor({
           />
         </label>
 
+        <button
+          type="button"
+          className={styles.nextDayToggle}
+          aria-pressed={isNextDay(draft.endMinute)}
+          title="Ends after midnight, on the following morning"
+          onClick={() => setEndsNextDay(!isNextDay(draft.endMinute))}
+        >
+          Next day
+        </button>
+
         <p className={styles.editorDuration} aria-live="polite">
           {duration > 0 ? formatDuration(duration) : '—'}
-          {draft.endMinute >= MINUTES_IN_DAY ? <span className={styles.editorHint}>ends at midnight</span> : null}
+          {draft.endMinute === MINUTES_IN_DAY ? <span className={styles.editorHint}>ends at midnight</span> : null}
         </p>
       </div>
 
@@ -223,7 +395,7 @@ export default function SessionEditor({
           value={draft.title}
           placeholder="Session title"
           maxLength={200}
-          onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+          onChange={(event) => edit(['title'], (current) => ({ ...current, title: event.target.value }))}
         />
       </label>
 
@@ -296,7 +468,7 @@ export default function SessionEditor({
                 className={styles.iconButton}
                 aria-label={`Remove ${speaker.name || 'speaker'}`}
                 onClick={() =>
-                  setDraft((current) => ({
+                  edit(['speakers'], (current) => ({
                     ...current,
                     speakers: current.speakers.filter((entry) => entry.key !== speaker.key),
                   }))
@@ -312,7 +484,7 @@ export default function SessionEditor({
           type="button"
           className={styles.addSpeaker}
           onClick={() =>
-            setDraft((current) => ({
+            edit(['speakers'], (current) => ({
               ...current,
               speakers: [
                 ...current.speakers,
@@ -334,7 +506,7 @@ export default function SessionEditor({
           maxLength={4000}
           value={draft.description}
           placeholder="What this session covers."
-          onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+          onChange={(event) => edit(['description'], (current) => ({ ...current, description: event.target.value }))}
         />
       </label>
 
@@ -356,7 +528,9 @@ export default function SessionEditor({
               <select
                 className="field"
                 value={draft.sessionType}
-                onChange={(event) => setDraft((current) => ({ ...current, sessionType: event.target.value as SessionType }))}
+                onChange={(event) =>
+                  edit(['sessionType'], (current) => ({ ...current, sessionType: event.target.value as SessionType }))
+                }
               >
                 {SESSION_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -372,7 +546,7 @@ export default function SessionEditor({
                 className="field"
                 value={draft.room}
                 placeholder="Optional"
-                onChange={(event) => setDraft((current) => ({ ...current, room: event.target.value }))}
+                onChange={(event) => edit(['room'], (current) => ({ ...current, room: event.target.value }))}
               />
             </label>
 
@@ -382,7 +556,7 @@ export default function SessionEditor({
                 className="field"
                 value={draft.sponsorName}
                 placeholder="Optional — shown as “Supported by …”"
-                onChange={(event) => setDraft((current) => ({ ...current, sponsorName: event.target.value }))}
+                onChange={(event) => edit(['sponsorName'], (current) => ({ ...current, sponsorName: event.target.value }))}
               />
             </label>
 
@@ -394,7 +568,7 @@ export default function SessionEditor({
                 inputMode="url"
                 value={draft.sponsorUrl}
                 placeholder="https://"
-                onChange={(event) => setDraft((current) => ({ ...current, sponsorUrl: event.target.value }))}
+                onChange={(event) => edit(['sponsorUrl'], (current) => ({ ...current, sponsorUrl: event.target.value }))}
               />
             </label>
           </div>
@@ -406,7 +580,7 @@ export default function SessionEditor({
               rows={2}
               value={draft.internalNotes}
               placeholder="Only visible here — never shown on the agenda."
-              onChange={(event) => setDraft((current) => ({ ...current, internalNotes: event.target.value }))}
+              onChange={(event) => edit(['internalNotes'], (current) => ({ ...current, internalNotes: event.target.value }))}
             />
           </label>
 

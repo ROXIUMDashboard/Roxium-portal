@@ -10,6 +10,14 @@
  */
 import type { HistoryEntry, ProgramSnapshot, Session } from '../domain/types';
 
+/** Reported when a save landed on top of a version another collaborator wrote. */
+export interface EditConflict {
+  actorName: string;
+  at: string;
+  fields: { label: string; theirs: string; yours: string }[];
+  latest: Session;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -26,7 +34,7 @@ export interface MutationResponse {
   deleted?: string[];
   revision: number;
   history: HistoryEntry | null;
-  conflictWith?: string | null;
+  conflict?: EditConflict | null;
 }
 
 export interface ApiIdentity {
@@ -81,8 +89,11 @@ export function createApi(token: string, getIdentity: () => ApiIdentity) {
     createSession: (input: Record<string, unknown>) =>
       call<MutationResponse>('/sessions', { method: 'POST', body: JSON.stringify(input) }),
 
-    updateSession: (sessionId: string, patch: Record<string, unknown>) =>
-      call<MutationResponse>(`/sessions/${sessionId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    updateSession: (sessionId: string, patch: Record<string, unknown>, baseUpdatedAt?: string | null) =>
+      call<MutationResponse>(`/sessions/${sessionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(baseUpdatedAt ? { ...patch, baseUpdatedAt } : patch),
+      }),
 
     deleteSession: (sessionId: string) =>
       call<MutationResponse>(`/sessions/${sessionId}`, { method: 'DELETE' }),

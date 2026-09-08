@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { authorize, handleError, readJson, NO_STORE } from '@/lib/server/http';
 import { deleteSession, updateSession } from '@/lib/server/program-service';
-import { parseSessionPatch, requireId } from '@/lib/server/validate';
+import { parseBaseUpdatedAt, parseSessionPatch, requireId } from '@/lib/server/validate';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,8 +12,14 @@ export async function PATCH(request: Request, { params }: Params) {
   const auth = await authorize(request, token, { mutation: true });
   if ('response' in auth) return auth.response;
   try {
-    const patch = parseSessionPatch(await readJson(request));
-    const result = await updateSession(auth.context, requireId(sessionId, 'sessionId'), patch);
+    const body = (await readJson(request)) as Record<string, unknown>;
+    const patch = parseSessionPatch(body);
+    const result = await updateSession(
+      auth.context,
+      requireId(sessionId, 'sessionId'),
+      patch,
+      parseBaseUpdatedAt(body.baseUpdatedAt),
+    );
     return NextResponse.json(result, { headers: NO_STORE });
   } catch (error) {
     return handleError(error);
