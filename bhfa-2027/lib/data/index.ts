@@ -8,6 +8,7 @@ import type { ProgramRepository } from './repository';
 import { MemoryRepository } from './memory';
 import { SupabaseRepository } from './supabase';
 import { generateToken, hashToken, tokenPrefix } from '../server/tokens';
+import { describeCredentials, readSupabaseCredentials } from '../server/supabase-env';
 
 export type DriverName = 'supabase' | 'memory';
 
@@ -43,14 +44,14 @@ export function getRepositoryHandle(): RepositoryHandle {
 
   const driver = resolveDriver();
   if (driver === 'supabase') {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) {
-      throw new Error(
-        'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required when PROGRAM_DATA_DRIVER=supabase.',
-      );
+    const credentials = readSupabaseCredentials();
+    if (process.env.NODE_ENV !== 'test') {
+      console.info(`  BHFA 2027 · Supabase ${describeCredentials(credentials)}`);
     }
-    const supabaseHandle = { repository: new SupabaseRepository(url, key), driver };
+    const supabaseHandle = {
+      repository: new SupabaseRepository(credentials.url, credentials.key),
+      driver,
+    };
     globalRef[HANDLE_KEY] = supabaseHandle;
     return supabaseHandle;
   }

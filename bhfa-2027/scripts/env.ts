@@ -1,6 +1,7 @@
 import { config } from 'dotenv';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { describeCredentials, readSupabaseCredentials } from '../lib/server/supabase-env';
 
 /** Load .env.local then .env, the same order Next.js uses. */
 export function loadEnv(): void {
@@ -12,14 +13,17 @@ export function loadEnv(): void {
 
 export function requireSupabaseEnv(): { url: string; key: string } {
   loadEnv();
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
+  try {
+    const credentials = readSupabaseCredentials();
+    console.log(`supabase  ${describeCredentials(credentials)}`);
+    return { url: credentials.url, key: credentials.key };
+  } catch (error) {
     console.error(
-      '\nMissing credentials. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local\n' +
-        '(Supabase → Project settings → API. The service-role key is server-only.)\n',
+      `\n${error instanceof Error ? error.message : String(error)}\n\n` +
+        'Set SUPABASE_URL and SUPABASE_SECRET_KEY in bhfa-2027/.env.local\n' +
+        '(Supabase → Project settings → API keys. The secret key is server-only and\n' +
+        '.env.local is gitignored.)\n',
     );
     process.exit(1);
   }
-  return { url, key };
 }

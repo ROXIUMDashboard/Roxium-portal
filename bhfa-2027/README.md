@@ -42,12 +42,13 @@ For anything real, configure Supabase.
 2. **SQL Editor → New query** → paste all of `supabase/migrations/0001_bhfa_program.sql` → **Run**.
    Every statement is idempotent, so re-running is safe. (`npm run db:migrate` lists the files
    to run and their paths.)
-3. Copy `.env.example` to `.env.local` and fill in:
+3. Copy `.env.example` to `.env.local` and fill in the values below. `.env.local` is
+   gitignored — the secret key must never reach the repository:
 
    | Variable | Where it comes from | Notes |
    |---|---|---|
    | `SUPABASE_URL` | Project settings → API → Project URL | |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Project settings → API → `service_role` | **Server only.** Never prefix with `NEXT_PUBLIC_`. |
+   | `SUPABASE_SECRET_KEY` | Project settings → API keys → secret key (`sb_secret_…`) | **Server only.** Never prefix with `NEXT_PUBLIC_`. A project still on the legacy JWT key can use `SUPABASE_SERVICE_ROLE_KEY` instead. |
    | `COLLAB_TOKEN_PEPPER` | Any long random string you generate once | Mixed into the token hash. Changing it invalidates every existing link. |
    | `PROGRAM_DATA_DRIVER` | `supabase` | Optional; inferred from `SUPABASE_URL`. |
    | `SEED_COLLAB_TOKEN` | — | Optional. Pins a known link in staging. Leave empty in production. |
@@ -81,7 +82,7 @@ For anything real, configure Supabase.
 
 1. **New Project → Deploy from GitHub repo**, pick this repository.
 2. **Settings → Root Directory:** `bhfa-2027` (this app lives beside the main portal).
-3. **Variables:** add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `COLLAB_TOKEN_PEPPER`.
+3. **Variables:** add `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `COLLAB_TOKEN_PEPPER`.
    Railway provides `PORT` automatically — do not set it yourself.
 4. Build and start commands come from `railway.json`:
    - build: `npm ci && npm run build`
@@ -167,8 +168,10 @@ The requirement is explicit: *anyone with the secret link may edit*. Within that
 - Only `sha256(pepper + token)` is stored, so a database dump yields no working links.
 - Every request re-validates the token server-side; an unknown or rotated link is a 404 that
   reveals nothing about the program.
-- All database access happens inside route handlers with the service-role key. RLS is enabled
-  on every table with **no policies**, so anon/authenticated access is denied outright.
+- All database access happens inside route handlers with the server-side secret key. RLS is
+  enabled on every table with **no policies**, so anon/authenticated access is denied outright.
+  A publishable or anon key in the server slot is refused at boot rather than quietly reading
+  back an empty programme.
 - Inputs are validated and sanitised (control characters stripped, lengths capped, enums
   checked, sponsor links restricted to `http(s)`).
 - Mutations are rate limited per address; CSP, `X-Frame-Options: DENY`, `noindex` and friends
