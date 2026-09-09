@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
+import type { Faculty, HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
 import { sessionsForDay } from '../domain/schedule';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
 import { ApiError, createApi, type EditConflict, type MutationResponse } from './api';
@@ -90,6 +90,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
       return {
         ...current,
         sessions: upsertSessions(current.sessions, incoming, response.deleted ?? []),
+        faculty: response.faculty ?? current.faculty,
         revision: Math.max(current.revision, response.revision),
       };
     });
@@ -167,12 +168,20 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
           revision: number;
           upserted: Session[];
           deleted: string[];
+          faculty?: Faculty[];
         };
-        // Our own change has already been applied optimistically.
-        if (payload.actorClientId && payload.actorClientId === identityRef.current.clientId) return;
+        // Our own change has already been applied optimistically — but the
+        // roster still has to land, or a name we just typed reads as unassigned.
+        if (payload.actorClientId && payload.actorClientId === identityRef.current.clientId) {
+          if (payload.faculty) {
+            setSnapshot((current) => ({ ...current, faculty: payload.faculty as Faculty[] }));
+          }
+          return;
+        }
         setSnapshot((current) => ({
           ...current,
           sessions: upsertSessions(current.sessions, payload.upserted ?? [], payload.deleted ?? []),
+          faculty: payload.faculty ?? current.faculty,
           revision: Math.max(current.revision, payload.revision),
         }));
       } catch {

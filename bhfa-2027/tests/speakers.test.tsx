@@ -173,6 +173,59 @@ describe('adding a speaker', () => {
     expect(screen.getByLabelText(/speaker 1 name/i)).toHaveValue('Dr. Marc Mani');
   });
 
+  it('keeps showing a newly typed name after the server turns it into faculty', async () => {
+    // The server promotes a typed name into the faculty table and returns the
+    // speaker as { facultyId, displayName: null }. Browsers resolve names through
+    // their own roster, so unless the response carries the new roster the name
+    // reads as "To be confirmed" until the page is reloaded.
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method !== 'GET') mutations.push({ method, body: String(init?.body ?? '') });
+        if (String(url).includes('/presence')) {
+          return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+        }
+        const base = snapshot().sessions[0];
+        return new Response(
+          JSON.stringify({
+            revision: 2,
+            session: {
+              ...base,
+              speakers: [
+                {
+                  id: 'sp-new',
+                  facultyId: 'f-new',
+                  displayName: null,
+                  role: 'speaker',
+                  status: 'confirmed',
+                  sortOrder: 0,
+                },
+              ],
+              updatedAt: '2027-01-02T00:00:00.000Z',
+            },
+            faculty: [
+              { id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani', credentials: null, headshotUrl: null },
+              { id: 'f-new', programId: 'program-1', name: 'Dr. New Name', credentials: null, headshotUrl: null },
+            ],
+            history: null,
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const user = await openSession();
+    await user.click(screen.getByRole('button', { name: /add speaker/i }));
+    await user.type(screen.getByLabelText(/speaker 1 name/i), 'Dr. New Name');
+    await waitFor(() => expect(speakerWrites().length).toBeGreaterThan(0), { timeout: 3000 });
+
+    // Resolved through the roster the response carried — not blanked out.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/speaker 1 name/i)).toHaveValue('Dr. New Name'),
+    );
+    expect(screen.queryByText(/to be confirmed/i)).not.toBeInTheDocument();
+  });
+
   it('settles: an open editor does not keep writing on its own', async () => {
     const user = await openSession();
     await user.click(screen.getByRole('button', { name: /add speaker/i }));

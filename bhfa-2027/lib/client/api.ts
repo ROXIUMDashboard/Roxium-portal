@@ -8,7 +8,7 @@
  * Transient failures (offline, 5xx) are surfaced as `retryable` so the caller
  * can keep the surgeon's change on screen and try again rather than dropping it.
  */
-import type { HistoryEntry, ProgramSnapshot, Session } from '../domain/types';
+import type { Faculty, HistoryEntry, ProgramSnapshot, Session } from '../domain/types';
 
 /** Reported when a save landed on top of a version another collaborator wrote. */
 export interface EditConflict {
@@ -35,6 +35,8 @@ export interface MutationResponse {
   revision: number;
   history: HistoryEntry | null;
   conflict?: EditConflict | null;
+  /** Present when the change may have added a name to the faculty roster. */
+  faculty?: Faculty[];
 }
 
 export interface ApiIdentity {

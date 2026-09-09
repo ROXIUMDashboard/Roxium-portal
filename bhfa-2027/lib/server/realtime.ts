@@ -15,7 +15,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { PresenceEntry, Session } from '../domain/types';
+import type { Faculty, PresenceEntry, Session } from '../domain/types';
 import { getRepositoryHandle } from '../data';
 import { SupabaseRepository } from '../data/supabase';
 
@@ -29,6 +29,8 @@ export interface MutationEvent {
   summary: string;
   upserted: Session[];
   deleted: string[];
+  /** Roster as of this change, so a newly typed speaker name resolves at once. */
+  faculty?: Faculty[];
 }
 
 export interface PresenceEvent {

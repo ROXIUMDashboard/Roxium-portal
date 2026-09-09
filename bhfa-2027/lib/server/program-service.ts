@@ -86,12 +86,21 @@ function timesOf(sessions: Session[], ids: string[]): TimeAssignment[] {
 
 /* ------------------------------------------------------------- broadcasting */
 
+/**
+ * Publish a change, and hand back the roster alongside the revision.
+ *
+ * A typed speaker name is promoted into the faculty table by `linkSpeakerNames`,
+ * which stores a `facultyId` and clears `displayName`. Browsers resolve a
+ * speaker's name through their own copy of the roster, so a name they have not
+ * seen yet renders as "To be confirmed" until the page is reloaded. The snapshot
+ * is already loaded here, so the current roster travels with every change.
+ */
 async function announce(
   context: ProgramContext,
   summary: string,
   upserted: Session[],
   deleted: string[] = [],
-): Promise<number> {
+): Promise<{ revision: number; faculty: Faculty[] }> {
   const snapshot = await context.repository.getSnapshot(context.workspace.programId);
   publish(context.workspace.programId, {
     type: 'mutation',
@@ -102,8 +111,9 @@ async function announce(
     summary,
     upserted,
     deleted,
+    faculty: snapshot.faculty,
   });
-  return snapshot.revision;
+  return { revision: snapshot.revision, faculty: snapshot.faculty };
 }
 
 export async function getSnapshot(context: ProgramContext): Promise<ProgramSnapshot> {
@@ -266,8 +276,8 @@ export async function createSession(
   });
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
-  const revision = await announce(context, history.summary, sessionsForDay(after.sessions, fresh.dayId));
-  return { session: fresh, revision, history };
+  const { revision, faculty } = await announce(context, history.summary, sessionsForDay(after.sessions, fresh.dayId));
+  return { session: fresh, revision, history, faculty };
 }
 
 function describeChange(before: Session, patch: SessionPatch): { action: HistoryAction; summary: string } {
@@ -353,8 +363,8 @@ export async function updateSession(
 
   const conflict = stale ? await describeConflict(context, before, updated, touched as string[]) : null;
 
-  const revision = await announce(context, summary, [updated]);
-  return { session: updated, revision, history, conflict };
+  const { revision, faculty } = await announce(context, summary, [updated]);
+  return { session: updated, revision, history, conflict, faculty };
 }
 
 export async function deleteSession(context: ProgramContext, sessionId: string): Promise<MutationResult> {
@@ -378,8 +388,8 @@ export async function deleteSession(context: ProgramContext, sessionId: string):
   });
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
-  const revision = await announce(context, history.summary, sessionsForDay(after.sessions, before.dayId), [sessionId]);
-  return { deleted: [sessionId], revision, history };
+  const { revision, faculty } = await announce(context, history.summary, sessionsForDay(after.sessions, before.dayId), [sessionId]);
+  return { deleted: [sessionId], revision, history, faculty };
 }
 
 export interface ReorderRequest {
@@ -432,8 +442,8 @@ export async function reorderSession(context: ProgramContext, request: ReorderRe
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
   const upserted = after.sessions.filter((s) => affectedIds.has(s.id));
-  const revision = await announce(context, summary, upserted);
-  return { sessions: upserted, revision, history };
+  const { revision, faculty } = await announce(context, summary, upserted);
+  return { sessions: upserted, revision, history, faculty };
 }
 
 export interface ShiftRequest {
@@ -481,8 +491,8 @@ export async function shiftFollowingSessions(context: ProgramContext, request: S
   const after = await context.repository.getSnapshot(context.workspace.programId);
   const changed = new Set(targets.map((t) => t.id));
   const upserted = after.sessions.filter((s) => changed.has(s.id));
-  const revision = await announce(context, summary, upserted);
-  return { sessions: upserted, revision, history };
+  const { revision, faculty } = await announce(context, summary, upserted);
+  return { sessions: upserted, revision, history, faculty };
 }
 
 /** Apply a stored history payload as the current state. Used by undo and restore. */
@@ -602,8 +612,8 @@ export async function revertHistoryEntry(
     after: entry.before,
   });
 
-  const revision = await announce(context, summary, applied.upserted, [...deleted, ...applied.deleted]);
-  return { sessions: applied.upserted, deleted: [...deleted, ...applied.deleted], revision, history };
+  const { revision, faculty } = await announce(context, summary, applied.upserted, [...deleted, ...applied.deleted]);
+  return { sessions: applied.upserted, deleted: [...deleted, ...applied.deleted], revision, history, faculty };
 }
 
 export async function listHistory(context: ProgramContext, limit = 120): Promise<HistoryEntry[]> {
