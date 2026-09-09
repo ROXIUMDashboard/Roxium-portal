@@ -59,8 +59,23 @@ function toDraft(session: Session, faculty: Faculty[]): Draft {
   };
 }
 
+/**
+ * The speakers that would actually be written. A row the collaborator has just
+ * added but not yet named is not one of them.
+ */
+const persistableSpeakers = (list: DraftSpeaker[]) =>
+  list.filter((speaker) => speaker.name.trim() || speaker.status === 'tbd');
+
+/**
+ * Compare only what the server can hold.
+ *
+ * This must ignore blank rows. The patch below drops them, so counting one as a
+ * difference would make the draft and the saved session permanently disagree:
+ * every render would diff, save `speakers: []`, receive the unchanged session
+ * back, and diff again — a save loop that never converges.
+ */
 const speakerShape = (list: DraftSpeaker[]) =>
-  JSON.stringify(list.map((s) => [s.name.trim(), s.role, s.status]));
+  JSON.stringify(persistableSpeakers(list).map((s) => [s.name.trim(), s.role, s.status]));
 
 /**
  * Only the fields this editor actually touched, and only where they differ from
@@ -91,8 +106,7 @@ function diff(
   if (changed('internalNotes')) patch.internalNotes = draft.internalNotes || null;
 
   if (touched.has('speakers') && speakerShape(draft.speakers) !== speakerShape(saved.speakers)) {
-    patch.speakers = draft.speakers
-      .filter((speaker) => speaker.name.trim() || speaker.status === 'tbd')
+    patch.speakers = persistableSpeakers(draft.speakers)
       .map((speaker) => ({
         displayName: speaker.name.trim() || null,
         role: speaker.role,
@@ -122,7 +136,10 @@ export default function SessionEditor({
   const [draft, setDraft] = useState<Draft>(() => toDraft(session, faculty));
   const [showMore, setShowMore] = useState(false);
   const [timeError, setTimeError] = useState<string | null>(null);
+  // A speaker row that has just been revealed and should receive the caret.
+  const [focusSpeakerKey, setFocusSpeakerKey] = useState<string | null>(null);
 
+  const speakersRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const sessionRef = useRef(session);
@@ -186,13 +203,20 @@ export default function SessionEditor({
     room.setPendingShift({ sessionId: sessionRef.current.id, dayId: day.id, deltaMinutes: endDelta, message });
   }, [day.id, faculty, followingCount, room]);
 
-  // Autosave, and flush anything outstanding when the editor closes.
-  useEffect(() => {
-    const timer = window.setTimeout(() => void save(), AUTOSAVE_MS);
-    return () => window.clearTimeout(timer);
-  }, [draft, save]);
+  // `save` closes over `room`, whose identity changes whenever the room
+  // re-renders. Depending on it directly would re-arm the debounce — and re-run
+  // the unmount flush — on every render rather than on every actual edit.
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
-  useEffect(() => () => void save(), [save]);
+  // Autosave: debounced on real draft changes only.
+  useEffect(() => {
+    const timer = window.setTimeout(() => void saveRef.current(), AUTOSAVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
+
+  // Flush anything outstanding when the editor actually closes.
+  useEffect(() => () => void saveRef.current(), []);
 
   /**
    * Someone else saved this session while it is open here. Fields this editor
@@ -218,6 +242,13 @@ export default function SessionEditor({
             : incoming[field] === current[field];
         if (same) continue;
         if (next === current) next = { ...current };
+        if (field === 'speakers') {
+          // Adopt their speakers, but keep a row this collaborator has added
+          // and not yet named — it is unsaved by nature, so nothing else holds it.
+          const blank = current.speakers.filter((speaker) => persistableSpeakers([speaker]).length === 0);
+          next.speakers = [...incoming.speakers, ...blank];
+          continue;
+        }
         (next as unknown as Record<string, unknown>)[field] = incoming[field];
       }
       return next;
@@ -264,6 +295,29 @@ export default function SessionEditor({
       speakers: current.speakers.map((speaker) => (speaker.key === key ? { ...speaker, ...patch } : speaker)),
     }));
 
+  /**
+   * Reveal a speaker row immediately. Nothing here waits on the server: the row
+   * is local until it has a name, and only then does autosave write it.
+   *
+   * Clicking again while an unnamed row is already open focuses that row rather
+   * than stacking up blank ones.
+   */
+  const addSpeaker = useCallback(() => {
+    const existingBlank = draftRef.current.speakers.find(
+      (speaker) => persistableSpeakers([speaker]).length === 0,
+    );
+    if (existingBlank) {
+      setFocusSpeakerKey(existingBlank.key);
+      return;
+    }
+    const key = `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    edit(['speakers'], (current) => ({
+      ...current,
+      speakers: [...current.speakers, { key, name: '', role: 'speaker', status: 'confirmed' }],
+    }));
+    setFocusSpeakerKey(key);
+  }, [edit]);
+
   const moveSpeaker = (key: string, direction: -1 | 1) =>
     edit(['speakers'], (current) => {
       const from = current.speakers.findIndex((speaker) => speaker.key === key);
@@ -274,6 +328,16 @@ export default function SessionEditor({
       speakers.splice(to, 0, moved);
       return { ...current, speakers };
     });
+
+  // Put the caret in a newly revealed speaker row, once it is on screen.
+  useEffect(() => {
+    if (!focusSpeakerKey) return;
+    const input = speakersRef.current?.querySelector<HTMLInputElement>(
+      `input[data-speaker-key="${focusSpeakerKey}"]`,
+    );
+    input?.focus();
+    setFocusSpeakerKey(null);
+  }, [focusSpeakerKey, draft.speakers]);
 
   const conflict = room.conflicts[session.id];
 
@@ -400,7 +464,7 @@ export default function SessionEditor({
       </label>
 
       {/* ------------------------------------------------------ speakers */}
-      <div className={styles.editorField}>
+      <div className={styles.editorField} ref={speakersRef}>
         <span className="fieldLabel">Speakers</span>
         <datalist id="bhfa-faculty">
           {facultyNames.map((name) => (
@@ -415,6 +479,7 @@ export default function SessionEditor({
             <input
               className="field"
               list="bhfa-faculty"
+              data-speaker-key={speaker.key}
               value={speaker.name}
               placeholder={speaker.status === 'tbd' ? 'To be confirmed' : 'Faculty name'}
               onChange={(event) => updateSpeaker(speaker.key, { name: event.target.value })}
@@ -483,15 +548,7 @@ export default function SessionEditor({
         <button
           type="button"
           className={styles.addSpeaker}
-          onClick={() =>
-            edit(['speakers'], (current) => ({
-              ...current,
-              speakers: [
-                ...current.speakers,
-                { key: `new-${Date.now()}-${current.speakers.length}`, name: '', role: 'speaker', status: 'confirmed' },
-              ],
-            }))
-          }
+          onClick={addSpeaker}
         >
           + Add speaker
         </button>
