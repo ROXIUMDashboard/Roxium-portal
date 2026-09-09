@@ -238,6 +238,12 @@ export interface MutationResult {
   deleted?: string[];
   revision: number;
   history: HistoryEntry | null;
+  /**
+   * Roster as of this change. A typed speaker name becomes a faculty row, and
+   * browsers resolve speaker names through their own copy of the roster — so it
+   * has to travel back with the change that created it.
+   */
+  faculty?: Faculty[];
 }
 
 export async function createSession(
