@@ -62,9 +62,17 @@ describe('FAIL CLOSED: never silently fall back to production', () => {
   });
 
   test('an environment with no Supabase project configured refuses', () => {
-    const r = resolveRoxiumEnvironment('staging.roxium.com', UNSTAMPED);
-    mustNotBeProduction(r);
-    assert.equal(r.reason, 'unconfigured');
+    // Exercise the branch deterministically by blanking the entry for the
+    // duration of the test, so this keeps passing once staging is configured.
+    const saved = ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL;
+    ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL = '';
+    try {
+      const r = resolveRoxiumEnvironment('staging.roxium.com', UNSTAMPED);
+      mustNotBeProduction(r);
+      assert.equal(r.reason, 'unconfigured');
+    } finally {
+      ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL = saved;
+    }
   });
 
   test('every refusal carries an explanatory detail for the operator', () => {
@@ -106,5 +114,26 @@ describe('no host is claimed by two environments', () => {
         seen.set(h, name);
       }
     }
+  });
+});
+
+describe('once staging IS configured, it must still never be production', () => {
+  const configured = Boolean(ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL
+    && ROXIUM_ENVIRONMENTS.staging.SUPABASE_ANON_KEY);
+
+  test('staging resolves to staging, and to a different project than production', (t) => {
+    if (!configured) return t.skip('staging not configured yet (expected before go-live)');
+    const r = resolveRoxiumEnvironment('staging.roxium.com', 'staging');
+    assert.equal(r.ok, true);
+    assert.equal(r.name, 'staging');
+    assert.notEqual(r.env.SUPABASE_URL, ROXIUM_ENVIRONMENTS.production.SUPABASE_URL,
+      'STAGING IS POINTING AT THE PRODUCTION PROJECT');
+    assert.notEqual(r.env.SUPABASE_ANON_KEY, ROXIUM_ENVIRONMENTS.production.SUPABASE_ANON_KEY,
+      'staging is using the production anon key');
+  });
+
+  test('a configured staging never leaks onto a production host', (t) => {
+    if (!configured) return t.skip('staging not configured yet');
+    assert.equal(resolveRoxiumEnvironment('roxium.com', 'staging').ok, false);
   });
 });
