@@ -3,6 +3,13 @@
    Front end: Cloudflare Pages (static) · Backend: Supabase (auth + db + RLS)
    ============================================================ */
 
+// Environment gate. config.js resolves which Supabase project this page may talk to
+// and sets window.ROXIUM_ENV_ERROR (plus an on-screen notice) if it cannot decide.
+// Stop here rather than construct a client against a guessed backend — see
+// docs/ENVIRONMENTS.md. When the environment resolves, this is a no-op.
+if (typeof CONFIG === 'undefined' || !CONFIG || !CONFIG.SUPABASE_URL) {
+  throw new Error('[ROXIUM] halted: no environment resolved (see config.js / docs/ENVIRONMENTS.md)');
+}
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
 // Team manual-entry fields = the real ad metrics the Coefficient sheet provides.
