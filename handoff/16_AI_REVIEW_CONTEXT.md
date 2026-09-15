@@ -216,7 +216,7 @@ Passes 0 and 2 can start now. **Pass 1 is blocked on product decisions.**
 | Q5 | Is the Coefficient/Sheets pipeline being retired? | Pass 4 | Internal-only, with a written deprecation date |
 | Q6 | Which events email the client vs stay internal? | Pass 3 | Deliveries/milestones/stats to the client; all operational signals team-only; waiting-on-client is the exception |
 | Q7 | Should anyone enter revenue/consults/procedures? | Pass 5 | Team-entered only |
-| Q8 | Should clients see due dates and overdue state? | Pass 6 | Show a promised *window*, never an overdue flag |
+| Q8 | ~~Should clients see due dates?~~ **RESOLVED** | Pass 6 | **Decided (PD-001):** one exact client-facing delivery date, never a range; separate internal target, never exposed. Sub-points A–C still open. |
 | Q9 | Do we need a scoped or read-only team role? | — | Not yet; decide the trigger before the first non-founder gets access |
 | Q10 | Is the software moving to its own domain? | Pass 1 email work | Decide **before** verifying a sending domain, not after |
 | Q11 | Target client count in 12 months? | Pass 4 priority | Under ~25 ⇒ concurrency work can wait |

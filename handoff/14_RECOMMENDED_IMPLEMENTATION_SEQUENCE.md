@@ -239,7 +239,13 @@ decide whether old rows are kept, re-labelled or re-pulled.
 4. Tasteful completion/progress animation using the existing motion tokens (R-35) — the
    `prefers-reduced-motion` guard is already global.
 5. Unify the two token sets so the marketing page and the portal cannot drift (R-31).
-6. Whether clients should see due dates at all is **Q8** — today they deliberately do not.
+6. **Client-facing delivery dates — `docs/PRODUCT_DECISIONS.md` PD-001 (binding).**
+   One exact expected delivery date per deliverable, never a range. A separate,
+   earlier internal target stays team-only. This needs a migration (a new
+   client-facing date column) **and** a way to keep the internal target out of
+   the client's API responses — RLS is row-level, so hiding it in the UI is not
+   enough. Blocked on Pass 2 (the date arithmetic is off by one today) and on
+   PD-001 sub-points A–C.
 
 **Files/domains** migration, `app.js` deliverables/video/client renderers, `styles.css`,
 `index.html`.
@@ -289,7 +295,7 @@ Pass 2  dates, phases, honest metrics      ← needs Pass 0c
 Pass 3  notifications that matter          ← needs Pass 2, Q6
 Pass 4  operational visibility             ← needs Pass 3
 Pass 5  connections + reach                ← needs Pass 4, Q3, Q4, Q7
-Pass 6  client UX completion               ← needs Pass 2/3, Q8
+Pass 6  client UX completion               ← needs Pass 2/3, PD-001
 Pass 7  debt reduction                     ← last
 ```
 

@@ -118,18 +118,29 @@ to drop business metrics from the default dashboard entirely.
 **Recommendation: (a)** — it restores ROI reporting without asking the surgeon for
 anything, and it is a small form plus the columns that already exist.
 
-## Q8 · Should clients see deliverable due dates and overdue state?
+## Q8 · ~~Should clients see deliverable due dates and overdue state?~~ — **RESOLVED 2026-09-15**
 
-Today they see status only (Delivered / In progress / Planned). Due dates, overdue flags
-and phase health are deliberately internal.
+**Decided. See `docs/PRODUCT_DECISIONS.md` → PD-001.**
 
-Showing them is more transparent and is what "know what's next" implies; it also means
-every missed internal date becomes a visible broken promise. This is a positioning
-decision, not a technical one.
+Clients see **one clear expected delivery date** — never a range, never a window,
+never "expected this month". ROXIUM keeps a separate, earlier **internal target
+date** as operational buffer, which is never exposed to the client.
 
-**Recommendation: show the *promised window* (e.g. "expected this month"), not the exact
-internal due date, and never show an overdue flag to the client.** It keeps the
-transparency benefit without converting internal slippage into a client-facing failure.
+```
+CLIENT VIEW          Expected delivery: Sep 22
+ROXIUM TEAM VIEW     Internal target: Sep 19
+                     Client expected delivery: Sep 22
+                     Status: On Track / At Risk / Overdue
+```
+
+> My earlier recommendation here — *"show the promised window (e.g. 'expected this
+> month')"* — is **superseded and wrong going forward.** It is recorded only so
+> the reversal is traceable.
+
+Three sub-points in PD-001 still need a product answer before implementation:
+milestone date granularity (A), whether video shoot dates get the same treatment
+(B), and whether "At Risk" is client-visible (C). The status thresholds are a
+recommendation awaiting confirmation.
 
 ## Q9 · Should there be a read-only or practice-scoped team role?
 

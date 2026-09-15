@@ -241,6 +241,17 @@ Sorted newest-first, capped at 80 (or 300 in History view).
 - **Clients never see due dates, overdue state, or phase health.** `delivStatusMeta` is
   called with `attn=false` in the client renderer (`app.js:2998`) — deliberate, per the
   code comments, but it means a client cannot see *when* something is promised.
+
+  > **Target model (binding, not yet built) — `docs/PRODUCT_DECISIONS.md` PD-001.**
+  > Clients will see **one exact expected delivery date** (`Expected delivery: Sep 22`),
+  > never a range or a month. ROXIUM keeps a separate, earlier **internal target** as
+  > buffer, never exposed to the client. Recommended mapping: the existing
+  > `deliverables.due` becomes the internal target and a **new** column carries the
+  > client-facing date — so the existing backlog of internal dates is not silently
+  > converted into client promises. Note that `deliverables`' read policy is
+  > row-level, so a practice member can read *every* column via the API: keeping the
+  > internal target private needs a client-safe view, column privileges, or a
+  > separate table.
 - **No completion animation.** `styles.css` has a motion layer
   (`--dur-*`, `--ease-spring`, `ov-pulse`, `deeplinkpulse`, `ops-tile-pulse-*`) and
   `dsCountUp()` (`app.js:1076`) animates stat tiles, but nothing celebrates a delivery.
