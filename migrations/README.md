@@ -49,3 +49,46 @@ decision, so they're deferred from the code-only Phase 2 pass):
 
 Until a runner is adopted, apply new migrations by hand in the Supabase SQL
 Editor in filename order.
+
+---
+
+## Verifying what production actually has (added 2026-09-15)
+
+Filename order is still the apply order, and migrations are still applied by hand — but
+you no longer have to *guess* whether production matches this folder.
+
+```bash
+# Read-only. No secrets: uses the public anon key from config.js.
+# Exits 1 if a table or column this repo expects is missing from production.
+node scripts/verify-production-schema.mjs
+```
+
+It also runs automatically on every push and weekly
+(`.github/workflows/verify-schema.yml`). It is intentionally **not** wired into the
+deploy workflows yet — see `handoff/17_PRODUCTION_VERIFICATION.md` §8.
+
+For everything the anon key cannot reach — indexes, constraints, triggers, functions,
+**RLS policy bodies**, grants, storage policies and the ledger — paste
+`scripts/verify-production-schema.sql` into the Supabase SQL editor. It is SELECT-only
+and safe to run on production at any time.
+
+### Verified state as of 2026-09-15 (commit `df7731f`)
+
+All 22 expected tables/views and 221 of 222 expected columns are present. One gap:
+
+| Missing | From | Effect |
+|---|---|---|
+| `practices.archived_at` | `2026-07-21_practice_archive.sql` | The Archive feature is inert. `loadTeamPractices()` degrades harmlessly; the Archive button reports the missing migration. |
+
+Apply `2026-07-21_practice_archive.sql` to close it (it is idempotent, additive, and adds
+one nullable column, one index and one team-gated function).
+
+### Adopting the standard Supabase migration workflow
+
+`scripts/adopt-supabase-migrations.sh plan` prints the full mapping and runbook without
+writing anything.
+
+> **Order is not optional.** Baseline the ledger with `supabase migration repair --status
+> applied` **before** `supabase db push` ever runs. With an empty ledger, `db push` would
+> replay all 44 files — and `2026-07-07_catchup_reconcile.sql` would revert functions that
+> later migrations replaced.
