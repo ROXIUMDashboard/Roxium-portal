@@ -1,0 +1,240 @@
+name: Initialize STAGING
+
+# ONE-TIME setup of a brand-new, EMPTY staging Supabase project.
+#
+# Max clicks Run workflow, types the confirmation phrase, and this does the rest:
+# schema + migrations in the proven-safe order, RLS verification, Edge Functions,
+# synthetic seed data, isolation checks and tests — with a readable summary.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS WORKFLOW MUST NEVER BE USABLE AGAINST PRODUCTION.
+#
+# Production has evolved past the 2026-07-07 snapshot embedded in
+# 2026-07-07_catchup_reconcile.sql. Replaying that bundle against production
+# would revert later work. Empty-database bootstrapping and production migration
+# baselining are separate problems; this is only ever the former.
+#
+# Seven independent protections, any one of which aborts the run:
+#   1. environment: staging       — secrets exist only in that GitHub environment
+#   2. APP_ENV must equal exactly "staging"
+#   3. typed confirmation phrase must match exactly
+#   4. production project-ref denylist (substring AND parsed, both URL shapes)
+#   5. production Supabase URL denylist
+#   6. database target verification — refuses a DB holding non-synthetic rows
+#   7. seed guard — scripts/seed-staging.mjs re-checks the target independently
+#
+# Any ambiguous check FAILS CLOSED. There is no fallback to production.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly:  INITIALIZE STAGING'
+        required: true
+        type: string
+      seed:
+        description: 'Also load synthetic staging test data'
+        required: false
+        default: true
+        type: boolean
+      deploy_functions:
+        description: 'Also deploy Edge Functions to the staging project'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: initialize-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Protection 1. These secrets live ONLY in the `staging` environment. The
+    # workflow physically cannot read production credentials; they are scoped to
+    # the `production` environment, which this job never requests.
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_BASE_URL }}
+
+    env:
+      APP_ENV: staging
+      STAGE_FILE: ${{ github.workspace }}/.stages
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Start stage log
+        run: |
+          : > "$STAGE_FILE"
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          psql --version
+
+      # ─────────────────────────────────────────────── guards 2-5, before any write
+      - name: Guards — confirmation, APP_ENV, production denylists
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          PROJECT_REF: ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        run: |
+          missing=0
+          for v in STAGING_SUPABASE_DB_URL STAGING_SUPABASE_URL PROJECT_REF; do
+            if [ -z "${!v}" ]; then echo "::error::missing staging secret: $v"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Staging is not configured yet. Refusing to guess a target."
+            echo "See docs/EXTERNAL_SETUP.md — STAGING FIRST-TIME SETUP FOR MAX."
+            exit 1
+          fi
+
+          node --input-type=module -e "
+          import {
+            assertAppEnvStaging, assertConfirmation,
+            assertStagingDbUrl, assertStagingTarget,
+          } from './scripts/lib/staging-guard.mjs';
+          const say = (m) => console.log('  ok  ' + m);
+          try {
+            assertAppEnvStaging(process.env.APP_ENV);                        // guard 2
+            say('APP_ENV is exactly \"staging\"');
+            assertConfirmation(process.env.CONFIRM, 'INITIALIZE STAGING');   // guard 3
+            say('confirmation phrase matched');
+            const dbRef = assertStagingDbUrl(process.env.STAGING_SUPABASE_DB_URL);  // guard 4
+            say('database project ref ' + dbRef + ' is NOT production');
+            const apiRef = assertStagingTarget(process.env.STAGING_SUPABASE_URL);   // guard 5
+            say('API URL project ref ' + apiRef + ' is NOT production');
+            if (dbRef !== apiRef) {
+              throw new Error('STAGING_SUPABASE_DB_URL (' + dbRef + ') and STAGING_SUPABASE_URL (' + apiRef + ') point at DIFFERENT projects. Refusing to act on a mismatched pair.');
+            }
+            say('both staging secrets reference the same project');
+            const declared = (process.env.PROJECT_REF || '').trim();
+            if (declared && declared !== dbRef) {
+              throw new Error('STAGING_SUPABASE_PROJECT_REF (' + declared + ') disagrees with the connection strings (' + dbRef + ').');
+            }
+            say('STAGING_SUPABASE_PROJECT_REF agrees');
+          } catch (e) {
+            console.error('');
+            console.error('REFUSED: ' + e.message);
+            console.error('Nothing was written. This is deliberate — the workflow fails closed.');
+            process.exit(1);
+          }"
+          echo "isolation=ok" >> "$STAGE_FILE"
+
+      # ───────────────────────────────────────────────────────── guards 6, then apply
+      - name: Bootstrap the staging database (schema + migrations, verified)
+        env:
+          STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+          CONFIRM: ${{ inputs.confirm }}
+          BOOTSTRAP_OUT: ${{ github.workspace }}/build/staging-bootstrap.sql
+        run: |
+          # scripts/initialize-staging-db.sh re-runs guards 2-4 itself (it is also
+          # usable standalone), then applies guard 6 — the target must be empty or
+          # hold only "(TEST)" fixtures — before a single DDL statement runs.
+          bash scripts/initialize-staging-db.sh
+          echo "database=ok"   >> "$STAGE_FILE"
+          echo "migrations=ok" >> "$STAGE_FILE"
+          echo "rls=ok"        >> "$STAGE_FILE"
+
+      - name: Verify the resulting schema
+        env:
+          STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+        run: |
+          # Independent of the apply step: re-query the database from scratch.
+          tables=$(psql "$STAGING_SUPABASE_DB_URL" -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE';")
+          rlsoff=$(psql "$STAGING_SUPABASE_DB_URL" -tAc \
+            "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and not c.relrowsecurity;")
+          missing=$(psql "$STAGING_SUPABASE_DB_URL" -tAc \
+            "select coalesce(string_agg(t.n, ', '), '') from (values ('practices'),('profiles'),('memberships'),('deliverables'),('milestones'),('video_pipeline'),('activity'),('notifications'),('kpi_monthly'),('kpi_daily')) as t(n) where to_regclass('public.'||t.n) is null;")
+          echo "  tables in public schema: $tables"
+          [ "${missing:-x}" = "" ] || { echo "::error::core tables missing: $missing"; exit 1; }
+          [ "${rlsoff:-1}" = "0" ] || { echo "::error::$rlsoff table(s) have RLS disabled"; exit 1; }
+          [ "$tables" -ge 20 ] || { echo "::error::only $tables tables — the bootstrap did not complete"; exit 1; }
+          echo "  ok  every core table present, RLS on all $tables tables"
+          echo "schema_tables=$tables" >> "$STAGE_FILE"
+
+      - name: Deploy Edge Functions to the staging project
+        if: ${{ inputs.deploy_functions }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN is not set in the staging environment."
+            echo "Add it, or re-run with 'Also deploy Edge Functions' unchecked."
+            exit 1
+          fi
+          bash scripts/deploy-functions.sh
+          echo "functions=ok" >> "$STAGE_FILE"
+
+      - name: Seed deterministic synthetic staging data
+        if: ${{ inputs.seed }}
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$STAGING_SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::STAGING_SUPABASE_SERVICE_ROLE_KEY is not set in the staging environment."
+            echo "Add it, or re-run with 'Also load synthetic staging test data' unchecked."
+            exit 1
+          fi
+          # Guard 7: seed-staging.mjs runs assertStagingTarget() before its first
+          # write, so the seeder refuses production even if invoked by hand.
+          node scripts/seed-staging.mjs
+          echo "seed=ok" >> "$STAGE_FILE"
+
+      - name: Run the automated test suite
+        run: |
+          node --test tests/unit/*.test.mjs
+          echo "tests=ok" >> "$STAGE_FILE"
+
+      - name: Summary
+        if: always()
+        env:
+          WANT_FUNCTIONS: ${{ inputs.deploy_functions }}
+          WANT_SEED: ${{ inputs.seed }}
+          JOB_STATUS: ${{ job.status }}
+          BASE_URL: ${{ vars.STAGING_BASE_URL }}
+        run: |
+          mark() {                       # $1 stage key, $2 label, $3 "yes"/"no" wanted
+            if grep -qx "$1=ok" "$STAGE_FILE" 2>/dev/null; then echo "✅ $2"
+            elif [ "${3:-yes}" = "no" ];                  then echo "⏭️ $2 — skipped by request"
+            else                                               echo "❌ $2"
+            fi
+          }
+          fn=no;   [ "$WANT_FUNCTIONS" = "true" ] && fn=yes
+          sd=no;   [ "$WANT_SEED" = "true" ]      && sd=yes
+          tables=$(sed -n 's/^schema_tables=//p' "$STAGE_FILE" 2>/dev/null | tail -1)
+          rls_label="RLS verification"
+          [ -n "$tables" ] && rls_label="RLS verification (${tables} tables, RLS on all)"
+          {
+            echo "## STAGING INITIALIZATION"
+            echo ""
+            mark database   "Database"              yes
+            mark migrations "Migrations"            yes
+            mark rls        "$rls_label"            yes
+            mark functions  "Edge Functions"        "$fn"
+            mark seed       "Seed data"             "$sd"
+            mark isolation  "Environment isolation" yes
+            mark tests      "Tests"                 yes
+            echo ""
+            if [ "$JOB_STATUS" = "success" ]; then
+              echo "**Staging is initialized.** Open ${BASE_URL} and sign in with a seeded test account (see \`docs/STAGING_DATA.md\`)."
+            else
+              echo "**This run stopped at the first ❌ above.** Nothing after it was attempted."
+              echo ""
+              echo "A refusal in the guard step means a safety check did not pass and *nothing was written to any database* — that is the workflow working correctly. Open the failed step for the exact reason."
+              echo ""
+              echo "See \`docs/EXTERNAL_SETUP.md\` -> Advanced / Troubleshooting."
+            fi
+            echo ""
+            echo "_This workflow can only target the staging Supabase project. It is not granted access to production credentials._"
+          } >> "$GITHUB_STEP_SUMMARY"

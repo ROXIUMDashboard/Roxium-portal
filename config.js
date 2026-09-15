@@ -40,13 +40,24 @@ const ROXIUM_ENVIRONMENTS = {
       '',                       // file:// during local inspection
     ],
     hostSuffixes: ['.roxium-portal.pages.dev'],   // every Pages preview build -> staging
-    // TODO(Max): fill these in from the STAGING Supabase project
-    // (Settings -> API -> Project URL and `anon` public key), then commit.
-    // Until then staging FAILS CLOSED, which is the intended behaviour.
-    SUPABASE_URL: '',
-    SUPABASE_ANON_KEY: '',
+    // Injected at build time by scripts/prepare-pages.sh from the GitHub
+    // `staging` environment (ROXIUM_STAGING_SUPABASE_URL / _ANON_KEY), so nobody
+    // has to hand-edit this file. An un-substituted placeholder is normalised to
+    // '' below, which makes staging FAIL CLOSED — the intended behaviour until
+    // the staging project exists.
+    SUPABASE_URL: '__ROXIUM_STAGING_SUPABASE_URL__',
+    SUPABASE_ANON_KEY: '__ROXIUM_STAGING_SUPABASE_ANON_KEY__',
   },
 };
+
+// Any value still carrying its build placeholder counts as NOT configured.
+// Without this a literal '__ROXIUM_...__' string would be truthy and the app
+// would try to open a connection to a nonsense URL instead of failing closed.
+for (const _env of Object.values(ROXIUM_ENVIRONMENTS)) {
+  for (const _k of ['SUPABASE_URL', 'SUPABASE_ANON_KEY']) {
+    if (typeof _env[_k] === 'string' && _env[_k].indexOf('__ROXIUM') === 0) _env[_k] = '';
+  }
+}
 
 // Stamped by scripts/prepare-pages.sh. Left as the literal placeholder in the repo
 // so an un-built checkout falls through to hostname resolution.

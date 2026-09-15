@@ -1,177 +1,239 @@
-# External Setup — actions only Max can perform
+# STAGING FIRST-TIME SETUP FOR MAX
 
-Everything that could be built in the repository **is** built. What remains needs
-ownership of an external account.
+Staging is a complete second copy of the portal with its own database. You test
+there; customers never see it. This page sets it up once.
 
-Work top to bottom. **Step 1 is the only one that blocks everything else.**
+**6 actions. No Terminal. No SQL. No copying migration files.**
 
-Legend — ✅ done · 🟡 needs configuration · 🔴 blocking
+After action 6 you click one button and GitHub builds the whole thing.
+
+> **What you need before starting:** a Supabase login, a GitHub login, and
+> Cloudflare access. Roughly 20 minutes.
+
+Legend — 🔴 blocking · 🟡 optional for now
 
 ---
 
-## 1 · Create the staging Supabase project 🔴
+## Action 1 · Create the staging Supabase project 🔴
 
-**Platform** Supabase · **Location** https://supabase.com/dashboard → **New project**
+**Where to click** https://supabase.com/dashboard → **New project**
 
-| Setting | Value |
+**What to enter**
+
+| Field | Value |
 |---|---|
 | Name | `roxium-portal-staging` |
-| Organisation | same as production |
-| Region | same as production |
-| Database password | generate and save it — needed in step 3 |
+| Organisation | the same one production uses |
+| Region | the same one production uses |
+| Database password | click **Generate**, then **copy it somewhere safe for 10 minutes** — you need it in Action 2 |
 
-**Why:** staging must have its own database, Auth, Storage and secrets. Pointing
-staging at the production database is the one thing this whole design exists to
-prevent.
+**What success looks like:** the project page says **Active** (it takes 1–2
+minutes). The database is empty — that is expected and correct.
 
-Then, **in the new project's SQL editor**, run in this order:
-1. the whole of `schema.sql`
-2. every file in `migrations/` in filename order (`ls migrations/*.sql | sort`)
-
-Safe: the database is empty, so there is nothing to damage.
+> ⚠️ Do not run any SQL here. Action 6 does that for you.
 
 ---
 
-## 2 · Put the staging keys into `config.js` 🔴
+## Action 2 · Collect the five staging values 🔴
 
-**Platform** Supabase → staging project → **Settings ▸ API**
+You are just copying five values out of Supabase. Paste each into a scratch note
+as you go; Action 3 pastes them into GitHub.
 
-Copy **Project URL** and the **`anon` `public`** key into `config.js`:
+**Where to click** your new staging project → **Settings ▸ API**
 
-```js
-staging: {
-  ...
-  SUPABASE_URL: 'https://<your-staging-ref>.supabase.co',
-  SUPABASE_ANON_KEY: 'eyJ…',
-}
+| Copy this | Called it in GitHub |
+|---|---|
+| **Project URL** (`https://…supabase.co`) | `STAGING_SUPABASE_URL` |
+| **Project API keys → `anon` `public`** | `STAGING_SUPABASE_ANON_KEY` |
+| **Project API keys → `service_role`** (click *Reveal*) | `STAGING_SUPABASE_SERVICE_ROLE_KEY` |
+| **Reference ID** (also the code in the Project URL) | `STAGING_SUPABASE_PROJECT_REF` |
+
+**Where to click next** → **Settings ▸ Database ▸ Connection string ▸ URI**
+
+| Copy this | Called it in GitHub |
+|---|---|
+| The whole `postgresql://…` line, then replace `[YOUR-PASSWORD]` with the password from Action 1 | `STAGING_SUPABASE_DB_URL` |
+
+**What success looks like:** five values in your note, and the connection string
+contains a real password rather than the literal text `[YOUR-PASSWORD]`.
+
+> 🔒 The `service_role` key and the connection string are **admin credentials**.
+> They go into GitHub and nowhere else — not into Slack, not into a document, not
+> into the code. The `anon` key is different: it is public by design.
+
+---
+
+## Action 3 · Create the GitHub `staging` environment and paste the values 🔴
+
+**Where to click** GitHub → the `roxium-portal` repo → **Settings ▸ Environments**
+→ **New environment** → name it exactly `staging` → **Configure environment**
+
+**What to paste** — under **Environment secrets**, click **Add secret** six times:
+
+| Name | Value |
+|---|---|
+| `STAGING_SUPABASE_URL` | from Action 2 |
+| `STAGING_SUPABASE_ANON_KEY` | from Action 2 |
+| `STAGING_SUPABASE_SERVICE_ROLE_KEY` | from Action 2 |
+| `STAGING_SUPABASE_PROJECT_REF` | from Action 2 |
+| `STAGING_SUPABASE_DB_URL` | from Action 2 |
+| `SUPABASE_ACCESS_TOKEN` | the same value already saved at repo level — copy it in here too, or ask Claude |
+
+Then under **Environment variables** → **Add variable**:
+
+| Name | Value |
+|---|---|
+| `STAGING_BASE_URL` | `https://staging.roxium.com` |
+
+**What success looks like:** the `staging` environment lists **6 secrets** and
+**1 variable**. You can no longer read the secret values back — that is normal.
+
+**Now delete your scratch note.**
+
+---
+
+## Action 4 · Turn on the production approval gate 🔴
+
+**Where to click** same page → **Environments** → **New environment** → name it
+exactly `production` → **Configure environment**
+
+**What to do** tick **Required reviewers**, add yourself, **Save protection rules**.
+
+**What success looks like:** the `production` environment shows *Required
+reviewers: 1*. From now on nothing reaches customers without you clicking
+**Approve**.
+
+---
+
+## Action 5 · Point `staging.roxium.com` at Cloudflare 🔴
+
+**Where to click** Cloudflare → **Workers & Pages** → `roxium-portal` →
+**Custom domains** → **Set up a custom domain**
+
+**What to enter** `staging.roxium.com`, and when asked which branch it serves,
+choose **`staging`**.
+
+**What success looks like:** the domain shows **Active**. Opening it right now
+shows a page that refuses to load data — correct, because the database does not
+exist yet. Action 6 fixes that.
+
+---
+
+## Action 6 · Click "Initialize STAGING" 🔴
+
+**Where to click** GitHub → the repo → **Actions** tab → **Initialize STAGING**
+in the left sidebar → **Run workflow** (button on the right)
+
+**What to enter** in the box labelled *Type exactly*, type:
+
+```
+INITIALIZE STAGING
 ```
 
-Commit and push. **Until this is done staging fails closed** — which is correct,
-but it means staging will not work.
+Leave both tick-boxes ticked. Click the green **Run workflow**.
 
-> The anon key is public by design; RLS protects the data. Never put a
-> service-role key in this file.
+**What success looks like:** after 5–10 minutes the run's summary page shows
 
----
-
-## 3 · Add the GitHub secrets and variables 🔴
-
-**Platform** GitHub → repo → **Settings ▸ Environments**
-
-Create an environment named **`staging`**:
-
-| Name | Kind | Value |
-|---|---|---|
-| `STAGING_BASE_URL` | **Variable** | `https://staging.roxium.com` |
-| `STAGING_SUPABASE_PROJECT_REF` | Secret | the staging ref (the `<ref>` from step 2) |
-| `STAGING_SUPABASE_DB_PASSWORD` | Secret | from step 1 |
-| `STAGING_SUPABASE_URL` | Secret | `https://<ref>.supabase.co` |
-| `STAGING_SUPABASE_SERVICE_ROLE_KEY` | Secret | Settings ▸ API ▸ `service_role` |
-
-Create an environment named **`production`**:
-
-| Name | Kind | Value |
-|---|---|---|
-| `SUPABASE_PROJECT_REF` | Secret | `nchtmeqsjkpcvtuscxfy` |
-
-**Why:** the deploy workflows fail closed without these rather than guessing.
-
----
-
-## 4 · Turn on the production approval gate 🔴
-
-**Platform** GitHub → **Settings ▸ Environments ▸ production**
-
-1. Tick **Required reviewers**.
-2. Add yourself (and anyone else who may approve a release).
-3. **Save protection rules**.
-
-**Why:** this is what makes production releases pause for a human. Without it the
-workflow still runs, but nobody is asked to approve. It cannot be set from the
-repository — GitHub only exposes it in the UI.
-
----
-
-## 5 · Point the staging hostname at Cloudflare 🟡
-
-**Platform** Cloudflare → **Workers & Pages ▸ roxium-portal ▸ Custom domains**
-
-1. **Set up a custom domain** → `staging.roxium.com`
-2. Cloudflare adds the DNS record automatically (same zone as `roxium.com`).
-3. Attach it to the **`staging`** branch, not production.
-
-Until then staging is reachable at `https://staging.roxium-portal.pages.dev` —
-which already works and is already recognised by `config.js`. If you use that URL
-instead, set `STAGING_BASE_URL` to it in step 3.
-
-**Why:** gives staging a stable address and keeps it visibly separate.
-
----
-
-## 6 · Set the staging Edge Function secrets 🟡
-
-**Platform** Supabase → staging project → **Edge Functions ▸ Secrets**
-
-| Secret | Value | Why |
-|---|---|---|
-| `APP_ENV` | `staging` | **Important.** Makes `siteUrl()` fail closed instead of defaulting to the live site. |
-| `SITE_URL` | `https://staging.roxium.com` | every email link and OAuth bounce-back |
-| `SYNC_SECRET` | a **new** random value | must differ from production |
-| `RESEND_API_KEY` | optional | leave unset and staging sends no email at all |
-| `EMAIL_FROM` | e.g. `ROXIUM Staging <staging@roxium.com>` | only if you set a Resend key |
-
-Leave `DIGEST_ENABLED` unset so staging never emails the team.
-
-**Never copy a production secret here.** Staging having its own `SYNC_SECRET` is
-what stops a staging cron from triggering a production sync.
-
----
-
-## 7 · Configure staging Auth 🟡
-
-**Platform** Supabase → staging project → **Authentication**
-
-- **URL Configuration ▸ Site URL** → `https://staging.roxium.com`
-- **Redirect URLs** → add `https://staging.roxium.com/**` and
-  `https://staging.roxium-portal.pages.dev/**`
-- **Sign In / Providers ▸ Email** → enabled
-
-**Why:** magic links use `location.origin + '/portal/'`; an origin that is not
-allow-listed lands users on the wrong host.
-
----
-
-## 8 · Seed staging 🟡
-
-Once steps 1–3 are done, GitHub ▸ Actions ▸ **Deploy to STAGING** ▸ *Run
-workflow*. Then locally (or ask Claude):
-
-```bash
-STAGING_SUPABASE_URL=... STAGING_SUPABASE_SERVICE_ROLE_KEY=... npm run seed:staging
+```
+STAGING INITIALIZATION
+✅ Database
+✅ Migrations
+✅ RLS verification
+✅ Edge Functions
+✅ Seed data
+✅ Environment isolation
+✅ Tests
 ```
 
-Creates four fake practices and eight `.test` users — `docs/STAGING_DATA.md`.
+**If any line is ❌** the run stopped there and nothing after it was attempted.
+Open the red step to read the exact reason. A *REFUSED* message means a safety
+check did not pass and **nothing was written to any database** — that is the
+system working correctly, not a broken setup. See *Troubleshooting* below.
 
 ---
 
-## 9 · Close the known production schema gap 🟡
+## You are done
 
-**Platform** Supabase → **production** project → SQL Editor
+Open **https://staging.roxium.com** and sign in with one of the test accounts in
+`docs/STAGING_DATA.md`. Everything you see there is invented data.
 
-Paste and run `migrations/2026-07-21_practice_archive.sql`.
-
-**Why:** production is missing `practices.archived_at`, so the Archive feature is
-inert. Idempotent and additive: one nullable column, one index, one team-gated
-function. Afterwards `npm run verify:schema` exits 0 and CI goes green.
+From here on, read `docs/RELEASE_RUNBOOK.md` — normal releases need none of this.
 
 ---
-
-## 10 · Baseline production migrations 🟡 *(do after 1–9 are working)*
-
-Follow `docs/MIGRATIONS.md` → *Baselining production*. Take a manual backup
-first. This is the step that finally ends hand-applied migrations.
-
 ---
+
+# Advanced / Troubleshooting
+
+Nothing below is needed for normal use.
+
+## What "Initialize STAGING" actually does
+
+1. Checks seven independent safety conditions (below). Any failure stops the run
+   before a single line of SQL executes.
+2. Generates one bootstrap file from `schema.sql` plus all 43 migrations in
+   chronological order, excluding one read-only diagnostic, and applies it with
+   `ON_ERROR_STOP` so a failure cannot leave a half-built schema.
+3. Re-queries the database independently and refuses to report success unless
+   every core table exists and Row Level Security is on for **all** of them.
+4. Deploys the Edge Functions to the staging project.
+5. Loads the deterministic synthetic fixtures from `docs/STAGING_DATA.md`.
+6. Runs the automated test suite.
+
+It is safe to run again. Re-running on an already-initialised staging database
+re-applies the same idempotent statements.
+
+## Why it cannot touch production
+
+Seven independent protections, any one of which aborts the run:
+
+| # | Protection |
+|---|---|
+| 1 | Runs only in the GitHub `staging` environment; production secrets are scoped to the `production` environment and are not readable from it |
+| 2 | `APP_ENV` must be exactly `staging` |
+| 3 | You must type the confirmation phrase exactly |
+| 4 | The production project ref is on a denylist, checked both as a substring and by parsing, in both Supabase connection-string shapes |
+| 5 | The production Supabase URL is denylisted the same way |
+| 6 | The target database is inspected first: if it holds any practice whose name does not end in `(TEST)`, the run is refused |
+| 7 | The seeder re-checks the target itself before its first write |
+
+Anything ambiguous — an unparseable URL, a host that only *looks* like Supabase,
+a missing value — is **refused**, never guessed. There is no fallback path to
+production.
+
+**This method must never be used on production.** Production has evolved past
+the 2026-07-07 snapshot embedded in `2026-07-07_catchup_reconcile.sql`; replaying
+that bundle there would revert later work. Production migration baselining is a
+separate, still-open problem — see `docs/MIGRATIONS.md`.
+
+## Troubleshooting
+
+| Message | Meaning | Fix |
+|---|---|---|
+| `missing staging secret: …` | A secret in Action 3 is absent or empty | Re-add it in the `staging` environment |
+| `REFUSED (app-env)` | Something changed `APP_ENV` | Do not edit the workflow; re-run it as published |
+| `REFUSED (confirmation)` | Typo in the phrase | Retype `INITIALIZE STAGING` exactly — capitals, one space |
+| `REFUSED (production-target)` | A production value was pasted into a staging secret | Re-do Action 2 from the **staging** project |
+| `REFUSED (unrecognised-db-url)` | The connection string is not a recognisable Supabase database | Re-copy it from *Settings ▸ Database ▸ Connection string ▸ URI* |
+| `REFUSED (missing-db-url)` | `STAGING_SUPABASE_DB_URL` is empty | Add it in Action 3 |
+| `… practice(s) that are not synthetic fixtures` | The target holds real-looking data | **Stop.** Confirm which project that connection string points at before doing anything else |
+| `staging Supabase values were not injected` | Deploy ran without `STAGING_SUPABASE_URL` / `_ANON_KEY` | Add both in Action 3 |
+
+## Resetting staging test data
+
+**Actions ▸ Reset STAGING Data ▸ Run workflow**, type `RESET STAGING DATA`.
+
+Deletes and rebuilds only the synthetic fixtures — it never changes the schema,
+and it only deletes rows whose ids it generated itself. Tick **Preview only** to
+see what it would do first.
+
+## Remaining manual technical work (not staging)
+
+| Item | Status |
+|---|---|
+| `practices.archived_at` missing in **production** | Still open — run `migrations/2026-07-21_practice_archive.sql` in the production SQL editor. Additive and idempotent: one nullable column, one index, one team-gated function |
+| Production migration baselining | Still open — see `docs/MIGRATIONS.md`. Deliberately *not* automated by this pass |
+| Staging Edge Function secrets (Resend, Composio, sync keys) | Optional. Staging works without them; the features that call out to those services will not |
+| Staging Auth settings (redirect URLs, signup policy) | Optional. Set *Authentication ▸ URL Configuration ▸ Site URL* to `https://staging.roxium.com` when you want magic links to work on staging |
 
 ## Already done — no action needed ✅
 
@@ -179,8 +241,9 @@ first. This is the step that finally ends hand-applied migrations.
 |---|---|
 | Cloudflare Pages project `roxium-portal` | ✅ exists, production branch `main` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | ✅ already GitHub secrets |
-| `SUPABASE_ACCESS_TOKEN` | ✅ already a GitHub secret |
+| `SUPABASE_ACCESS_TOKEN` | ✅ already a repo-level GitHub secret |
 | Production Supabase project | ✅ live, RLS verified holding |
 | Netlify | ✅ already gone — nothing to remove |
 | Production Edge Function secrets | ✅ unchanged by this pass |
 | Resend / Composio production config | ✅ unchanged by this pass |
+| Staging keys in `config.js` | ✅ no longer needed — the deploy injects them at build time |

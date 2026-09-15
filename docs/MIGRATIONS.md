@@ -49,17 +49,34 @@ It prints a notice pointing here.
 
 ## Bringing up staging (safe: the database is empty)
 
-A brand-new staging project has no data to damage, so the full history can simply
-be applied in order.
+**Automated. Do not do this by hand.**
 
-```bash
-# In the STAGING project's SQL editor, in this order:
-#   1. schema.sql
-#   2. every file in migrations/ in filename order:
-ls migrations/*.sql | sort
-```
+**Actions ▸ Initialize STAGING ▸ Run workflow**, type `INITIALIZE STAGING`.
+See `docs/EXTERNAL_SETUP.md`.
 
-Then confirm:
+`scripts/build-staging-bootstrap.mjs` assembles one deterministic file —
+`schema.sql` followed by every migration in filename order, excluding
+`2026-06-22_diagnose_demo_kpi.sql` (a read-only diagnostic that references a
+production practice id) — and `scripts/initialize-staging-db.sh` applies it with
+`ON_ERROR_STOP=1` behind seven independent safety guards. The workflow then
+re-queries the database and refuses to report success unless every core table
+exists with RLS enabled.
+
+The generator also **hoists the five SECURITY DEFINER helpers**
+(`is_team`, `my_practice`, `is_member_of`, `is_practice_owner`,
+`can_invite_to_practice`) to above the first `create policy`. `schema.sql` uses
+`is_team()` at line 259 but defines it at line 304, so applying it top-to-bottom
+to a genuinely empty database fails. Production never hit this because it was
+built up incrementally. `schema.sql` is deliberately left unmodified: it is
+byte-identical to Part B of `2026-07-07_catchup_reconcile.sql`, and that identity
+is what makes the bootstrap ordering argument checkable.
+
+> ⚠️ **This method is for an empty database only.** Production has evolved past
+> the 2026-07-07 snapshot embedded in `catchup_reconcile`; replaying that bundle
+> against production would revert later work. Production baselining is the
+> separate, still-open problem described below.
+
+To confirm a database independently:
 
 ```bash
 STAGING_SUPABASE_URL=... node scripts/verify-production-schema.mjs

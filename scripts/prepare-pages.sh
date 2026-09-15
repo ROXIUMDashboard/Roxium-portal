@@ -50,6 +50,31 @@ if [ -n "$ROXIUM_ENV" ]; then
   grep -q "__ROXIUM_BUILD_ENV__" "$OUT/config.js" && { echo "ERROR: failed to stamp ROXIUM_ENV into config.js" >&2; exit 1; }
 fi
 
+# Staging's public Supabase values come from the GitHub `staging` environment so
+# that nobody has to hand-edit config.js. Both are PUBLIC values (RLS protects the
+# data) — a service-role key must never be passed here. Refuse if only one is set,
+# and refuse outright if they point at production.
+if [ -n "${ROXIUM_STAGING_SUPABASE_URL:-}" ] || [ -n "${ROXIUM_STAGING_SUPABASE_ANON_KEY:-}" ]; then
+  if [ -z "${ROXIUM_STAGING_SUPABASE_URL:-}" ] || [ -z "${ROXIUM_STAGING_SUPABASE_ANON_KEY:-}" ]; then
+    echo "ERROR: set BOTH ROXIUM_STAGING_SUPABASE_URL and ROXIUM_STAGING_SUPABASE_ANON_KEY, or neither" >&2
+    exit 1
+  fi
+  case "$ROXIUM_STAGING_SUPABASE_URL" in
+    *nchtmeqsjkpcvtuscxfy*)
+      echo "ERROR: ROXIUM_STAGING_SUPABASE_URL points at the PRODUCTION project. Refusing." >&2
+      exit 1 ;;
+  esac
+  python3 - "$OUT/config.js" "$ROXIUM_STAGING_SUPABASE_URL" "$ROXIUM_STAGING_SUPABASE_ANON_KEY" <<'PYEOF'
+import sys
+path, url, key = sys.argv[1], sys.argv[2], sys.argv[3]
+t = open(path).read()
+t = t.replace('__ROXIUM_STAGING_SUPABASE_URL__', url).replace('__ROXIUM_STAGING_SUPABASE_ANON_KEY__', key)
+open(path, 'w').write(t)
+PYEOF
+  grep -q "__ROXIUM_STAGING_SUPABASE" "$OUT/config.js" && { echo "ERROR: failed to inject staging values" >&2; exit 1; }
+  echo "  Staging Supabase values: injected"
+fi
+
 cat > "$OUT/version.json" <<EOF
 {"sha":"$SHORT_SHA","full_sha":"$FULL_SHA","built_at":"$BUILT_AT","environment":"${ROXIUM_ENV:-unstamped}"}
 EOF

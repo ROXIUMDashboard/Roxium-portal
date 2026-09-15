@@ -11,6 +11,17 @@ ever putting a real surgeon's name, email or performance data in a test system.
 
 ## Using it
 
+**Normally you do not run anything.** The fixtures are loaded for you:
+
+| To | Do this |
+|---|---|
+| Load them the first time | **Actions ▸ Initialize STAGING** (part of first-time setup) |
+| Reset them to the baseline | **Actions ▸ Reset STAGING Data ▸ Run workflow**, type `RESET STAGING DATA` |
+| See what a reset would do, changing nothing | the same workflow with **Preview only** ticked |
+
+<details>
+<summary>Running the seeder directly (engineers only)</summary>
+
 ```bash
 # See exactly what would be created. Touches nothing, needs no credentials.
 node scripts/seed-staging.mjs --dry-run
@@ -21,6 +32,11 @@ STAGING_SUPABASE_URL=... STAGING_SUPABASE_SERVICE_ROLE_KEY=... npm run seed:stag
 # Delete the fixtures and re-create them from scratch
 STAGING_SUPABASE_URL=... STAGING_SUPABASE_SERVICE_ROLE_KEY=... npm run reset:staging
 ```
+
+`scripts/lib/staging-guard.mjs` runs before the first write either way, so the
+seeder refuses the production project however it is invoked.
+
+</details>
 
 Every row carries a **deterministic id** derived from a fixed namespace, so
 re-seeding updates the same rows and `--reset` deletes exactly what the seeder

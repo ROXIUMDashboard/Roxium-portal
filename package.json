@@ -2,8 +2,10 @@
   "name": "roxium-portal",
   "private": true,
   "version": "1.0.0",
-  "description": "ROXIUM Client Portal — static frontend (Cloudflare Pages) + Supabase backend",
-  "engines": { "node": ">=20" },
+  "description": "ROXIUM Client Portal \u2014 static frontend (Cloudflare Pages) + Supabase backend",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "check": "node --check app.js && node --check config.js && for f in scripts/*.mjs; do node --check \"$f\"; done",
     "test:unit": "node --test tests/unit/*.test.mjs",
@@ -11,6 +13,7 @@
     "test": "npm run test:unit && npm run test:e2e",
     "verify:schema": "node scripts/verify-production-schema.mjs",
     "build": "bash scripts/prepare-pages.sh",
+    "build:bootstrap": "node scripts/build-staging-bootstrap.mjs",
     "serve": "node scripts/serve-local.mjs --dir site",
     "smoke": "node scripts/smoke-test.mjs",
     "seed:staging": "node scripts/seed-staging.mjs",

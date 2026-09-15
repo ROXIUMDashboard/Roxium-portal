@@ -1,0 +1,126 @@
+name: Reset STAGING Data
+
+# Wipe the synthetic staging fixtures and re-seed them to the deterministic
+# baseline. Useful before testing a new version, so every test starts from the
+# same 22 scenarios described in docs/STAGING_DATA.md.
+#
+# This touches DATA ONLY — it never runs DDL and never changes the schema. To
+# rebuild a brand-new staging database, use "Initialize STAGING" instead.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS WORKFLOW MUST NEVER BE USABLE AGAINST PRODUCTION.
+#
+#   1. environment: staging       — production secrets are not in scope here
+#   2. APP_ENV must equal exactly "staging"
+#   3. typed confirmation phrase must match exactly
+#   4. production project-ref denylist, checked against the API URL
+#   5. production Supabase URL denylist
+#   6. scripts/seed-staging.mjs re-asserts the target before its first write
+#
+# --reset deletes only rows whose ids are derived from the fixed seed namespace
+# (see SEED_NAMESPACE in scripts/seed-staging.mjs), so it cannot delete a row it
+# did not create. Any ambiguous check FAILS CLOSED.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly:  RESET STAGING DATA'
+        required: true
+        type: string
+      dry_run:
+        description: 'Preview only — print the plan and change nothing'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: reset-staging-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_BASE_URL }}
+
+    env:
+      APP_ENV: staging
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Guards — confirmation, APP_ENV, production denylists
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          KEY_SET: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: |
+          if [ -z "$STAGING_SUPABASE_URL" ] || [ "$KEY_SET" != "true" ]; then
+            echo "::error::staging secrets are not configured (STAGING_SUPABASE_URL / STAGING_SUPABASE_SERVICE_ROLE_KEY)."
+            echo "Refusing to guess a target. See docs/EXTERNAL_SETUP.md."
+            exit 1
+          fi
+          node --input-type=module -e "
+          import { assertAppEnvStaging, assertConfirmation, assertStagingTarget } from './scripts/lib/staging-guard.mjs';
+          try {
+            assertAppEnvStaging(process.env.APP_ENV);
+            console.log('  ok  APP_ENV is exactly \"staging\"');
+            assertConfirmation(process.env.CONFIRM, 'RESET STAGING DATA');
+            console.log('  ok  confirmation phrase matched');
+            const ref = assertStagingTarget(process.env.STAGING_SUPABASE_URL);
+            console.log('  ok  target project ref ' + ref + ' is NOT production');
+          } catch (e) {
+            console.error('');
+            console.error('REFUSED: ' + e.message);
+            console.error('Nothing was deleted. This is deliberate — the workflow fails closed.');
+            process.exit(1);
+          }"
+
+      - name: Reset staging fixtures to the deterministic baseline
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY" = "true" ]; then
+            node scripts/seed-staging.mjs --dry-run
+          else
+            node scripts/seed-staging.mjs --reset
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          DRY: ${{ inputs.dry_run }}
+          JOB_STATUS: ${{ job.status }}
+          BASE_URL: ${{ vars.STAGING_BASE_URL }}
+        run: |
+          {
+            echo "## RESET STAGING DATA"
+            echo ""
+            if [ "$JOB_STATUS" != "success" ]; then
+              echo "❌ Failed — open the failed step for the exact reason."
+              echo ""
+              echo "A refusal in the guard step means a safety check did not pass and *nothing was deleted*."
+            elif [ "$DRY" = "true" ]; then
+              echo "⏭️ Preview only — nothing was changed."
+              echo ""
+              echo "Re-run with **Preview only** unchecked to actually reset."
+            else
+              echo "✅ Staging data reset to the deterministic baseline."
+              echo ""
+              echo "Open ${BASE_URL} — the fixtures in \`docs/STAGING_DATA.md\` are back to their starting state."
+            fi
+            echo ""
+            echo "_Data only: no schema changes. This workflow cannot target production._"
+          } >> "$GITHUB_STEP_SUMMARY"

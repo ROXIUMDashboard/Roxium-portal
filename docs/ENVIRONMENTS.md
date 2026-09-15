@@ -72,8 +72,8 @@ Security is what protects the data.
 |---|---|---|---|---|
 | `ROXIUM_ENVIRONMENTS.production.SUPABASE_URL` | production project URL | public | `config.js` | ✅ set |
 | `ROXIUM_ENVIRONMENTS.production.SUPABASE_ANON_KEY` | production anon key | public | `config.js` | ✅ set |
-| `ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL` | staging project URL | public | `config.js` | 🟡 empty — fails closed |
-| `ROXIUM_ENVIRONMENTS.staging.SUPABASE_ANON_KEY` | staging anon key | public | `config.js` | 🟡 empty — fails closed |
+| `ROXIUM_ENVIRONMENTS.staging.SUPABASE_URL` | staging project URL | public | injected at build time from the `STAGING_SUPABASE_URL` secret | 🟡 empty until the staging env is configured — fails closed |
+| `ROXIUM_ENVIRONMENTS.staging.SUPABASE_ANON_KEY` | staging anon key | public | injected at build time from the `STAGING_SUPABASE_ANON_KEY` secret | 🟡 empty until the staging env is configured — fails closed |
 | `ROXIUM_ENV` | build-time stamp (`production`/`staging`) | build var | set by the deploy workflow | ✅ |
 
 ### GitHub — repository secrets (shared by both environments)
@@ -96,10 +96,17 @@ Security is what protects the data.
 | Name | Kind | Purpose | Status |
 |---|---|---|---|
 | `STAGING_BASE_URL` | **variable** | e.g. `https://staging.roxium.com` | 🔴 required |
-| `STAGING_SUPABASE_PROJECT_REF` | secret | staging project ref | 🔴 required |
-| `STAGING_SUPABASE_DB_PASSWORD` | secret | for `supabase db push` | 🔴 required |
-| `STAGING_SUPABASE_URL` | secret | seeding target | 🔴 required |
-| `STAGING_SUPABASE_SERVICE_ROLE_KEY` | secret | seeding | 🔴 required |
+| `STAGING_SUPABASE_PROJECT_REF` | secret | staging project ref — Edge Function deploys | 🔴 required |
+| `STAGING_SUPABASE_URL` | secret | seeding + frontend build injection | 🔴 required |
+| `STAGING_SUPABASE_ANON_KEY` | secret | frontend build injection (public value, kept here so the build has one source) | 🔴 required |
+| `STAGING_SUPABASE_SERVICE_ROLE_KEY` | secret | seeding (admin credential) | 🔴 required |
+| `STAGING_SUPABASE_DB_URL` | secret | `Initialize STAGING` — the only thing that runs DDL (admin credential) | 🔴 required |
+| `SUPABASE_ACCESS_TOKEN` | secret | Edge Function deploys from within the staging environment | 🔴 required |
+| `STAGING_SUPABASE_DB_PASSWORD` | secret | `supabase db push` for ongoing migrations, once `supabase/migrations/` exists | 🟡 optional |
+
+Set these once, via `docs/EXTERNAL_SETUP.md`. They exist **only** in the GitHub
+`staging` environment; the production workflows cannot read them, and the staging
+workflows cannot read production's.
 
 ### Supabase Edge Function secrets (set per project)
 

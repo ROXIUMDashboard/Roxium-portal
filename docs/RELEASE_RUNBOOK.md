@@ -1,25 +1,32 @@
 # Release Runbook
 
-**The normal release, start to finish.** No command line required.
+**The normal release, start to finish. Seven steps, no command line, no setup.**
 
 ---
 
-## The one-page version
+## THE NORMAL RELEASE
 
-```
-Claude finishes a feature
-  └─ opens a pull request          GitHub runs "Verify" automatically
-       └─ you merge it to main     GitHub deploys STAGING automatically
-            └─ you review staging  https://staging.roxium.com/portal/
-                 └─ Actions ▸ "Release to PRODUCTION" ▸ Run workflow
-                      └─ type RELEASE ▸ Approve
-                           └─ production is live, smoke-tested automatically
-```
+| | Step | You do |
+|---|---|---|
+| **1** | Claude finishes the work and opens a pull request | nothing |
+| **2** | GitHub runs the tests automatically | nothing — wait for the green tick |
+| **3** | You merge the pull request | click **Merge** |
+| **4** | Staging updates itself a few minutes later | nothing |
+| **5** | You test it | open **https://staging.roxium.com/portal/** and work through `docs/ACCEPTANCE_CHECKLIST.md` (~10 min) |
+| **6** | You approve the production release | **Actions ▸ Release to PRODUCTION ▸ Run workflow**, type `RELEASE`, then **Approve and deploy** |
+| **7** | Production verifies itself | nothing — the run smoke-tests the live site and fails if anything is wrong |
 
-**Merging to `main` does NOT reach customers.** It only updates staging.
-Production requires you to start a workflow and approve it.
+**Merging to `main` does NOT reach customers.** It only updates staging. Nothing
+reaches customers until you click **Approve** in step 6.
+
+**If anything is red, stop and tell Claude.** You do not need to diagnose it.
 
 ---
+---
+
+# Advanced
+
+Nothing below is needed for a normal release.
 
 ## 1 · Claude finished a feature. What happens?
 
@@ -121,6 +128,19 @@ You never edit a version number in a file — nothing in the codebase stores one
 
 ## If something is misconfigured
 
+
 Every workflow **fails closed with a clear message** rather than guessing. If a
 deploy stops with *"Staging is not configured yet"* or *"missing
 CLOUDFLARE_API_TOKEN"*, the fix is in `docs/EXTERNAL_SETUP.md`.
+
+## Setting staging up in the first place
+
+`docs/EXTERNAL_SETUP.md` — **STAGING FIRST-TIME SETUP FOR MAX**. Six actions,
+done once. It is not part of a release.
+
+## Resetting staging test data
+
+**Actions ▸ Reset STAGING Data ▸ Run workflow**, type `RESET STAGING DATA`.
+Useful before testing a new version, so every test starts from the same
+fixtures. Data only — it never changes the schema, and it cannot target
+production.

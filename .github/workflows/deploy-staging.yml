@@ -48,7 +48,21 @@ jobs:
           fi
 
       - name: Build staging bundle
+        env:
+          # Public values (the anon key is safe in a browser bundle; RLS is the
+          # boundary). prepare-pages.sh refuses the production URL and refuses a
+          # half-set pair, so a mis-set secret fails the build instead of shipping.
+          ROXIUM_STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          ROXIUM_STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
         run: ROXIUM_ENV=staging bash scripts/prepare-pages.sh
+
+      - name: Refuse a bundle with unresolved staging configuration
+        run: |
+          grep -q "__ROXIUM_STAGING_SUPABASE" site/config.js && {
+            echo "::error::staging Supabase values were not injected — set STAGING_SUPABASE_URL and STAGING_SUPABASE_ANON_KEY in the staging environment."
+            exit 1
+          }
+          echo "ok  staging config resolved" 
 
       - name: Refuse a bundle that is not stamped staging
         run: |
