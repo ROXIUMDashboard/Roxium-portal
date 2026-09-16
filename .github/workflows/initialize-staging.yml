@@ -155,9 +155,16 @@ jobs:
           missing=$(psql "$STAGING_SUPABASE_DB_URL" -tAc \
             "select coalesce(string_agg(t.n, ', '), '') from (values ('practices'),('profiles'),('memberships'),('deliverables'),('milestones'),('video_pipeline'),('activity'),('notifications'),('kpi_monthly'),('kpi_daily')) as t(n) where to_regclass('public.'||t.n) is null;")
           echo "  tables in public schema: $tables"
-          [ "${missing:-x}" = "" ] || { echo "::error::core tables missing: $missing"; exit 1; }
+          # `missing` is an empty string when nothing is missing, so test it with
+          # -z. The `${missing:-x}` sentinel idiom used below CANNOT work here:
+          # the fallback exists precisely so an empty result never equals the
+          # comparison target, and here the target IS the empty string — so the
+          # check failed for every possible input, missing tables or not.
+          [ -z "$missing" ] || { echo "::error::core tables missing: $missing"; exit 1; }
+          # These two DO want the sentinel: an empty result means the query
+          # failed, and "1" / "0" make that fail closed rather than pass.
           [ "${rlsoff:-1}" = "0" ] || { echo "::error::$rlsoff table(s) have RLS disabled"; exit 1; }
-          [ "$tables" -ge 20 ] || { echo "::error::only $tables tables — the bootstrap did not complete"; exit 1; }
+          [ "${tables:-0}" -ge 20 ] || { echo "::error::only ${tables:-0} tables — the bootstrap did not complete"; exit 1; }
           echo "  ok  every core table present, RLS on all $tables tables"
           echo "schema_tables=$tables" >> "$STAGE_FILE"
 
