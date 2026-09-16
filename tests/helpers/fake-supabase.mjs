@@ -101,6 +101,13 @@ function handleRest(dbUrl, req, res, url, body) {
     return r.ok ? send(res, 200, r.rows) : send(res, statusFor(r.sqlstate), { code: r.sqlstate, message: r.message });
   }
 
+  if (req.method === 'PATCH') {
+    const sets = Object.entries(body || {}).map(([k, v]) => `${ident(k)} = ${lit(v)}`);
+    if (!sets.length) return send(res, 204);
+    const r = run(dbUrl, `update ${table} set ${sets.join(', ')} ${whereFrom(params)};`);
+    return r.ok ? send(res, 204) : send(res, statusFor(r.sqlstate), { code: r.sqlstate, message: r.message });
+  }
+
   if (req.method === 'DELETE') {
     const r = run(dbUrl, `delete from ${table} ${whereFrom(params)};`);
     return r.ok ? send(res, 204) : send(res, statusFor(r.sqlstate), { code: r.sqlstate, message: r.message });

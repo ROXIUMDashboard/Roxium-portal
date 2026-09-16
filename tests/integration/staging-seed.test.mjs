@@ -242,6 +242,28 @@ describe('staging seeder', { skip: !READY && 'ROXIUM_TEST_PG / psql not availabl
     assertConverged(url);
   });
 
+  test('--reset actually deletes, and never reports a reset it did not perform', async () => {
+    // Converging afterwards is not proof: a reset that deletes nothing still ends
+    // in the right state, because the seed that follows re-upserts everything.
+    // CI caught this for real — profiles.practice_id is a plain REFERENCES with
+    // no ON DELETE action, so "delete from practices" was refused with 23503 and
+    // the seeder swallowed it, printing "reset complete" over a reset that had
+    // not happened. Leave a row only a genuine delete removes.
+    const url = freshDb();
+    assert.equal((await seed(url)).status, 0);
+    const pid = uid('practice:northstar');
+    sql(url, `insert into deliverables (practice_id, phase, name, status)
+              values ('${pid}', 'Foundation', 'LEFTOVER a reset must remove', 'promised')`);
+    assert.equal(count(url, 'deliverables', `where name = 'LEFTOVER a reset must remove'`), 1);
+
+    const r = await seed(url, ['--reset']);
+    assert.equal(r.status, 0, `reset run failed:\n${r.out}`);
+    assert.doesNotMatch(r.out, /\(skip /, `the reset swallowed a failure:\n${r.out}`);
+    assert.equal(count(url, 'deliverables', `where name = 'LEFTOVER a reset must remove'`), 0,
+      'the reset reported success without deleting anything');
+    assertConverged(url);
+  });
+
   // ── C · the state staging is actually in right now ───────────────────────
 
   test('recovers from the exact partial state PGRST102 left behind: practices only', async () => {

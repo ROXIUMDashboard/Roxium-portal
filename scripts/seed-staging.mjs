@@ -283,14 +283,22 @@ async function main() {
 
   if (RESET) {
     console.log('\nResetting seeded rows (scoped to the fixture practice ids only)…');
+    // Every one of these carries practice_id, so each delete is scoped and a
+    // failure is a real failure. Nothing here is allowed to be swallowed: a
+    // reset that quietly deletes nothing and reports success is worse than one
+    // that stops.
     for (const t of ['activity', 'notifications', 'video_history', 'video_pipeline', 'deliverables',
                      'milestones', 'kpi_daily', 'kpi_monthly', 'platform_connections', 'sheet_sources',
                      'memberships', 'practice_invites']) {
-      await rest(`${t}?practice_id=in.${inList}`, { method: 'DELETE' })
-        .catch((e) => console.log(`  (skip ${t}: ${e.message.slice(0, 80)})`));
+      await rest(`${t}?practice_id=in.${inList}`, { method: 'DELETE' });
     }
-    await rest(`practices?id=in.${inList}`, { method: 'DELETE' })
-      .catch((e) => console.log(`  (skip practices: ${e.message.slice(0, 80)})`));
+    // profiles.practice_id is a plain REFERENCES with no ON DELETE action, so a
+    // profile still pointing at a fixture practice REFUSES the delete below with
+    // 23503. Detach rather than delete: the profile belongs to an Auth user, not
+    // to the practice, and the seed re-attaches it a few lines later. This
+    // mirrors what delete_practice() does in schema.sql.
+    await rest(`profiles?practice_id=in.${inList}`, { method: 'PATCH', body: { practice_id: null } });
+    await rest(`practices?id=in.${inList}`, { method: 'DELETE' });
     console.log('  reset complete.');
   }
 
