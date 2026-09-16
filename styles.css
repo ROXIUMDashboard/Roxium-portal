@@ -57,6 +57,43 @@ body{background:var(--ink);color:var(--cream);font-family:var(--font-sans);font-
 .login-card input{width:100%;margin:18px 0 12px;background:var(--ink);border:1px solid var(--line);color:var(--cream);padding:12px;font-family:var(--font-sans);font-size:15px}
 .login-card input:focus{outline:1px solid var(--gold)}
 
+/* --- Auth cards: sign in / forgot password / set password ------------------
+   Labelled fields, left-aligned inside the centred ROXIUM card. Same surface,
+   hairlines, gold accent and letter-spacing as the rest of the portal — this is
+   a ROXIUM screen that happens to be a login, not a generic SaaS form. */
+.login-card form,.login-card{gap:0}
+.field{text-align:left;margin-top:18px}
+.field-label{display:block;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:7px}
+.login-card .field input{margin:0}
+.field-wrap{position:relative;display:block}
+.field-wrap input{padding-right:64px}
+/* "Show"/"Hide" sits inside the field so the input keeps its full width. */
+.field-eye{position:absolute;top:0;right:0;height:100%;padding:0 12px;background:none;border:0;
+  color:var(--muted);font-family:var(--font-sans);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;cursor:pointer;transition:color .18s ease}
+.field-eye:hover,.field-eye:focus-visible{color:var(--gold)}
+.field-eye:focus-visible{outline:1px solid var(--gold);outline-offset:-2px}
+.field-hint{margin:7px 0 0;font-size:11.5px;color:var(--muted);letter-spacing:.02em}
+.field-hint.bad{color:var(--red)}
+.login-card .btn{width:100%;margin-top:24px}
+.login-card .btn + .authmsg{margin-top:16px}
+.login-card .authmsg + .note,.login-card .btn + .note{margin-top:16px}
+.login-card .btn[disabled]{opacity:.55;cursor:default}
+.login-card .btn[aria-busy="true"]{opacity:.7;cursor:progress}
+/* Errors are readable, not shouty: gold-red text on the card, never a raw
+   Supabase message (see authErrorMessage() in app.js). */
+.authmsg{min-height:0;margin-top:14px;line-height:1.55}
+.authmsg:empty{margin-top:0}
+.authmsg.err{color:var(--red)}
+.authmsg.ok{color:var(--gold)}
+.authlink{color:var(--gold);text-decoration:none;border-bottom:1px solid transparent;
+  transition:border-color .18s ease}
+.authlink:hover,.authlink:focus-visible{border-bottom-color:var(--gold)}
+@media (prefers-reduced-motion:reduce){
+  .field-eye,.authlink{transition:none}
+}
+
 /* chrome */
 /* Solid (not blurred) sticky header — backdrop-filter on a sticky element
    repaints every scroll frame and janks on mobile. Opaque bg reads the same. */
@@ -541,7 +578,12 @@ select option{background:var(--surface2);color:var(--cream)}
 .clientlist{margin-top:6px;display:flex;flex-direction:column;gap:1px}
 .clientrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;background:var(--surface);border:1px solid var(--line)}
 .clientrow .cname{font-size:14px}
-#saveMsg,#loginMsg{font-size:12px;color:var(--green);letter-spacing:.06em}
+#saveMsg{font-size:12px;color:var(--green);letter-spacing:.06em}
+/* #loginMsg used to be a success-only slot ("check your email"), so it was
+   painted green. It is now mainly where sign-in ERRORS appear, and an ID
+   selector would out-rank .authmsg.err — leaving errors green. Neutral by
+   default; .err / .ok decide the colour. */
+#loginMsg{font-size:12px;letter-spacing:.06em}
 footer{padding:34px 0 50px;color:var(--muted);font-size:11px;letter-spacing:.2em;text-transform:uppercase;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
 @media(max-width:640px){.stat{align-items:flex-start;text-align:left;border-right:none;border-left:1px solid var(--gold);padding:6px 0 6px 16px;margin-bottom:14px}}
 

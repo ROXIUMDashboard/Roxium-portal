@@ -3,12 +3,12 @@
 Staging is a complete second copy of the portal with its own database. You test
 there; customers never see it. This page sets it up once.
 
-**6 actions. No Terminal. No SQL. No copying migration files.**
+**8 actions. No Terminal. No SQL. No copying migration files.**
 
 After action 6 you click one button and GitHub builds the whole thing.
 
 > **What you need before starting:** a Supabase login, a GitHub login, and
-> Cloudflare access. Roughly 20 minutes.
+> Cloudflare access. Roughly 25 minutes.
 
 Legend — 🔴 blocking · 🟡 optional for now
 
@@ -152,6 +152,60 @@ system working correctly, not a broken setup. See *Troubleshooting* below.
 
 ---
 
+## Action 7 · Turn on email + password sign-in 🔴
+
+**Where to click** Supabase → the project → **Authentication ▸ Providers ▸ Email**
+
+**What to set**
+
+| Setting | Value |
+|---|---|
+| Email provider | **Enabled** |
+| Allow new users to sign up | **Off** — ROXIUM invites clients; nobody signs themselves up |
+
+**Where to click next** → **Authentication ▸ Policies**
+
+| Setting | Value |
+|---|---|
+| Minimum password length | **10** (matches what the portal tells clients) |
+
+**Where to click next** → **Authentication ▸ URL Configuration**
+
+| Setting | Value |
+|---|---|
+| Site URL | `https://staging.roxium.com` (or `https://roxium.com` on production) |
+| Redirect URLs | add `https://staging.roxium.com/portal/**` |
+
+**What success looks like:** the Email provider shows as enabled, and the
+redirect list contains your portal path. Do this **once per project** — staging
+and production are configured separately.
+
+---
+
+## Action 8 · Create your administrator account 🔴
+
+**Where to click** GitHub → **Settings ▸ Environments** → the environment
+(`staging` or `production`) → **Add secret**
+
+| Name | Value |
+|---|---|
+| `ADMIN_INITIAL_PASSWORD` | the password you want to start with, at least 10 characters |
+
+Then GitHub → **Actions ▸ Provision Admin Account ▸ Run workflow**: choose the
+project, type your email address, **Run workflow**. On `production` it pauses for
+your own approval first.
+
+**What success looks like:** the summary says the account can sign in and has
+full platform-administrator rights. Open the portal, sign in with that email and
+password — you land on the Operations dashboard.
+
+> 🔒 **Change the password after your first sign-in**, using *Forgot password?*
+> on the sign-in card. A password that has been typed into a chat, an email or a
+> ticket should be treated as already disclosed. Then delete the
+> `ADMIN_INITIAL_PASSWORD` secret.
+
+---
+
 ## You are done
 
 Open **https://staging.roxium.com** and sign in with one of the test accounts in
@@ -233,7 +287,7 @@ see what it would do first.
 | `practices.archived_at` missing in **production** | Still open — run `migrations/2026-07-21_practice_archive.sql` in the production SQL editor. Additive and idempotent: one nullable column, one index, one team-gated function |
 | Production migration baselining | Still open — see `docs/MIGRATIONS.md`. Deliberately *not* automated by this pass |
 | Staging Edge Function secrets (Resend, Composio, sync keys) | Optional. Staging works without them; the features that call out to those services will not |
-| Staging Auth settings (redirect URLs, signup policy) | Optional. Set *Authentication ▸ URL Configuration ▸ Site URL* to `https://staging.roxium.com` when you want magic links to work on staging |
+| Production Auth settings | Do Action 7 again on the **production** project before the password login ships there |
 
 ## Already done — no action needed ✅
 

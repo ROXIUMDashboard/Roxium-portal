@@ -89,6 +89,9 @@ Security is what protects the data.
 | Name | Kind | Purpose | Status |
 |---|---|---|---|
 | `SUPABASE_PROJECT_REF` | secret | production project ref | ✅ exists |
+| `SUPABASE_URL` | secret | production project URL — **Provision Admin Account** only | 🟡 as needed |
+| `SUPABASE_SERVICE_ROLE_KEY` | secret | production admin key — **Provision Admin Account** only | 🟡 as needed |
+| `ADMIN_INITIAL_PASSWORD` | secret | first password for **Provision Admin Account** (delete it once used) | 🟡 as needed |
 | *(required reviewers)* | setting | the approval gate | 🟡 to configure |
 
 ### GitHub — `staging` environment
@@ -103,6 +106,8 @@ Security is what protects the data.
 | `STAGING_SUPABASE_DB_URL` | secret | `Initialize STAGING` — the only thing that runs DDL (admin credential) | 🔴 required |
 | `SUPABASE_ACCESS_TOKEN` | secret | Edge Function deploys from within the staging environment | 🔴 required |
 | `STAGING_SUPABASE_DB_PASSWORD` | secret | `supabase db push` for ongoing migrations, once `supabase/migrations/` exists | 🟡 optional |
+| `ADMIN_INITIAL_PASSWORD` | secret | first password for **Provision Admin Account** (delete it once used) | 🟡 as needed |
+| `STAGING_FIXTURE_PASSWORD` | secret | password the seeder sets on the synthetic fixture accounts, so the authorization tests can sign in | 🟡 optional |
 
 Set these once, via `docs/EXTERNAL_SETUP.md`. They exist **only** in the GitHub
 `staging` environment; the production workflows cannot read them, and the staging

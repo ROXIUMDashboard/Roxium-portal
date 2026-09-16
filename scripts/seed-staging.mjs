@@ -197,16 +197,36 @@ async function rest(path, { method = 'GET', body, prefer } = {}) {
   return res.status === 204 ? null : res.json().catch(() => null);
 }
 
+// Fixture accounts get a password so the end-to-end authorization tests can
+// actually sign in. It comes from STAGING_FIXTURE_PASSWORD — a secret, never a
+// literal here — and is only ever applied to @*.test addresses on a project the
+// guard has already proven is not production. Supabase Auth hashes it; we hold
+// nothing. Without the variable the fixtures stay passwordless, exactly as before.
+const FIXTURE_PASSWORD = process.env.STAGING_FIXTURE_PASSWORD || '';
+
 async function ensureUser(u) {
   const list = await fetch(`${URL_}/auth/v1/admin/users?per_page=200`, {
     headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
   }).then((r) => r.json()).catch(() => ({ users: [] }));
   const found = (list.users || []).find((x) => (x.email || '').toLowerCase() === u.email);
-  if (found) return found.id;
+  const withPassword = (extra) => (FIXTURE_PASSWORD ? { ...extra, password: FIXTURE_PASSWORD } : extra);
+
+  if (found) {
+    if (FIXTURE_PASSWORD) {
+      // Re-assert the password so a reset run returns the fixtures to a known
+      // state. The user id — and therefore every seeded membership — is kept.
+      await fetch(`${URL_}/auth/v1/admin/users/${found.id}`, {
+        method: 'PUT',
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: FIXTURE_PASSWORD, email_confirm: true }),
+      }).catch(() => {});
+    }
+    return found.id;
+  }
   const created = await fetch(`${URL_}/auth/v1/admin/users`, {
     method: 'POST',
     headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: u.email, email_confirm: true, user_metadata: { full_name: u.name, seeded: true } }),
+    body: JSON.stringify(withPassword({ email: u.email, email_confirm: true, user_metadata: { full_name: u.name, seeded: true } })),
   }).then((r) => r.json());
   if (!created.id) throw new Error(`could not create ${u.email}: ${JSON.stringify(created).slice(0, 200)}`);
   return created.id;

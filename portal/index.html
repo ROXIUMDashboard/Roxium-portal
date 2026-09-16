@@ -18,20 +18,94 @@
 <body>
 
 <!-- ============ LOGIN ============ -->
+<!-- Email + password (Supabase Auth signInWithPassword). The passwordless
+     magic-link / OTP UI it replaced is gone from the normal login path: a
+     corporate mail scanner could delay the code past its expiry, and clicking a
+     link could open a different browser than the one the user was working in.
+     Email is now only involved in setup and recovery. -->
 <div id="login" class="login hidden">
-  <div class="login-card">
+  <form class="login-card" id="loginForm" autocomplete="on" novalidate>
     <div class="mark big">ROX<b>I</b>UM</div>
     <div class="eyebrow">Sign in</div>
-    <p class="note">Enter your email and we'll send a secure, passwordless sign-in link — no password to remember.</p>
-    <input id="loginEmail" type="email" placeholder="you@practice.com">
-    <button class="btn" id="btnLogin">Send sign-in link</button>
-    <div id="loginCodeRow" class="hidden" style="margin-top:10px">
-      <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code from your email">
-      <button class="btn" id="btnVerifyCode">Enter code</button>
+
+    <div class="field">
+      <label class="field-label" for="loginEmail">Email</label>
+      <input id="loginEmail" name="email" type="email" autocomplete="username"
+             autocapitalize="off" autocorrect="off" spellcheck="false"
+             placeholder="you@practice.com" required>
     </div>
-    <p class="note" id="loginMsg"></p>
-    <p class="note" style="margin-top:14px"><a href="https://roxium.com" style="color:var(--gold);text-decoration:none">← Back to roxium.com</a></p>
-  </div>
+
+    <div class="field">
+      <label class="field-label" for="loginPassword">Password</label>
+      <div class="field-wrap">
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password"
+               placeholder="••••••••" required>
+        <button type="button" class="field-eye" id="loginPwToggle"
+                aria-label="Show password" aria-pressed="false" tabindex="0">Show</button>
+      </div>
+    </div>
+
+    <button class="btn" id="btnLogin" type="submit">Sign in</button>
+
+    <p class="note authmsg" id="loginMsg" role="alert" aria-live="polite"></p>
+
+    <p class="note"><a href="#" id="linkForgot" class="authlink">Forgot password?</a></p>
+    <p class="note" style="margin-top:14px"><a href="https://roxium.com" class="authlink">← Back to roxium.com</a></p>
+  </form>
+</div>
+
+<!-- ============ FORGOT PASSWORD (request a reset) ============ -->
+<div id="forgotPane" class="login hidden">
+  <form class="login-card" id="forgotForm" novalidate>
+    <div class="mark big">ROX<b>I</b>UM</div>
+    <div class="eyebrow">Reset your password</div>
+    <p class="note">Enter the email address you use for the portal and we'll send you a link to set a new password.</p>
+
+    <div class="field">
+      <label class="field-label" for="forgotEmail">Email</label>
+      <input id="forgotEmail" name="email" type="email" autocomplete="username"
+             autocapitalize="off" autocorrect="off" spellcheck="false"
+             placeholder="you@practice.com" required>
+    </div>
+
+    <button class="btn" id="btnForgot" type="submit">Send reset link</button>
+    <p class="note authmsg" id="forgotMsg" role="alert" aria-live="polite"></p>
+    <p class="note"><a href="#" id="linkBackToLogin" class="authlink">← Back to sign in</a></p>
+  </form>
+</div>
+
+<!-- ============ SET / RESET PASSWORD ============ -->
+<!-- Reached from an invitation or a reset email. The token arrives in the URL
+     FRAGMENT and is exchanged by verifyOtp() in JavaScript, so a mail scanner
+     that pre-fetches the link never sends the token to a server and cannot burn
+     it before the real user arrives. -->
+<div id="setPasswordPane" class="login hidden">
+  <form class="login-card" id="setPasswordForm" novalidate>
+    <div class="mark big">ROX<b>I</b>UM</div>
+    <div class="eyebrow" id="setPwTitle">Set your password</div>
+    <p class="note" id="setPwIntro">Choose a password for your ROXIUM portal account. You'll use it every time you sign in.</p>
+
+    <div class="field">
+      <label class="field-label" for="newPassword">New password</label>
+      <div class="field-wrap">
+        <input id="newPassword" name="new-password" type="password" autocomplete="new-password"
+               placeholder="••••••••" required>
+        <button type="button" class="field-eye" id="newPwToggle"
+                aria-label="Show password" aria-pressed="false">Show</button>
+      </div>
+      <p class="field-hint" id="newPwHint">At least 10 characters.</p>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="confirmPassword">Confirm password</label>
+      <input id="confirmPassword" name="confirm-password" type="password" autocomplete="new-password"
+             placeholder="Repeat your password" required>
+    </div>
+
+    <button class="btn" id="btnSetPassword" type="submit">Save password and continue</button>
+    <p class="note authmsg" id="setPwMsg" role="alert" aria-live="polite"></p>
+    <p class="note hidden" id="setPwBackRow"><a href="#" id="linkSetPwBack" class="authlink">← Back to sign in</a></p>
+  </form>
 </div>
 
 <!-- ============ PENDING APPROVAL (self-service signups await review) ============ -->
@@ -370,7 +444,7 @@
         <div id="platformAdminRoster" class="roster roster-compact"></div>
 
         <h3 style="margin-top:22px">Practice access &amp; invites</h3>
-        <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a sign-in link and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
+        <p class="note" style="margin-top:-2px"><b>Send invite</b> emails a secure link to set a password, and adds the address to the allowlist. Uncheck “Send email” to allowlist only — the doctor can sign up themselves with that same email (Option B). Practice owners invite their own staff from the <b>Invite team</b> tab in their dashboard.</p>
         <div class="entry invite-entry">
           <div class="f"><label>Practice</label><select id="accessPractice" class="picker"></select></div>
           <div class="f"><label>Email</label><input id="accessEmail" type="email" placeholder="surgeon@practice.com"></div>

@@ -1,0 +1,104 @@
+name: Provision Admin Account
+
+# Create a ROXIUM platform administrator — or set the password on an existing
+# account — without anyone handling a service-role key on a laptop.
+#
+# Choosing `production` requests the `production` GitHub environment, so it
+# pauses for the required reviewer before anything is written.
+#
+# The password is read from a SECRET, never from an input: workflow inputs are
+# recorded in the run's metadata in plain text, and secrets are not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which project'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      email:
+        description: 'Email address of the administrator'
+        required: true
+        type: string
+      full_name:
+        description: 'Display name (optional)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Preview only — check the inputs and write nothing'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: provision-admin-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Provision
+        env:
+          ROXIUM_TARGET: ${{ inputs.target }}
+          ADMIN_EMAIL: ${{ inputs.email }}
+          ADMIN_NAME: ${{ inputs.full_name }}
+          # Per-environment secrets. Neither environment can read the other's.
+          SUPABASE_URL: ${{ inputs.target == 'production' && secrets.SUPABASE_URL || secrets.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.target == 'production' && secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_INITIAL_PASSWORD }}
+          CONFIRM: ${{ inputs.target == 'production' && 'PROVISION PRODUCTION ADMIN' || '' }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          missing=0
+          for v in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY ADMIN_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::missing secret: $v"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Add the missing secrets to the '${ROXIUM_TARGET}' GitHub environment."
+            echo "ADMIN_INITIAL_PASSWORD holds the password — see docs/AUTHENTICATION.md."
+            exit 1
+          fi
+          if [ "$DRY" = "true" ]; then
+            node scripts/provision-admin.mjs --dry-run
+          else
+            node scripts/provision-admin.mjs
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          TARGET: ${{ inputs.target }}
+          EMAIL: ${{ inputs.email }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "## Provision admin account"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Project | \`$TARGET\` |"
+            echo "| Email | \`$EMAIL\` |"
+            echo "| Result | $JOB_STATUS |"
+            echo ""
+            if [ "$JOB_STATUS" = "success" ] && [ "$DRY" != "true" ]; then
+              echo "This account can now sign in with email + password and has full platform-administrator rights."
+              echo ""
+              echo "**Change the password after the first sign-in**, from Forgot password? on the sign-in card."
+            fi
+            echo ""
+            echo "_The password is read from the \`ADMIN_INITIAL_PASSWORD\` secret and is never written to logs, inputs or the repository._"
+          } >> "$GITHUB_STEP_SUMMARY"
