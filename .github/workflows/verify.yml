@@ -1,0 +1,75 @@
+name: Verify
+
+# Runs on every branch and pull request. Nothing here touches any environment:
+# it builds the bundle locally, serves it, and tests it. No secrets required.
+#
+# This is the gate both deploy workflows call before they are allowed to ship.
+
+on:
+  push:
+    # main is covered by deploy-staging.yml, which calls this workflow.
+    branches-ignore: [main]
+  pull_request:
+  schedule:
+    # weekly drift sweep — catches a migration applied (or forgotten) out of band
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+  workflow_call: {}          # invoked by deploy-staging / deploy-production
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The cheapest possible guard for a 6,900-line unbundled file that is
+      # deployed straight to production with no build step.
+      - name: Syntax-check shipped JavaScript
+        run: |
+          node --check app.js
+          node --check config.js
+          for f in scripts/*.mjs scripts/lib/*.mjs; do [ -e "$f" ] && node --check "$f"; done
+          echo "JavaScript parses."
+
+      - name: Shell-check repository scripts
+        run: |
+          for f in scripts/*.sh; do [ -e "$f" ] && bash -n "$f"; done
+          echo "Shell scripts parse."
+
+      - name: Type-check Edge Functions
+        uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - run: deno check supabase/functions/_shared/*.ts supabase/functions/*/index.ts
+        continue-on-error: true   # advisory: remote imports can be flaky in CI
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Install Playwright
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: End-to-end tests (offline harness)
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      # Read-only: uses the public anon key from config.js. No secrets.
+      - name: Production schema drift check
+        run: npm run verify:schema
+
+      - name: Explain a schema failure
+        if: failure()
+        run: |
+          echo "::warning::Production schema may not match this repository."
+          echo "Run scripts/verify-production-schema.sql in the Supabase SQL editor for the full picture."

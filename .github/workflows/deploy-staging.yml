@@ -1,0 +1,132 @@
+name: Deploy to STAGING
+
+# Merging to main deploys to STAGING — never to production. Production is a
+# separate, manually-approved workflow (deploy-production.yml).
+#
+# Flow: verify -> build (stamped `staging`) -> Cloudflare Pages branch `staging`
+#       -> staging Edge Functions -> staging migrations -> smoke test.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+
+  deploy:
+    needs: verify                     # a failing check blocks the deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Require staging configuration (fail closed)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASE_URL: ${{ vars.STAGING_BASE_URL }}
+        run: |
+          missing=0
+          for v in CF_TOKEN CF_ACCOUNT BASE_URL; do
+            if [ -z "${!v}" ]; then echo "::error::missing $v"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Staging is not configured yet. Refusing to deploy rather than guess."
+            echo "See docs/EXTERNAL_SETUP.md."
+            exit 1
+          fi
+
+      - name: Build staging bundle
+        env:
+          # Public values (the anon key is safe in a browser bundle; RLS is the
+          # boundary). prepare-pages.sh refuses the production URL and refuses a
+          # half-set pair, so a mis-set secret fails the build instead of shipping.
+          ROXIUM_STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          ROXIUM_STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+        run: ROXIUM_ENV=staging bash scripts/prepare-pages.sh
+
+      - name: Refuse a bundle with unresolved staging configuration
+        run: |
+          grep -q "__ROXIUM_STAGING_SUPABASE" site/config.js && {
+            echo "::error::staging Supabase values were not injected — set STAGING_SUPABASE_URL and STAGING_SUPABASE_ANON_KEY in the staging environment."
+            exit 1
+          }
+          echo "ok  staging config resolved" 
+
+      - name: Refuse a bundle that is not stamped staging
+        run: |
+          grep -q "ROXIUM_BUILD_ENV = 'staging'" site/config.js \
+            || { echo "::error::bundle is not stamped staging"; exit 1; }
+          grep -q '"environment":"staging"' site/version.json \
+            || { echo "::error::version.json is not stamped staging"; exit 1; }
+
+      - name: Deploy to Cloudflare Pages (branch "staging")
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install -g wrangler@4
+          wrangler pages deploy site \
+            --project-name=roxium-portal \
+            --branch=staging \
+            --commit-hash="${{ github.sha }}" \
+            --commit-message="staging ${{ github.sha }}"
+
+      - name: Deploy Edge Functions to the STAGING Supabase project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "::warning::Supabase staging credentials not set — skipping function deploy."
+            exit 0
+          fi
+          bash scripts/deploy-functions.sh
+
+      - name: Apply migrations to STAGING
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+          PROJECT_REF: ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "::warning::Supabase staging credentials not set — skipping migrations."
+            exit 0
+          fi
+          if [ ! -d supabase/migrations ]; then
+            echo "supabase/migrations/ does not exist yet — skipping."
+            echo "See docs/MIGRATIONS.md: the CLI workflow is adopted only after baselining."
+            exit 0
+          fi
+          npm install -g supabase@latest
+          supabase link --project-ref "$PROJECT_REF"
+          supabase db push                     # staging only; applies un-applied migrations
+
+      - name: Smoke test staging
+        run: node scripts/smoke-test.mjs --url "${{ vars.STAGING_BASE_URL }}" --env staging --sha "${{ github.sha }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Staging deploy"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| URL | ${{ vars.STAGING_BASE_URL }} |"
+            echo "| Result | ${{ job.status }} |"
+            echo ""
+            echo "Review staging, then run **Release to PRODUCTION** to ship."
+          } >> "$GITHUB_STEP_SUMMARY"

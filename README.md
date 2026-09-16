@@ -51,10 +51,9 @@ production deploy path — do **not** also connect a Cloudflare dashboard "Git i
 1. In GitHub, add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
    (Settings → Secrets and variables → Actions). The Action creates the Pages project
    `roxium-portal` (production branch `main`) if it doesn't exist and uploads `site/`.
-2. Merge to `main` → the Action runs `scripts/prepare-pages.sh` → `wrangler pages deploy site`.
-   Only a deploy from the **production branch (`main`)** is a Production deployment; any other
-   branch is a **Preview**. If Cloudflare only shows Previews, you have unmerged work and/or a
-   stray dashboard Git integration building feature branches.
+2. Merge to `main` → **`Deploy to STAGING`** runs automatically. Merging no longer touches
+   production. To ship to customers, run **`Release to PRODUCTION`** from the Actions tab and
+   approve it — see `docs/RELEASE_RUNBOOK.md`.
 3. Verify at `https://roxium-portal.pages.dev` — footer `build <sha>` must match `main`.
 4. Add your custom domain under **Custom domains** (on this Pages project).
 5. Supabase → **Authentication → URL configuration** → set **Site URL** and **Redirect URLs**:
@@ -65,9 +64,10 @@ SPA routing (magic-link auth) is handled by `_redirects` (`/* /index.html 200`) 
 Pages does **not** serve `index.html` for unknown paths on its own, so that rule is required.
 `_headers` sets security + cache headers.
 
-> **Netlify** is retained as a non-production fallback only. Its `netlify.toml` uses the same
-> build. See **`docs/DEPLOYMENT.md`** and **`docs/INFRASTRUCTURE_AUDIT.md`** for the full
-> pipeline, the Cloudflare split-brain history, and stale-deploy troubleshooting.
+> **Netlify is gone.** There is no `netlify.toml` in this repository and none in its git
+> history; Cloudflare Pages is the only hosting path. See **`docs/ENVIRONMENTS.md`** for the
+> two environments, **`docs/RELEASE_RUNBOOK.md`** for how a release actually happens, and
+> **`docs/INFRASTRUCTURE_SIMPLIFICATION.md`** for what was removed and why.
 
 ---
 

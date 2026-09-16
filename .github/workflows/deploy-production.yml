@@ -1,0 +1,172 @@
+name: Release to PRODUCTION
+
+# The ONLY path to production. Manual, gated and approved.
+#
+# Nothing about pushing code can reach customers: this workflow runs only when a
+# human starts it, and the `production` GitHub Environment holds the required
+# reviewer. Every gate below must pass before the deploy step runs.
+#
+#   verify (unit + e2e + schema drift)
+#     -> confirm staging is healthy and on the same commit
+#       -> [ MANUAL APPROVAL — GitHub Environment "production" ]
+#         -> build stamped `production` -> Cloudflare Pages branch `main`
+#           -> production Edge Functions
+#             -> smoke test  (read-only; fails the release if unhealthy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type RELEASE to confirm you have reviewed staging'
+        required: true
+        default: ''
+      skip_staging_check:
+        description: 'Release even if staging is not on this commit (emergency only)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm intent
+        run: |
+          if [ "${{ inputs.confirm }}" != "RELEASE" ]; then
+            echo "::error::Type RELEASE in the confirm box to start a production release."
+            exit 1
+          fi
+      - name: Refuse to release from a non-main ref
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Production releases run from main only (got ${{ github.ref }})."
+            exit 1
+          fi
+
+  verify:
+    needs: guard
+    uses: ./.github/workflows/verify.yml
+
+  staging-healthy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Staging must be healthy and running this commit
+        env:
+          BASE: ${{ vars.STAGING_BASE_URL }}
+          SKIP: ${{ inputs.skip_staging_check }}
+        run: |
+          if [ "$SKIP" = "true" ]; then
+            echo "::warning::Staging verification SKIPPED by operator request."
+            exit 0
+          fi
+          if [ -z "$BASE" ]; then
+            echo "::error::STAGING_BASE_URL is not set, so staging cannot be verified."
+            echo "Configure staging (docs/EXTERNAL_SETUP.md), or re-run with skip_staging_check."
+            exit 1
+          fi
+          node scripts/smoke-test.mjs --url "$BASE" --env staging
+          deployed="$(curl -fsS "$BASE/version.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).full_sha||""))')"
+          if [ "$deployed" != "${{ github.sha }}" ]; then
+            echo "::error::Staging is running $deployed but you are releasing ${{ github.sha }}."
+            echo "Deploy this commit to staging and review it first."
+            exit 1
+          fi
+          echo "Staging is healthy and running this exact commit."
+
+  release:
+    needs: staging-healthy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # ---- THE APPROVAL GATE ----
+    # Configure required reviewers on this environment in GitHub settings; the job
+    # then pauses here until a reviewer approves. See docs/EXTERNAL_SETUP.md.
+    environment:
+      name: production
+      url: https://roxium.com/portal/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Require production configuration (fail closed)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$CF_TOKEN" ] || { echo "::error::missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          [ -n "$CF_ACCOUNT" ] || { echo "::error::missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+
+      - name: Build production bundle
+        run: ROXIUM_ENV=production bash scripts/prepare-pages.sh
+
+      - name: Refuse a bundle that is not stamped production
+        run: |
+          grep -q "ROXIUM_BUILD_ENV = 'production'" site/config.js \
+            || { echo "::error::bundle is not stamped production"; exit 1; }
+          grep -q '"environment":"production"' site/version.json \
+            || { echo "::error::version.json is not stamped production"; exit 1; }
+          ! grep -q 'BUILD_SHA' site/portal/index.html \
+            || { echo "::error::BUILD_SHA placeholder was not substituted"; exit 1; }
+
+      - name: Deploy to Cloudflare Pages (production branch "main")
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          npm install -g wrangler@4
+          MSG="$(printf '%s' "${HEAD_COMMIT_MSG:-}" | head -n1)"
+          [ -z "$MSG" ] && MSG="Release ${{ github.sha }}"
+          wrangler pages deploy site \
+            --project-name=roxium-portal \
+            --branch=main \
+            --commit-hash="${{ github.sha }}" \
+            --commit-message="$MSG"
+
+      - name: Deploy Edge Functions to the PRODUCTION Supabase project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "::warning::Supabase production credentials not set — skipping function deploy."
+            exit 0
+          fi
+          bash scripts/deploy-functions.sh
+
+      # Production migrations are NOT applied automatically. The historical
+      # migrations are not baselined in the Supabase ledger yet, so `db push`
+      # could replay them. See docs/MIGRATIONS.md.
+      - name: Production migrations (manual until baselined)
+        run: |
+          if [ -d supabase/migrations ]; then
+            echo "::notice::supabase/migrations/ exists. Apply production migrations deliberately."
+            echo "See docs/MIGRATIONS.md — do NOT db push production until the ledger is baselined."
+          fi
+
+      - name: Smoke test production
+        run: node scripts/smoke-test.mjs --url https://roxium.com --env production --sha "${{ github.sha }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Production release"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| URL | https://roxium.com/portal/ |"
+            echo "| Result | ${{ job.status }} |"
+            echo ""
+            echo "If this failed AFTER the deploy step, roll back: see docs/ROLLBACK.md."
+          } >> "$GITHUB_STEP_SUMMARY"
