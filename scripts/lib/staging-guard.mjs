@@ -10,7 +10,14 @@
 export const PRODUCTION_PROJECT_REFS = ['nchtmeqsjkpcvtuscxfy'];
 
 /** Hostnames that must never be the target of seed/reset tooling. */
-export const PRODUCTION_HOSTS = ['roxium.com', 'www.roxium.com', 'roxium-portal.pages.dev'];
+// Hosts that serve the LIVE portal. Kept in step with config.js's production
+// `hosts` list — a host missing here is a hole in every check that consults it.
+// (Currently a defensive constant with no consumer; see the note in the tests.)
+export const PRODUCTION_HOSTS = [
+  'roxiumstudio.com', 'www.roxiumstudio.com',
+  'roxium.com', 'www.roxium.com',
+  'roxium-portal.pages.dev',
+];
 
 export function projectRefFromUrl(url) {
   // Parse rather than prefix-match. A regex anchored only at the start accepts

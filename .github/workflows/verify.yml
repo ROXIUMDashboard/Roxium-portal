@@ -40,11 +40,22 @@ jobs:
           for f in scripts/*.sh; do [ -e "$f" ] && bash -n "$f"; done
           echo "Shell scripts parse."
 
-      - name: Type-check Edge Functions
-        uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - run: deno check supabase/functions/_shared/*.ts supabase/functions/*/index.ts
-        continue-on-error: true   # advisory: remote imports can be flaky in CI
+
+      # A REAL GATE. This step was `continue-on-error: true` and therefore
+      # reported SUCCESS while `deno check` was failing with 12 type errors —
+      # Verify was green on a check that did not pass. The errors are fixed and
+      # the suppression is gone; a type error now fails Verify, which blocks both
+      # deploy workflows.
+      #
+      # The comment that justified the suppression said remote imports can be
+      # flaky. If esm.sh ever does fail here, the fix is to pin or vendor the
+      # import — not to make the gate advisory again.
+      - name: Type-check Edge Functions
+        run: |
+          deno check supabase/functions/_shared/*.ts supabase/functions/*/index.ts
+          echo "Edge Functions type-check clean."
 
       - name: Unit tests
         run: npm run test:unit

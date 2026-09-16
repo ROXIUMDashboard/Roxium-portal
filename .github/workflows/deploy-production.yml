@@ -29,6 +29,20 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# The live portal host, defined ONCE.
+#
+# This was previously written out three times (environment URL, smoke test,
+# release summary) and all three said roxium.com — the corporate domain — while
+# the portal actually serves from roxiumstudio.com. A release would therefore
+# have smoke-tested a host it had not deployed to. One definition, three uses,
+# so they cannot drift apart again.
+#
+# roxium.com remains the marketing/corporate domain and is deliberately NOT
+# changed elsewhere. See docs/DOMAIN_ARCHITECTURE.md.
+env:
+  PRODUCTION_BASE_URL: https://roxiumstudio.com
+  PRODUCTION_PORTAL_URL: https://roxiumstudio.com/portal/
+
 jobs:
   guard:
     runs-on: ubuntu-latest
@@ -91,7 +105,7 @@ jobs:
     # then pauses here until a reviewer approves. See docs/EXTERNAL_SETUP.md.
     environment:
       name: production
-      url: https://roxium.com/portal/
+      url: ${{ env.PRODUCTION_PORTAL_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -154,7 +168,7 @@ jobs:
           fi
 
       - name: Smoke test production
-        run: node scripts/smoke-test.mjs --url https://roxium.com --env production --sha "${{ github.sha }}"
+        run: node scripts/smoke-test.mjs --url "$PRODUCTION_BASE_URL" --env production --sha "${{ github.sha }}"
 
       - name: Summary
         if: always()
@@ -165,7 +179,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| URL | https://roxium.com/portal/ |"
+            echo "| URL | ${PRODUCTION_PORTAL_URL} |"
             echo "| Result | ${{ job.status }} |"
             echo ""
             echo "If this failed AFTER the deploy step, roll back: see docs/ROLLBACK.md."

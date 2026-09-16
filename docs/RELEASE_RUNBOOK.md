@@ -81,7 +81,7 @@ The last step is an automatic smoke test of the real site: the pages load, the
 assets load, the legal pages still work, and the database is reachable and still
 refusing anonymous access. **If that fails, the release is marked failed.**
 
-To confirm by eye: open **https://roxium.com/portal/**. The footer shows
+To confirm by eye: open **https://roxiumstudio.com/portal/**. The footer shows
 `build <sha>` — it should match the commit you released. There should be **no**
 STAGING badge.
 
@@ -116,7 +116,7 @@ below and GitHub ▸ Releases.
 ▸ type the new version ▸ *Generate release notes* (GitHub writes them from the
 merged pull requests) ▸ **Publish**.
 
-**What is production running?** `https://roxium.com/version.json` gives the exact
+**What is production running?** `https://roxiumstudio.com/version.json` gives the exact
 commit, build time and environment. The portal footer shows the same short SHA.
 
 **What changed since the last release?** GitHub ▸ Releases shows the generated

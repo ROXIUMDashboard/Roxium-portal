@@ -94,14 +94,57 @@ Then under **Environment variables** → **Add variable**:
 
 ## Action 4 · Turn on the production approval gate 🔴
 
-**Where to click** same page → **Environments** → **New environment** → name it
-exactly `production` → **Configure environment**
+> ⚠️ **An environment that merely EXISTS is not a gate.** GitHub creates an
+> environment automatically the first time a workflow names one, and it is
+> created with **no protection rules** — a job referencing it then runs straight
+> through with no approval. So `production` appearing in the list tells you
+> nothing. What matters is the **Required reviewers** rule. Check it, don't
+> assume it.
 
-**What to do** tick **Required reviewers**, add yourself, **Save protection rules**.
+**Where to click** GitHub → the repo → **Settings** → **Environments**
 
-**What success looks like:** the `production` environment shows *Required
-reviewers: 1*. From now on nothing reaches customers without you clicking
-**Approve**.
+- If `production` is **not** listed: **New environment** → type exactly
+  `production` → **Configure environment**.
+- If it **is** listed: click it — it may have been auto-created without rules.
+
+**What to do**
+
+1. Tick **Required reviewers**.
+2. In the box that appears, type your own GitHub username and select yourself.
+3. Click **Save protection rules**.
+
+**What success looks like:** back on **Settings ▸ Environments**, the
+`production` row reads **“1 required reviewer”** (not just the environment name).
+Open it again and confirm **Required reviewers** is ticked with you listed.
+
+From that point, `Release to PRODUCTION` pauses at **Review deployments** and
+deploys nothing until you click **Approve and deploy**.
+
+**Why this is not optional.** The typed `RELEASE` confirmation is a guard against
+*starting* the workflow by accident. It is not an approval gate: whoever starts
+the run also types it. The environment reviewer is the only thing that puts a
+second, deliberate human decision between a commit and live customers — which is
+why the workflow must not be edited to drop `environment: production`.
+
+### Production environment secrets
+
+`Release to PRODUCTION` reads these. They are **repository-level** secrets today
+and are already set — nothing to re-enter unless a check says one is missing:
+
+| Name | Purpose | Status |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | deploy the bundle to Pages | ✅ exists |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account | ✅ exists |
+| `SUPABASE_ACCESS_TOKEN` | deploy production Edge Functions | ✅ exists |
+| `SUPABASE_PROJECT_REF` | the production Supabase project | ✅ exists |
+| `vars.STAGING_BASE_URL` | the staging health check the release gate runs first | 🔴 set in Action 3 |
+
+The workflow **fails closed** on the first two: a release stops with
+*"missing CLOUDFLARE_API_TOKEN"* rather than half-deploying.
+
+You do **not** need to add any production-scoped secret for this pass. If you
+later move these into the `production` environment, add them there *before*
+removing them from the repository, or the release will fail closed.
 
 ---
 
@@ -173,7 +216,7 @@ system working correctly, not a broken setup. See *Troubleshooting* below.
 
 | Setting | Value |
 |---|---|
-| Site URL | `https://staging.roxium.com` (or `https://roxium.com` on production) |
+| Site URL | `https://staging.roxium.com` (or `https://roxiumstudio.com` on production — the live portal host) |
 | Redirect URLs | add `https://staging.roxium.com/portal/**` |
 
 **What success looks like:** the Email provider shows as enabled, and the

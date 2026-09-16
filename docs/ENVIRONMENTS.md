@@ -6,7 +6,7 @@ Two environments. They share no database, no users, no files and no secrets.
 |---|---|---|
 | Who uses it | Real ROXIUM customers | ROXIUM team only |
 | Marketing site | `https://roxium.com/` | `https://staging.roxium.com/` |
-| Portal | `https://roxium.com/portal/` | `https://staging.roxium.com/portal/` |
+| **Portal (live)** | **`https://roxiumstudio.com/portal/`** | `https://staging.roxium.com/portal/` |
 | Cloudflare Pages | project `roxium-portal`, branch **`main`** | project `roxium-portal`, branch **`staging`** |
 | Fallback URL | `https://roxium-portal.pages.dev` | `https://staging.roxium-portal.pages.dev` |
 | Supabase project | `nchtmeqsjkpcvtuscxfy` | **separate project — to be created** |
@@ -14,11 +14,19 @@ Two environments. They share no database, no users, no files and no secrets.
 | Deployed by | `Release to PRODUCTION` (manual + approval) | `Deploy to STAGING` (automatic on merge to `main`) |
 | Visual marker | none | gold **STAGING** badge, bottom-left |
 
-> **On hostnames.** The brief proposed `portal.roxium.com`. The real production
-> hostname is **`roxium.com`**, with the marketing page at `/` and the portal at
-> `/portal/` — so the true staging equivalent is **`staging.roxium.com/portal/`**.
-> Nothing in the code hard-codes a host, so this can be revisited later
-> (`docs/DOMAIN_ARCHITECTURE.md` proposes moving the software to its own domain).
+> **On hostnames.** The live portal is **`roxiumstudio.com/portal/`**.
+> `roxium.com` is the corporate/marketing domain; it also served the portal
+> historically, so it is still claimed as production in `config.js` and traffic
+> arriving there is not refused.
+>
+> `config.js`'s production `hosts` list is **load-bearing, not documentation**: a
+> production build served from a host that is not in it fails the cross-check and
+> refuses to boot. Add a host there *before* pointing it at the portal.
+>
+> **Open decision:** staging is still specified as `staging.roxium.com`. If the
+> product is settling on the studio domain, `staging.roxiumstudio.com` is the
+> consistent choice. Nothing has been changed either way — it needs a DNS
+> decision, not a code change. See `docs/DOMAIN_ARCHITECTURE.md`.
 
 ---
 
@@ -118,7 +126,7 @@ workflows cannot read production's.
 | Name | Production | Staging | Notes |
 |---|---|---|---|
 | `APP_ENV` | `production` (or unset) | **`staging`** | makes `siteUrl()` fail closed instead of defaulting to the live site |
-| `SITE_URL` | `https://roxium.com` | `https://staging.roxium.com` | every email link and OAuth bounce-back |
+| `SITE_URL` | `https://roxiumstudio.com` | `https://staging.roxium.com` | every email link and OAuth bounce-back — **set it explicitly on both projects**; the code default exists only as a backstop |
 | `SYNC_SECRET` | own value | **different value** | cron auth + OAuth state HMAC |
 | `RESEND_API_KEY` | own | own (or unset to disable mail) | |
 | `EMAIL_FROM` | verified sender | e.g. `ROXIUM Staging <staging@…>` | |

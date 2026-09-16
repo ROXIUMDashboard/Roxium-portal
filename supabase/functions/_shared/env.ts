@@ -1,10 +1,13 @@
 // ============================================================
 // Environment resolution for Edge Functions.
 //
-// Five functions used to read `SITE_URL` with `|| "https://roxium.com"`. On the
-// PRODUCTION project that default is harmless (it is the real site). On a STAGING
-// project it is a trap: an unset secret would silently send staging invite emails,
-// OAuth callbacks and digest links to the live customer site.
+// Five functions used to read `SITE_URL` with `|| "https://roxium.com"`. On a
+// STAGING project that is a trap: an unset secret would silently send staging
+// invite emails, OAuth callbacks and digest links to the live customer site.
+//
+// It was also simply WRONG for production once the portal moved to
+// roxiumstudio.com — every invitation and password-reset link built from the
+// default pointed at the corporate domain instead of the portal.
 //
 // siteUrl() keeps production behaviour byte-for-byte identical and FAILS CLOSED
 // anywhere else. Set APP_ENV=staging as an edge secret on the staging project.
@@ -27,8 +30,13 @@ export function isProduction(): boolean {
 
 /**
  * The public origin this deployment belongs to, with no trailing slash.
- * production + SITE_URL unset -> "https://roxium.com" (unchanged legacy behaviour)
+ * production + SITE_URL unset -> "https://roxiumstudio.com" (the live portal)
  * staging    + SITE_URL unset -> throws, rather than linking to the live site
+ *
+ * SET `SITE_URL` EXPLICITLY ON BOTH PROJECTS. The default exists so an
+ * unconfigured production project still builds usable links, not so it can be
+ * relied on: if the portal host ever moves again, an explicit secret is the only
+ * thing that moves with it. See docs/ENVIRONMENTS.md.
  */
 export function siteUrl(): string {
   const raw = (Deno.env.get("SITE_URL") || "").trim().replace(/\/+$/, "");
@@ -39,7 +47,7 @@ export function siteUrl(): string {
         "production site — set the SITE_URL edge secret (see docs/EXTERNAL_SETUP.md).",
     );
   }
-  return "https://roxium.com";
+  return "https://roxiumstudio.com";
 }
 
 /** The portal app lives at <site>/portal/ ; the site root is the marketing page. */

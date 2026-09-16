@@ -43,13 +43,13 @@ Both account emails are minted by an Edge Function and delivered through Resend,
 and both link to **our own page with the token in the URL fragment**:
 
 ```
-https://roxium.com/portal/#auth=recovery&token=<hashed_token>&t=recovery
+https://roxiumstudio.com/portal/#auth=recovery&token=<hashed_token>&t=recovery
 ```
 
 Two independent properties make this survive a scanner:
 
 1. **A fragment is never sent to a server.** A scanner fetching the URL
-   transmits only `https://roxium.com/portal/`.
+   transmits only `https://roxiumstudio.com/portal/`.
 2. **The token is redeemed in JavaScript**, by `verifyOtp()` in
    `handleAuthCallback()`. A scanner fetches static HTML and does not run it.
 

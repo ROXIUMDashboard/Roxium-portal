@@ -2,7 +2,7 @@
 /**
  * smoke-test.mjs — post-deploy verification. READ-ONLY and NON-DESTRUCTIVE.
  *
- *   node scripts/smoke-test.mjs --url https://roxium.com --env production [--sha abc1234]
+ *   node scripts/smoke-test.mjs --url https://roxiumstudio.com --env production [--sha abc1234]
  *
  * Checks, in order:
  *   1. the site root responds

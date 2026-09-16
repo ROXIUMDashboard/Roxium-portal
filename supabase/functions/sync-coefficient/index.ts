@@ -769,7 +769,10 @@ Deno.serve(async (req) => {
           header_row: report.header_row, confidence: report.confidence,
           skipped: report.skipped_rows, reason: report.reason };
         // a zero-row parse is a soft failure: keep it visible in the global skipped list
-        if (!ok || report.skipped_rows) skipped.push({ source: job.label, ...report });
+        // `report.source` is already job.label (parseGrid sets it from its `label`
+        // argument), so the spread was silently overwriting an identical value.
+        // Same object, same contents — the redundant key is simply removed.
+        if (!ok || report.skipped_rows) skipped.push({ ...report });
         // per-channel observability: a clean human summary lands on the source row
         if (job.pid) await sb.from("sheet_sources").update({
           last_synced_at: ranAt, last_status: ok ? "ok" : "error",
