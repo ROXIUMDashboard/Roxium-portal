@@ -32,6 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { productionCredentialsFrom } from './lib/production-credentials.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const JSON_OUT = process.argv.includes('--json');
@@ -40,14 +41,17 @@ const log = (...a) => { if (!JSON_OUT) console.log(...a); };
 function credentials() {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
     return { url: process.env.SUPABASE_URL.replace(/\/+$/, ''), key: process.env.SUPABASE_ANON_KEY };
-  const cfg = readFileSync(join(HERE, '..', 'config.js'), 'utf8');
-  const url = cfg.match(/https:\/\/[a-z0-9]+\.supabase\.co/)?.[0];
-  const key = cfg.match(/"(eyJ[A-Za-z0-9._-]+)"/)?.[1];
-  if (!url || !key) throw new Error('could not read SUPABASE_URL / anon key from config.js');
-  return { url, key };
+  return productionCredentialsFrom(readFileSync(join(HERE, '..', 'config.js'), 'utf8'));
 }
 
-const { url, key } = credentials();
+let url, key;
+try {
+  ({ url, key } = credentials());
+} catch (e) {
+  console.error(`COULD NOT RUN: ${e.message}`);
+  console.error('This is NOT a drift result — the check never reached the database.');
+  process.exit(2);
+}
 const HEADERS = { apikey: key, Authorization: `Bearer ${key}` };
 
 async function q(path) {
