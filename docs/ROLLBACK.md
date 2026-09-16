@@ -19,13 +19,13 @@ that already exists; it does not rebuild anything.
 1. **Cloudflare dashboard ▸ Workers & Pages ▸ `roxium-portal` ▸ Deployments**
 2. Filter to **Production**.
 3. Find the last known-good deployment — the commit hash is shown, and matches
-   what `https://roxium.com/version.json` reported before the bad release.
+   what `https://roxiumstudio.com/version.json` reported before the bad release.
 4. **⋯ ▸ Rollback** ▸ confirm.
 
 Live within seconds. Then verify:
 
 ```
-node scripts/smoke-test.mjs --url https://roxium.com --env production
+node scripts/smoke-test.mjs --url https://roxiumstudio.com --env production
 ```
 
 **Then tell Claude.** A rollback is a pause, not a fix: `main` still contains the

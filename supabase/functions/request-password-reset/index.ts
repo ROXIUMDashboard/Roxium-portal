@@ -30,7 +30,7 @@
 //   So: mint the link with admin.generateLink, take the HASHED TOKEN out of it,
 //   and email a link to our own page with the token in the URL FRAGMENT:
 //
-//       https://roxium.com/portal/#auth=recovery&token=<hashed>&t=recovery
+//       https://roxiumstudio.com/portal/#auth=recovery&token=<hashed>&t=recovery
 //
 //   A fragment is never sent to a server, and a scanner does not run our
 //   JavaScript — so only the real user's browser can redeem it, by calling

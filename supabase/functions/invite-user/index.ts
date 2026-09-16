@@ -73,11 +73,28 @@ const inviteHtml = (practiceName: string, actionLink: string) => `
     </td></tr>
   </table>`;
 
-async function canInvite(admin: ReturnType<typeof createClient>, callerId: string, practiceId: string): Promise<boolean> {
-  const { data: prof } = await admin.from("profiles").select("role").eq("id", callerId).single();
+/**
+ * The service-role client, created in one place so its TYPE can be named.
+ *
+ * `ReturnType<typeof createClient>` resolves the generics to their defaults, in
+ * which the schema is `never` — so `.from("profiles")` yielded rows of type
+ * `never` and `prof.role` did not type-check, while the client actually passed
+ * in was `SupabaseClient<any, "public", ...>`. Deriving the type from the same
+ * factory that builds the client keeps the two in step by construction.
+ */
+const makeAdminClient = (url: string, key: string) =>
+  createClient(url, key, { auth: { persistSession: false } });
+type AdminClient = ReturnType<typeof makeAdminClient>;
+
+/** Minimal row shapes — we select exactly one column in each query below. */
+type RoleRow = { role: string | null };
+
+async function canInvite(admin: AdminClient, callerId: string, practiceId: string): Promise<boolean> {
+  const { data: prof } = await admin.from("profiles")
+    .select("role").eq("id", callerId).single<RoleRow>();
   if (prof?.role === "team") return true;
   const { data: mem } = await admin.from("memberships")
-    .select("role").eq("user_id", callerId).eq("practice_id", practiceId).single();
+    .select("role").eq("user_id", callerId).eq("practice_id", practiceId).single<RoleRow>();
   return mem?.role === "owner";
 }
 
@@ -91,7 +108,7 @@ Deno.serve(async (req) => {
   const REDIRECT = SITE_URL ? SITE_URL.replace(/\/+$/, "") + "/portal/" : undefined;
   const RESEND = Deno.env.get("RESEND_API_KEY");
   const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
+  const admin = makeAdminClient(SUPABASE_URL, SERVICE_ROLE);
 
   const authHeader = req.headers.get("Authorization") ?? "";
   const token = authHeader.replace(/^Bearer\s+/i, "");

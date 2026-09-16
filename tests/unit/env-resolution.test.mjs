@@ -14,7 +14,8 @@ const { resolveRoxiumEnvironment, ROXIUM_ENVIRONMENTS } = require('../../config.
 const UNSTAMPED = '__ROXIUM_BUILD_ENV__';
 
 describe('production resolution (must keep working exactly as today)', () => {
-  for (const host of ['roxium.com', 'www.roxium.com', 'roxium-portal.pages.dev']) {
+  for (const host of ['roxiumstudio.com', 'www.roxiumstudio.com',
+                      'roxium.com', 'www.roxium.com', 'roxium-portal.pages.dev']) {
     test(`${host} resolves to production`, () => {
       const r = resolveRoxiumEnvironment(host, UNSTAMPED);
       assert.equal(r.ok, true);
@@ -135,5 +136,71 @@ describe('once staging IS configured, it must still never be production', () => 
   test('a configured staging never leaks onto a production host', (t) => {
     if (!configured) return t.skip('staging not configured yet');
     assert.equal(resolveRoxiumEnvironment('roxium.com', 'staging').ok, false);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The live portal host.
+//
+// This exists because of a real, armed outage: config.js listed only roxium.com
+// as production, while the portal serves from roxiumstudio.com. A
+// production-stamped build fails the host cross-check on a host the environment
+// does not claim and REFUSES TO BOOT — so the next release would have taken the
+// portal down for every customer, with a fail-closed message.
+//
+// It had not fired only because production was last deployed before the
+// cross-check existed. These assertions keep the registry and the real host in
+// step.
+// ---------------------------------------------------------------------------
+describe('the live portal host resolves to production', () => {
+  for (const host of ['roxiumstudio.com', 'www.roxiumstudio.com']) {
+    test(`a production build served from ${host} boots`, () => {
+      const r = resolveRoxiumEnvironment(host, 'production');
+      assert.equal(r.ok, true, `${host} would REFUSE TO BOOT: ${r.reason} — ${r.detail}`);
+      assert.equal(r.name, 'production');
+    });
+
+    test(`${host} resolves to production without a build stamp too`, () => {
+      const r = resolveRoxiumEnvironment(host, UNSTAMPED);
+      assert.equal(r.ok, true, `${host}: ${r.reason}`);
+      assert.equal(r.name, 'production');
+    });
+
+    test(`a STAGING build refuses to run on ${host}`, () => {
+      // The protection that matters in the other direction: staging code must
+      // never serve real customers from the live portal host.
+      const r = resolveRoxiumEnvironment(host, 'staging');
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'host-mismatch');
+    });
+  }
+
+  test('the corporate domain still resolves, so traffic there is not refused', () => {
+    assert.equal(resolveRoxiumEnvironment('roxium.com', 'production').ok, true);
+  });
+
+  test('a lookalike of the portal host is still refused', () => {
+    for (const host of ['roxiumstudio.com.evil.test', 'notroxiumstudio.com', 'roxiumstudio.co']) {
+      const r = resolveRoxiumEnvironment(host, 'production');
+      assert.equal(r.ok, false, `${host} must not be treated as production`);
+    }
+  });
+});
+
+describe('config.js and the staging guard agree on what production is', () => {
+  test('every production host in config.js is in PRODUCTION_HOSTS', async () => {
+    // Two lists naming the same thing drift. PRODUCTION_HOSTS has no consumer
+    // today, which is exactly how it went stale; this keeps it honest.
+    const { PRODUCTION_HOSTS } = await import('../../scripts/lib/staging-guard.mjs');
+    for (const h of ROXIUM_ENVIRONMENTS.production.hosts) {
+      assert.ok(PRODUCTION_HOSTS.includes(h), `${h} is production in config.js but missing from PRODUCTION_HOSTS`);
+    }
+  });
+
+  test('no staging host is claimed as production', () => {
+    for (const h of ROXIUM_ENVIRONMENTS.staging.hosts.filter(Boolean)) {
+      assert.ok(!ROXIUM_ENVIRONMENTS.production.hosts.includes(h), `${h} is claimed by both environments`);
+    }
   });
 });

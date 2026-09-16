@@ -38,6 +38,18 @@ const respond = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
 type Json = Record<string, unknown>;
+
+/**
+ * Accumulator for the Meta insight roll-ups below.
+ *
+ * `rows()` returns Json[] (Record<string, unknown>), so an un-annotated
+ * `reduce` resolves to the (acc: Json, cur: Json) => Json overload rather than
+ * the generic one — the accumulator degrades to Json and every `a.spend` is
+ * `unknown`. Passing the type argument explicitly (`reduce<Agg>`) removes the
+ * ambiguity. Runtime behaviour is unchanged: the seed already held numbers.
+ */
+type Agg = { spend: number; reach: number; impr: number; clicks: number };
+const ZERO_AGG: Agg = { spend: 0, reach: 0, impr: 0, clicks: 0 };
 const num = (x: unknown) => { const n = Number(x); return isFinite(n) ? n : 0; };
 const monthStart = (d: string) => d.slice(0, 7) + "-01";
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -161,10 +173,10 @@ async function pullMeta(sb: ReturnType<typeof serviceClient>, conn: Json) {
     }, caId);
     const insight = rows(r, ["data"]);
     if (!insight.length) continue;
-    const agg = insight.reduce((a, row) => ({
+    const agg = insight.reduce<Agg>((a, row) => ({
       spend: a.spend + num(row.spend), reach: a.reach + num(row.reach),
       impr: a.impr + num(row.impressions), clicks: a.clicks + num(row.clicks ?? row.inline_link_clicks),
-    }), { spend: 0, reach: 0, impr: 0, clicks: 0 });
+    }), { ...ZERO_AGG });
     monthly.push({
       practice_id: practice, period: monthStart(w.period), source: "marketing",
       spend: agg.spend, reach: agg.reach, impr: agg.impr, clicks: agg.clicks,
@@ -190,10 +202,10 @@ async function pullMeta(sb: ReturnType<typeof serviceClient>, conn: Json) {
     }, caId);
     const ins = rows(r, ["data"]);
     if (!ins.length) continue;
-    const agg = ins.reduce((a, row) => ({
+    const agg = ins.reduce<Agg>((a, row) => ({
       spend: a.spend + num(row.spend), reach: a.reach + num(row.reach),
       impr: a.impr + num(row.impressions), clicks: a.clicks + num(row.clicks ?? row.inline_link_clicks),
-    }), { spend: 0, reach: 0, impr: 0, clicks: 0 });
+    }), { ...ZERO_AGG });
     if (agg.spend === 0 && agg.impr === 0 && agg.clicks === 0 && agg.reach === 0) continue;
     daily.push({
       practice_id: practice, day: cursor, source: "marketing",

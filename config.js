@@ -21,8 +21,23 @@
 const ROXIUM_ENVIRONMENTS = {
   production: {
     label: 'production',
-    // Real customers. roxium.com serves the marketing page at / and the portal at /portal/.
-    hosts: ['roxium.com', 'www.roxium.com', 'roxium-portal.pages.dev'],
+    // Real customers.
+    //
+    // The live portal is served from roxiumstudio.com/portal/. roxium.com is the
+    // corporate/marketing domain and is kept here too: it historically served the
+    // portal as well, and dropping it would hard-refuse any traffic still arriving
+    // there. Both are production; neither is staging.
+    //
+    // This list is load-bearing, not documentation. A production-stamped build
+    // served from a host absent here fails the cross-check in
+    // resolveRoxiumEnvironment() and refuses to boot at all — which is correct
+    // when the host is genuinely wrong, and an outage when the list is simply
+    // stale. Add a host here BEFORE pointing it at the portal.
+    hosts: [
+      'roxiumstudio.com', 'www.roxiumstudio.com',   // the live portal
+      'roxium.com', 'www.roxium.com',               // corporate domain, historic portal host
+      'roxium-portal.pages.dev',                    // Cloudflare production branch
+    ],
     SUPABASE_URL: 'https://nchtmeqsjkpcvtuscxfy.supabase.co',
     SUPABASE_ANON_KEY:
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jaHRtZXFzamtwY3Z0dXNjeGZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDc0ODgsImV4cCI6MjA5Njc4MzQ4OH0.pkqxEXf3XdzESvRPtZWTaCIDyfQ3g6CJAFfUnEoIt9c',
