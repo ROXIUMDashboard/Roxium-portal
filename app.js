@@ -741,14 +741,53 @@ $('loginForm')?.addEventListener('submit', async (e)=>{
   $('loginPassword').value = '';
 });
 
-/* ------------------------------------------------------- FORGOT PASSWORD */
-$('linkForgot')?.addEventListener('click', (e)=>{
-  e.preventDefault();
+/* ------------------------------- PASSWORD EMAIL REQUEST (reset or setup) */
+// Two user purposes, one secure mechanism.
+//
+//   'reset' — "I had a password and forgot it."
+//   'setup' — "I have a ROXIUM account but have never had a password."
+//
+// Both end in a one-time recovery token against the SAME Supabase auth user,
+// which is precisely why the second case is safe: it establishes a password on
+// the existing account rather than creating anything, so the user id, profile,
+// memberships, practice assignments, role and history are all preserved.
+//
+// 'setup' is NOT a second way to sign in. It issues no session by itself; the
+// user still ends up at the same email + password card as everyone else.
+const AUTH_REQUEST_COPY = {
+  reset: {
+    title: 'Reset your password',
+    intro: "Enter the email address you use for the portal and we'll send you a link to set a new password.",
+    button: 'Send reset link',
+    sent: "If an account exists for this email, we've sent password reset instructions. The link is valid for one hour.",
+  },
+  setup: {
+    title: 'Set up your password',
+    intro: "Your ROXIUM account already exists — it just needs a password. Enter the email address your invitation was sent to and we'll send you a secure setup link.",
+    button: 'Send setup link',
+    sent: "If an account exists for this email, we've sent password setup instructions. The link is valid for one hour.",
+  },
+};
+let authRequestMode = 'reset';
+
+function showAuthRequestPane(mode){
+  authRequestMode = AUTH_REQUEST_COPY[mode] ? mode : 'reset';
+  const copy = AUTH_REQUEST_COPY[authRequestMode];
+  $('forgotTitle').textContent = copy.title;
+  $('forgotIntro').textContent = copy.intro;
+  const btn = $('btnForgot');
+  btn.textContent = copy.button;
+  delete btn.dataset.label;          // authBusy() re-reads the label for this mode
+  btn.disabled = false;
   $('forgotEmail').value = ($('loginEmail').value || '').trim();
   authMsg('forgotMsg', '', '');
   showAuthPane('forgotPane');
   $('forgotEmail').focus();
-});
+}
+
+$('linkForgot')?.addEventListener('click', (e)=>{ e.preventDefault(); showAuthRequestPane('reset'); });
+$('linkFirstTime')?.addEventListener('click', (e)=>{ e.preventDefault(); showAuthRequestPane('setup'); });
+
 $('linkBackToLogin')?.addEventListener('click', (e)=>{
   e.preventDefault();
   authMsg('loginMsg', '', '');
@@ -759,10 +798,16 @@ $('linkBackToLogin')?.addEventListener('click', (e)=>{
 $('forgotForm')?.addEventListener('submit', async (e)=>{
   e.preventDefault();
   const email = ($('forgotEmail').value || '').trim();
+  const copy = AUTH_REQUEST_COPY[authRequestMode] || AUTH_REQUEST_COPY.reset;
   if(!email){ authMsg('forgotMsg', 'Enter your email address.', 'err'); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    authMsg('forgotMsg', 'Enter a valid email address.', 'err');
+    $('forgotEmail').focus();
+    return;
+  }
   authBusy('btnForgot', true, 'Sending…');
-  // Routed through our own edge function so the reset email is ROXIUM-branded
-  // and, crucially, carries its token in the URL FRAGMENT — a mail scanner that
+  // Routed through our own edge function so the email is ROXIUM-branded and,
+  // crucially, carries its token in the URL FRAGMENT — a mail scanner that
   // pre-fetches the link never transmits the token and so cannot burn it.
   // If that function is not deployed, fall back to Supabase's own reset mail.
   let sent = false;
@@ -770,7 +815,7 @@ $('forgotForm')?.addEventListener('submit', async (e)=>{
     const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/request-password-reset`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', apikey: CONFIG.SUPABASE_ANON_KEY },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, intent: authRequestMode }),
     });
     sent = r.ok;
   }catch(_){ /* fall through */ }
@@ -780,8 +825,9 @@ $('forgotForm')?.addEventListener('submit', async (e)=>{
     }catch(_){ /* neutral response either way — never confirm whether the email exists */ }
   }
   authBusy('btnForgot', false);
-  // Same answer whether or not an account exists. Do not leak membership.
-  authMsg('forgotMsg', "If an account exists for this email, we've sent password reset instructions. The link is valid for one hour.", 'ok');
+  // Identical answer whether or not an account exists, in both modes. Neither
+  // card may be used to discover who ROXIUM's clients are.
+  authMsg('forgotMsg', copy.sent, 'ok');
   $('btnForgot').disabled = true;
 });
 
@@ -841,9 +887,12 @@ $('linkSetPwBack')?.addEventListener('click', async (e)=>{
  * Read a recovery / invitation token out of the URL, in any of the three shapes
  * we can receive, and clear it from the address bar immediately.
  *
- *   #auth=recovery&token=<hashed>   ROXIUM emails (fragment; scanner-proof)
- *   ?token_hash=<hashed>&type=…     Supabase templates using {{ .TokenHash }}
- *   #access_token=…&type=recovery   Supabase's default verify redirect
+ *   #auth=recovery&token=<hashed>&t=…&i=…  ROXIUM emails (fragment; scanner-proof)
+ *   ?token_hash=<hashed>&type=…            Supabase templates using {{ .TokenHash }}
+ *   #access_token=…&type=recovery          Supabase's default verify redirect
+ *
+ * `i` is the INTENT — 'setup' or 'reset'. It only chooses wording; the token and
+ * the mechanism behind it are identical either way.
  */
 function readAuthTokenFromUrl(){
   const hash = (location.hash || '').replace(/^#/, '');
@@ -854,11 +903,13 @@ function readAuthTokenFromUrl(){
   };
 
   if(hp.get('auth') === 'recovery' && hp.get('token')){
-    const out = { kind:'token_hash', token_hash: hp.get('token'), type: hp.get('t') || 'recovery' };
+    const out = { kind:'token_hash', token_hash: hp.get('token'), type: hp.get('t') || 'recovery',
+                  intent: hp.get('i') || '' };
     clear(); return out;
   }
   if(qp.get('token_hash') && qp.get('type')){
-    const out = { kind:'token_hash', token_hash: qp.get('token_hash'), type: qp.get('type') };
+    const out = { kind:'token_hash', token_hash: qp.get('token_hash'), type: qp.get('type'),
+                  intent: qp.get('intent') || '' };
     clear(); return out;
   }
   // Supabase's default flow has already created the session by the time we run;
@@ -874,13 +925,20 @@ function readAuthTokenFromUrl(){
   return null;
 }
 
-/** Present the set-password card, worded for an invitation or a reset. */
-function showSetPasswordPane(type){
+/**
+ * Present the set-password card, worded for the reason the user is here:
+ * a new invitation, an existing account setting a first password, or a reset.
+ * The token and the call behind the button are the same in all three.
+ */
+function showSetPasswordPane(type, intent){
   const invited = type === 'invite' || type === 'signup';
-  $('setPwTitle').textContent = invited ? 'Set your password' : 'Choose a new password';
+  const firstTime = invited || intent === 'setup';
+  $('setPwTitle').textContent = firstTime ? 'Set your password' : 'Choose a new password';
   $('setPwIntro').textContent = invited
     ? "Welcome to ROXIUM. Choose a password for your portal account — you'll use it every time you sign in."
-    : 'Choose a new password for your ROXIUM portal account.';
+    : firstTime
+      ? "Choose a password for your ROXIUM portal account — you'll use it every time you sign in from now on."
+      : 'Choose a new password for your ROXIUM portal account.';
   $('newPwHint').textContent = `At least ${MIN_PASSWORD_LENGTH} characters.`;
   $('setPwBackRow').classList.remove('hidden');
   showAuthPane('setPasswordPane');
@@ -920,7 +978,7 @@ async function handleAuthCallback(){
   }
 
   passwordRecoveryMode = true;
-  showSetPasswordPane(found.type);
+  showSetPasswordPane(found.type, found.intent);
   return true;
 }
 

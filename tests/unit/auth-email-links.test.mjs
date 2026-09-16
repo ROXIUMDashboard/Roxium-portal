@@ -150,3 +150,68 @@ describe('invite-user keeps identity stable', () => {
     assert.match(invite, /from\("memberships"\)\.upsert/);
   });
 });
+
+
+describe('setup and reset share one mechanism, differing only in wording', () => {
+  // The first-time-setup affordance is safe precisely BECAUSE it is a recovery
+  // token against the existing auth user. If it ever gained its own account
+  // creation path, an unapproved stranger could mint themselves an account.
+  test('there is exactly one generateLink call, and it is always recovery', () => {
+    const calls = [...reset.matchAll(/generateLink\(\{[\s\S]{0,200}?\}\)/g)].map((m) => m[0]);
+    assert.equal(calls.length, 1, `expected one generateLink call, found ${calls.length}`);
+    assert.match(calls[0], /type:\s*"recovery"/);
+  });
+
+  test('the intent never reaches createUser, signUp or any write', () => {
+    assert.ok(!/createUser/.test(reset), 'the reset/setup endpoint must never create a user');
+    assert.ok(!/signUp/.test(reset), 'the reset/setup endpoint must never sign anyone up');
+    assert.ok(!/\.(insert|upsert|update|delete)\(/.test(reset), 'it must not write to the database at all');
+  });
+
+  test('an unrecognised intent falls back to reset rather than branching', () => {
+    // Only the literal "setup" switches wording; everything else is "reset".
+    assert.match(reset, /let intent: Intent = "reset";/);
+    assert.match(reset, /if \(String\(body\?\.intent \?\? ""\) === "setup"\) intent = "setup";/);
+  });
+
+  test('the intent changes copy only — the token path ignores it', () => {
+    // Between reading the intent and minting the link, the intent must not be
+    // consulted: otherwise the two purposes could diverge in behaviour.
+    const from = reset.indexOf('const gen = await admin.auth.admin.generateLink');
+    const to = reset.indexOf('if (gen.error || !hashed)');
+    assert.ok(from > -1 && to > from);
+    assert.ok(!reset.slice(from, to).includes('intent'), 'the token is minted without reference to the intent');
+  });
+
+  test('both intents answer with the same neutral response', () => {
+    // neutral() is the single exit; nothing branches on intent to return early.
+    const returns = [...reset.matchAll(/return neutral\(\);/g)];
+    assert.ok(returns.length >= 4, 'every early exit should be neutral()');
+    assert.ok(!/intent[^;]{0,80}return respond/.test(reset), 'no response varies by intent');
+  });
+
+  test('the setup email says setup and the reset email says reset', () => {
+    const copy = reset.slice(reset.indexOf('const COPY'), reset.indexOf('// Branded, Outlook-safe'));
+    assert.match(copy, /reset: \{[\s\S]*?subject: "Set a new ROXIUM portal password"/);
+    assert.match(copy, /setup: \{[\s\S]*?subject: "Set up your ROXIUM portal password"/);
+    // The setup wording must not imply an existing password was forgotten.
+    const setupBlock = copy.slice(copy.indexOf('setup: {'));
+    assert.ok(!/forgot|reset the password/i.test(setupBlock), `setup copy reads like a reset: ${setupBlock.slice(0, 200)}`);
+  });
+
+  test('the intent rides in the fragment too, so a scanner still sees nothing', () => {
+    const build = liftLinkBuilder(reset, 'recoveryLink');
+    const url = build('https://roxium.com/portal/', 'TOK', 'recovery', 'setup');
+    const [before, after] = url.split('#');
+    assert.ok(after.includes('i=setup'));
+    assert.ok(!before.includes('setup'));
+    assert.ok(!before.includes('TOK'));
+  });
+
+  test('omitting the intent produces the link shape invite-user also builds', () => {
+    const r = liftLinkBuilder(reset, 'recoveryLink')('https://x.test/portal/', 'T', 'recovery');
+    const i = liftLinkBuilder(invite, 'setPasswordLink')('https://x.test/portal/', 'T', 'recovery');
+    assert.equal(r, i);
+    assert.ok(!r.includes('i='));
+  });
+});

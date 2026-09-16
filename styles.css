@@ -87,6 +87,10 @@ body{background:var(--ink);color:var(--cream);font-family:var(--font-sans);font-
 .authmsg:empty{margin-top:0}
 .authmsg.err{color:var(--red)}
 .authmsg.ok{color:var(--gold)}
+/* The account-setup line is deliberately quieter than "Forgot password?" —
+   it is a one-time migration affordance, not a second way in. */
+.authsecondary{margin-top:9px;font-size:11.5px;color:var(--muted);opacity:.85}
+.authsecondary .authlink{font-size:11.5px}
 .authlink{color:var(--gold);text-decoration:none;border-bottom:1px solid transparent;
   transition:border-color .18s ease}
 .authlink:hover,.authlink:focus-visible{border-bottom-color:var(--gold)}

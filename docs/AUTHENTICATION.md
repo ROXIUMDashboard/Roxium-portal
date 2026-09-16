@@ -100,20 +100,70 @@ Expired, already-used and malformed links all say so and point at
 card cannot create an account: `signInWithPassword` never creates users. Access
 still requires a membership that a team member or practice owner granted.
 
-### Existing users who have never had a password
+### First-time setup for an existing account
 
-Their accounts are **not** touched, deleted or recreated. User ids, memberships,
-practice associations, roles and history all stay exactly as they are.
+The sign-in card carries a quiet second line beneath *Forgot password?*:
 
-To establish a password on an existing account, either:
+> First time signing in? **Set up your password**
 
-- the client uses **Forgot password?** themselves, or
-- ROXIUM re-invites them from Team Controls — `invite-user` detects the existing
-  account and sends a `recovery` link rather than creating anything.
+This is **not a second way to sign in**. It issues no session, creates no user
+and grants nothing. It exists for one situation: an account that ROXIUM already
+created — from the magic-link era, or an invitation whose email was lost — and
+that has never had a password.
 
-Both routes end in `updateUser({ password })` against **the same auth user**.
-What to tell a client: *"Set your password once — use Forgot password? on the
-sign-in screen. Everything in your portal stays exactly where it is."*
+1. **Set up your password** → enter the email → **Send setup link**.
+2. Neutral answer: *"If an account exists for this email, we've sent password
+   setup instructions."*
+3. The email leads to the same set-password card, worded for a first password.
+4. From then on: email + password, like everyone else.
+
+Because it means production rollout does **not** depend on clients acting on an
+email before the new login ships, this is what makes the migration self-service.
+
+#### Why it is safe
+
+It mints a **`recovery` token against the existing auth user** — the identical
+mechanism as *Forgot password?*. That is exactly why identity survives:
+
+| Preserved | How |
+|---|---|
+| auth user id | `generateLink({type:'recovery'})` resolves an existing user; it cannot create one |
+| profile, role | never written by this path |
+| memberships, practice assignments | never written by this path |
+| history | every row keys off the unchanged user id |
+
+`request-password-reset` **never calls `createUser` or `signUp`, and performs no
+database write at all** — asserted in `tests/unit/auth-email-links.test.mjs`. An
+address with no account receives no email, and the caller cannot tell.
+
+A password by itself still grants nothing: the account reaches the waiting room
+unless it has a membership a team member or practice owner granted.
+
+### The distinction between the two
+
+Same secure mechanism, different question being asked:
+
+| | Forgot password? | First time signing in? |
+|---|---|---|
+| The user is saying | "I had a password and forgot it." | "I have an account but have never had a password." |
+| Card heading | Reset your password | Set up your password |
+| Button | Send reset link | Send setup link |
+| Email subject | Set a new ROXIUM portal password | Set up your ROXIUM portal password |
+| Confirmation | …password **reset** instructions | …password **setup** instructions |
+| Token | `recovery` | `recovery` |
+
+The `intent` travels as `&i=setup` inside the link fragment and **chooses wording
+only**. An unrecognised intent falls back to `reset`; the token path never reads
+it. Duplicating the backend for the second case would have added a second way to
+mint credentials, which is the opposite of what makes this safe.
+
+### What to tell an existing client
+
+*"Go to the portal and click 'First time signing in? Set up your password'. Use
+the email address ROXIUM already has for you. Everything in your portal stays
+exactly where it is."*
+
+No advance email campaign is required — though one still helps.
 
 ---
 
@@ -177,9 +227,18 @@ additionally needs `CONFIRM="PROVISION PRODUCTION ADMIN"`.
 
 | Layer | File |
 |---|---|
-| Login UI, errors, session, recovery, URL parsing | `tests/e2e/auth-password.spec.js` (32 tests, no backend) |
-| Email-link security properties | `tests/unit/auth-email-links.test.mjs` (22 tests) |
+| Login UI, errors, session, recovery, first-time setup, URL parsing | `tests/e2e/auth-password.spec.js` (50 tests, no backend) |
+| Email-link and shared-mechanism security properties | `tests/unit/auth-email-links.test.mjs` (30 tests) |
+| Identity preservation, end to end against a real project | `tests/integration/password-migration.test.mjs` (`npm run test:integration`) |
 | Authorization regression against real staging | `tests/e2e/staging/tenancy.spec.js` |
+
+`tests/integration/` proves the central claim with a live Supabase project:
+create a passwordless user with a membership, mint a setup link, redeem it, set a
+password, sign in, and assert the id, profile, role, membership and practice are
+byte-identical either side — plus that the token cannot be replayed. It **skips**
+without `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_SERVICE_ROLE_KEY` and
+`STAGING_SUPABASE_ANON_KEY`, and the staging guard refuses production before
+anything is created, so it can never touch live data.
 
 The staging suite needs `STAGING_FIXTURE_PASSWORD` — the same secret the seeder
 applies to the synthetic fixture accounts. Password auth is what makes those

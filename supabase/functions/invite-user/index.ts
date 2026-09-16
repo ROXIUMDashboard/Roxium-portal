@@ -200,7 +200,7 @@ Deno.serve(async (req) => {
         headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from: FROM, to: [email],
-          subject: "Set up your ROXIUM portal account",
+          subject: "Set up your ROXIUM password",
           html: inviteHtml((practice as { name?: string }).name || "", actionLink),
         }),
       });

@@ -50,16 +50,26 @@
     <p class="note authmsg" id="loginMsg" role="alert" aria-live="polite"></p>
 
     <p class="note"><a href="#" id="linkForgot" class="authlink">Forgot password?</a></p>
+    <!-- Not a second way to sign in: this only lets an EXISTING account that has
+         never had a password establish one. It ends at the same email+password
+         sign-in as everyone else. -->
+    <p class="note authsecondary">First time signing in?
+      <a href="#" id="linkFirstTime" class="authlink">Set up your password</a></p>
     <p class="note" style="margin-top:14px"><a href="https://roxium.com" class="authlink">← Back to roxium.com</a></p>
   </form>
 </div>
 
-<!-- ============ FORGOT PASSWORD (request a reset) ============ -->
+<!-- ============ PASSWORD EMAIL REQUEST ============ -->
+<!-- Serves both "I forgot my password" and "I have an account but have never had
+     a password". The secure mechanism is deliberately identical — a one-time
+     recovery token against the SAME Supabase auth user — because that is what
+     keeps identity, memberships and history intact in both cases. Only the
+     wording differs, because the two users are asking different questions. -->
 <div id="forgotPane" class="login hidden">
   <form class="login-card" id="forgotForm" novalidate>
     <div class="mark big">ROX<b>I</b>UM</div>
-    <div class="eyebrow">Reset your password</div>
-    <p class="note">Enter the email address you use for the portal and we'll send you a link to set a new password.</p>
+    <div class="eyebrow" id="forgotTitle">Reset your password</div>
+    <p class="note" id="forgotIntro">Enter the email address you use for the portal and we'll send you a link to set a new password.</p>
 
     <div class="field">
       <label class="field-label" for="forgotEmail">Email</label>
