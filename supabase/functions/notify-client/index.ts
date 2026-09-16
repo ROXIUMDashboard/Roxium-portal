@@ -11,6 +11,7 @@
 // ============================================================
 
 import { requireTeamUser, serviceClient, UUID_RE } from "../_shared/auth.ts";
+import { portalOrigin } from "../_shared/env.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -74,7 +75,7 @@ Deno.serve(async (req) => {
     const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
     // Link recipients straight into the portal app page (the site root is the
     // public marketing page).
-    const SITE = (Deno.env.get("SITE_URL") || "https://roxium.com").replace(/\/+$/, "") + "/portal/";
+    const SITE = portalOrigin();
     const when = new Date().toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",
       month: "long", day: "numeric", year: "numeric",

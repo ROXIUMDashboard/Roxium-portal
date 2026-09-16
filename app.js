@@ -3,6 +3,13 @@
    Front end: Cloudflare Pages (static) · Backend: Supabase (auth + db + RLS)
    ============================================================ */
 
+// Environment gate. config.js resolves which Supabase project this page may talk to
+// and sets window.ROXIUM_ENV_ERROR (plus an on-screen notice) if it cannot decide.
+// Stop here rather than construct a client against a guessed backend — see
+// docs/ENVIRONMENTS.md. When the environment resolves, this is a no-op.
+if (typeof CONFIG === 'undefined' || !CONFIG || !CONFIG.SUPABASE_URL) {
+  throw new Error('[ROXIUM] halted: no environment resolved (see config.js / docs/ENVIRONMENTS.md)');
+}
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
 // Team manual-entry fields = the real ad metrics the Coefficient sheet provides.
@@ -142,7 +149,6 @@ const STAGES = [['planned','Planned'],['scheduled','Scheduled'],['pre_production
 let me = null;            // profile row
 let authEmail = '';       // signed-in user's email (display-name fallback)
 let myMembership = null;    // current practice membership { role: owner|member }
-let pendingLoginEmail = ''; // email awaiting a typed 6-digit code (Outlook fallback)
 let practiceId = null;    // active practice
 let previewMode = false;  // team viewing the client-side version
 // Selected reporting month is scoped PER PRACTICE so one client's choice can never
@@ -452,6 +458,13 @@ function syncChrome(){
   if(!canSeeAccessTab() && currentView()==='access') location.hash = '#'+CLIENT_HOME;
 }
 window.addEventListener('hashchange', ()=>{
+  // A recovery/invitation link pasted into a tab that is ALREADY on /portal/
+  // only changes the fragment, so there is no page load and init() never runs
+  // again. Check for an auth callback here too, or the link would do nothing.
+  if(/^#(auth=recovery|access_token=|error)/.test(location.hash || '')){
+    handleAuthCallback();
+    return;
+  }
   captureDeepLinkFromHash();
   showView(currentView());
   if(pendingDeepLink && practiceId) requestAnimationFrame(()=> applyDeepLinkFocus());
@@ -562,13 +575,28 @@ async function boot(){
 
 async function init(){
   showBuildVersion();
+  // A recovery or invitation link takes precedence over any existing session:
+  // the user came here to set a password, not to be dropped into the portal.
+  if(await handleAuthCallback()) return;
   const { data:{ session } } = await sb.auth.getSession();
-  if(!session){ $('login').classList.remove('hidden'); return; }
+  // Session restore is Supabase's own: the client persists the session in
+  // localStorage and refreshes the access token in the background, so a refresh
+  // or a new tab within the session's life does not ask for credentials again.
+  if(!session){ showAuthPane('login'); return; }
   await boot();
 }
 // Never await Supabase calls directly inside the auth callback — that can stall
 // the client. Defer to a fresh task and let boot() dedupe.
-sb.auth.onAuthStateChange((_e, session)=>{ if(session && !me) setTimeout(boot, 0); });
+sb.auth.onAuthStateChange((event, session)=>{
+  // PASSWORD_RECOVERY fires when Supabase's own default recovery redirect is
+  // used. Show the set-password card instead of entering the portal.
+  if(event === 'PASSWORD_RECOVERY'){ passwordRecoveryMode = true; showSetPasswordPane('recovery'); return; }
+  // A genuinely expired session (refresh token rejected) returns the user
+  // cleanly to Sign in rather than leaving a half-rendered portal on screen.
+  if(event === 'SIGNED_OUT' && me){ location.replace('/portal/'); return; }
+  if(passwordRecoveryMode) return;
+  if(session && !me) setTimeout(boot, 0);
+});
 
 async function showBuildVersion(){
   const el = $('portalBuild');
@@ -591,53 +619,369 @@ async function showBuildVersion(){
   }catch(_){}
 }
 
-// Capture a practice invite link (?join=CODE) so it survives the magic-link round trip.
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTHENTICATION — email + password, via Supabase Auth.
+//
+// Supabase Auth remains the only authority on credentials: we never store a
+// password, a hash, or anything derived from one. This file calls
+// signInWithPassword / verifyOtp / updateUser and nothing else.
+//
+// Why passwords replaced magic links + OTP on the normal login path:
+// corporate mail security (Defender Safe Links and friends) can delay delivery
+// past the code's lifetime, and following a link from a mail client opens
+// whichever browser the OS prefers — not the one the user was working in.
+// Email is now only involved in account setup and recovery.
+//
+// AUTHENTICATION answers "who is this?". AUTHORIZATION — practice membership,
+// approval state, team/admin role — is unchanged and still decided by RLS and
+// afterLogin(). Signing in proves identity and grants nothing by itself.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MIN_PASSWORD_LENGTH = 10;   // our floor; Supabase enforces its own minimum too
+
+// Capture a practice invite link (?join=CODE) so it survives an email round trip.
 try{ const _jc = new URL(location.href).searchParams.get('join'); if(_jc) localStorage.setItem('roxium_join', _jc.trim()); }catch(_){}
 
-$('btnLogin').onclick = async ()=>{
-  const email = $('loginEmail').value.trim();
-  if(!email) return;
-  // Self-service accounts, invite-only ACCESS: anyone may create a ROXIUM
-  // account here, but nobody reaches client data until they're approved.
-  // Invited emails auto-approve the moment they sign in (the invitation IS the
-  // approval); everyone else lands in a Pending state with zero data access
-  // until the team approves them in Team Controls → Account approvals.
-  const joinCode = (localStorage.getItem('roxium_join') || '').trim();
-  // The app lives at /portal/ (the root is the public marketing page, which
-  // forwards stray auth callbacks here). Send magic links straight to the portal.
-  const redirectTo = location.origin + '/portal/' + (joinCode ? '?join=' + encodeURIComponent(joinCode) : '');
-  // Invite-only: never auto-create an account for an unknown email. Supabase then
-  // returns an error for addresses with no existing auth user, which we surface as
-  // "no account — contact ROXIUM" instead of silently mailing a stranger a link.
-  const { error } = await sb.auth.signInWithOtp({
-    email, options:{ emailRedirectTo: redirectTo, shouldCreateUser: false }
+/** Show exactly one of the full-screen auth panes (or none, for the app). */
+function showAuthPane(id){
+  ['login','forgotPane','setPasswordPane','pendingPane'].forEach(p=>{
+    $(p)?.classList.toggle('hidden', p !== id);
   });
-  if(!error){
-    // Reveal the typed-code path: Outlook's link scanner can consume or delay the
-    // one-time magic link, so a code the user types is the reliable fallback.
-    pendingLoginEmail = email;
-    $('loginCodeRow')?.classList.remove('hidden');
-    $('loginMsg').textContent = 'Check your email for the sign-in link — or type the code from that email below.';
-  } else {
-    const m = String(error.message||'');
-    $('loginMsg').textContent = /signups? not allowed|disabled|not found|no user|invalid/i.test(m)
-      ? 'No account is set up for that email yet — please contact ROXIUM staff to get access.'
-      : m;
-  }
-};
+  if(id) $('app')?.classList.add('hidden');
+}
 
-$('btnVerifyCode')?.addEventListener('click', async ()=>{
-  const token = ($('loginCode').value || '').replace(/\D/g, '').trim();
-  const email = pendingLoginEmail || $('loginEmail').value.trim();
-  if(!email || token.length < 6){ $('loginMsg').textContent = 'Enter the code from your email.'; return; }
-  $('btnVerifyCode').disabled = true; $('loginMsg').textContent = 'Verifying…';
-  // Magic-link codes are type 'email'; invite emails are type 'invite' — try both.
-  let { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-  if(error){ const r = await sb.auth.verifyOtp({ email, token, type: 'invite' }); if(!r.error) error = null; }
-  $('btnVerifyCode').disabled = false;
-  if(error){ $('loginMsg').textContent = 'That code did not work (it may have expired — send a new link): ' + error.message; return; }
-  // Success: onAuthStateChange fires boot(); nothing else to do here.
+/** Write a message under an auth card. kind: '' | 'err' | 'ok'. */
+function authMsg(elId, text, kind){
+  const el = $(elId); if(!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('err', kind === 'err');
+  el.classList.toggle('ok', kind === 'ok');
+}
+
+/** Disable a submit button and show it is working, without losing its label. */
+function authBusy(btnId, busy, busyLabel){
+  const b = $(btnId); if(!b) return;
+  if(busy){
+    if(b.dataset.label === undefined) b.dataset.label = b.textContent;
+    b.textContent = busyLabel || b.dataset.label;
+    b.disabled = true; b.setAttribute('aria-busy','true');
+  } else {
+    if(b.dataset.label !== undefined) b.textContent = b.dataset.label;
+    b.disabled = false; b.removeAttribute('aria-busy');
+  }
+}
+
+/** Wire a Show/Hide control onto a password input. */
+function wirePasswordToggle(toggleId, inputId){
+  const t = $(toggleId), i = $(inputId);
+  if(!t || !i) return;
+  t.addEventListener('click', ()=>{
+    const show = i.type === 'password';
+    i.type = show ? 'text' : 'password';
+    t.textContent = show ? 'Hide' : 'Show';
+    t.setAttribute('aria-pressed', show ? 'true' : 'false');
+    t.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    i.focus();
+  });
+}
+wirePasswordToggle('loginPwToggle','loginPassword');
+wirePasswordToggle('newPwToggle','newPassword');
+
+/**
+ * Turn a Supabase error into something a surgeon can act on.
+ *
+ * Deliberately collapses "wrong password" and "no such account" into one
+ * message: distinguishing them would turn the login form into an account
+ * enumeration oracle.
+ */
+function authErrorMessage(error){
+  const m = String(error?.message || '');
+  const status = error?.status;
+  // Specific cases first: a bare `status === 400` would otherwise swallow them,
+  // since Supabase returns 400 for several distinct auth failures.
+  if(/email not confirmed/i.test(m)){
+    return 'This account still needs to be confirmed. Check your email, or contact ROXIUM.';
+  }
+  if(/too many requests|rate limit|over_request_rate/i.test(m) || status === 429){
+    return 'Too many attempts. Wait a minute and try again.';
+  }
+  if(/network|fetch|failed to fetch/i.test(m)){
+    return "We couldn't reach ROXIUM. Check your connection and try again.";
+  }
+  if(/invalid login credentials|invalid_credentials/i.test(m) || status === 400){
+    return 'The email or password you entered is incorrect.';
+  }
+  // Anything unrecognised: say something true and useful, and keep the raw
+  // message in the console for support rather than on a client's screen.
+  if(m) console.warn('[auth]', m);
+  return 'Something went wrong signing you in. Please try again, or contact ROXIUM.';
+}
+
+/* ---------------------------------------------------------------- SIGN IN */
+$('loginForm')?.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const email = ($('loginEmail').value || '').trim();
+  const password = $('loginPassword').value || '';
+  if(!email || !password){
+    authMsg('loginMsg', 'Enter your email and password.', 'err');
+    (!email ? $('loginEmail') : $('loginPassword')).focus();
+    return;
+  }
+  authMsg('loginMsg', '', '');
+  authBusy('btnLogin', true, 'Signing in…');
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){
+    authBusy('btnLogin', false);
+    authMsg('loginMsg', authErrorMessage(error), 'err');
+    $('loginPassword').select();
+    return;
+  }
+  // Success: onAuthStateChange fires boot(), which runs the unchanged
+  // membership/approval checks. Leave the button busy until the app renders.
+  $('loginPassword').value = '';
 });
+
+/* ------------------------------- PASSWORD EMAIL REQUEST (reset or setup) */
+// Two user purposes, one secure mechanism.
+//
+//   'reset' — "I had a password and forgot it."
+//   'setup' — "I have a ROXIUM account but have never had a password."
+//
+// Both end in a one-time recovery token against the SAME Supabase auth user,
+// which is precisely why the second case is safe: it establishes a password on
+// the existing account rather than creating anything, so the user id, profile,
+// memberships, practice assignments, role and history are all preserved.
+//
+// 'setup' is NOT a second way to sign in. It issues no session by itself; the
+// user still ends up at the same email + password card as everyone else.
+const AUTH_REQUEST_COPY = {
+  reset: {
+    title: 'Reset your password',
+    intro: "Enter the email address you use for the portal and we'll send you a link to set a new password.",
+    button: 'Send reset link',
+    sent: "If an account exists for this email, we've sent password reset instructions. The link is valid for one hour.",
+  },
+  setup: {
+    title: 'Set up your password',
+    intro: "Your ROXIUM account already exists — it just needs a password. Enter the email address your invitation was sent to and we'll send you a secure setup link.",
+    button: 'Send setup link',
+    sent: "If an account exists for this email, we've sent password setup instructions. The link is valid for one hour.",
+  },
+};
+let authRequestMode = 'reset';
+
+function showAuthRequestPane(mode){
+  authRequestMode = AUTH_REQUEST_COPY[mode] ? mode : 'reset';
+  const copy = AUTH_REQUEST_COPY[authRequestMode];
+  $('forgotTitle').textContent = copy.title;
+  $('forgotIntro').textContent = copy.intro;
+  const btn = $('btnForgot');
+  btn.textContent = copy.button;
+  delete btn.dataset.label;          // authBusy() re-reads the label for this mode
+  btn.disabled = false;
+  $('forgotEmail').value = ($('loginEmail').value || '').trim();
+  authMsg('forgotMsg', '', '');
+  showAuthPane('forgotPane');
+  $('forgotEmail').focus();
+}
+
+$('linkForgot')?.addEventListener('click', (e)=>{ e.preventDefault(); showAuthRequestPane('reset'); });
+$('linkFirstTime')?.addEventListener('click', (e)=>{ e.preventDefault(); showAuthRequestPane('setup'); });
+
+$('linkBackToLogin')?.addEventListener('click', (e)=>{
+  e.preventDefault();
+  authMsg('loginMsg', '', '');
+  showAuthPane('login');
+  $('loginEmail').focus();
+});
+
+$('forgotForm')?.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const email = ($('forgotEmail').value || '').trim();
+  const copy = AUTH_REQUEST_COPY[authRequestMode] || AUTH_REQUEST_COPY.reset;
+  if(!email){ authMsg('forgotMsg', 'Enter your email address.', 'err'); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    authMsg('forgotMsg', 'Enter a valid email address.', 'err');
+    $('forgotEmail').focus();
+    return;
+  }
+  authBusy('btnForgot', true, 'Sending…');
+  // Routed through our own edge function so the email is ROXIUM-branded and,
+  // crucially, carries its token in the URL FRAGMENT — a mail scanner that
+  // pre-fetches the link never transmits the token and so cannot burn it.
+  // If that function is not deployed, fall back to Supabase's own reset mail.
+  let sent = false;
+  try{
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/request-password-reset`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', apikey: CONFIG.SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, intent: authRequestMode }),
+    });
+    sent = r.ok;
+  }catch(_){ /* fall through */ }
+  if(!sent){
+    try{
+      await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/portal/' });
+    }catch(_){ /* neutral response either way — never confirm whether the email exists */ }
+  }
+  authBusy('btnForgot', false);
+  // Identical answer whether or not an account exists, in both modes. Neither
+  // card may be used to discover who ROXIUM's clients are.
+  authMsg('forgotMsg', copy.sent, 'ok');
+  $('btnForgot').disabled = true;
+});
+
+/* ------------------------------------------------- SET / RESET PASSWORD */
+// True once a recovery/invite token has been exchanged for a session, so boot()
+// does not race the user into the portal before they have chosen a password.
+let passwordRecoveryMode = false;
+
+function validateNewPassword(pw, confirm){
+  if(!pw || !confirm) return 'Enter and confirm your new password.';
+  if(pw.length < MIN_PASSWORD_LENGTH) return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+  if(pw !== confirm) return "Those passwords don't match.";
+  return null;
+}
+
+$('setPasswordForm')?.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const pw = $('newPassword').value || '';
+  const confirm = $('confirmPassword').value || '';
+  const problem = validateNewPassword(pw, confirm);
+  if(problem){
+    authMsg('setPwMsg', problem, 'err');
+    (pw.length < MIN_PASSWORD_LENGTH ? $('newPassword') : $('confirmPassword')).focus();
+    return;
+  }
+  authMsg('setPwMsg', '', '');
+  authBusy('btnSetPassword', true, 'Saving…');
+  // updateUser requires a session — the recovery token established one above.
+  // Supabase hashes and stores the password; we never see or keep it.
+  const { error } = await sb.auth.updateUser({ password: pw });
+  if(error){
+    authBusy('btnSetPassword', false);
+    const m = String(error.message || '');
+    authMsg('setPwMsg',
+      /should be at least|weak|password/i.test(m) && !/session|token/i.test(m)
+        ? `That password was rejected: ${m}`
+        : /session|jwt|expired|token/i.test(m)
+          ? 'This link has expired. Request a new one from "Forgot password?".'
+          : authErrorMessage(error),
+      'err');
+    return;
+  }
+  $('newPassword').value = ''; $('confirmPassword').value = '';
+  authMsg('setPwMsg', 'Password saved. Signing you in…', 'ok');
+  passwordRecoveryMode = false;
+  await boot();
+});
+
+$('linkSetPwBack')?.addEventListener('click', async (e)=>{
+  e.preventDefault();
+  passwordRecoveryMode = false;
+  try{ await sb.auth.signOut(); }catch(_){ }
+  location.replace('/portal/');
+});
+
+/**
+ * Read a recovery / invitation token out of the URL, in any of the three shapes
+ * we can receive, and clear it from the address bar immediately.
+ *
+ *   #auth=recovery&token=<hashed>&t=…&i=…  ROXIUM emails (fragment; scanner-proof)
+ *   ?token_hash=<hashed>&type=…            Supabase templates using {{ .TokenHash }}
+ *   #access_token=…&type=recovery          Supabase's default verify redirect
+ *
+ * `i` is the INTENT — 'setup' or 'reset'. It only chooses wording; the token and
+ * the mechanism behind it are identical either way.
+ */
+function readAuthTokenFromUrl(){
+  const hash = (location.hash || '').replace(/^#/, '');
+  const hp = new URLSearchParams(hash);
+  const qp = new URLSearchParams(location.search || '');
+  const clear = ()=>{
+    try{ history.replaceState(null, '', location.pathname); }catch(_){ }
+  };
+
+  if(hp.get('auth') === 'recovery' && hp.get('token')){
+    const out = { kind:'token_hash', token_hash: hp.get('token'), type: hp.get('t') || 'recovery',
+                  intent: hp.get('i') || '' };
+    clear(); return out;
+  }
+  if(qp.get('token_hash') && qp.get('type')){
+    const out = { kind:'token_hash', token_hash: qp.get('token_hash'), type: qp.get('type'),
+                  intent: qp.get('intent') || '' };
+    clear(); return out;
+  }
+  // Supabase's default flow has already created the session by the time we run;
+  // the fragment only tells us WHY, so the user lands on "set password".
+  if(hp.get('type') === 'recovery' || hp.get('type') === 'invite'){
+    const out = { kind:'session', type: hp.get('type') };
+    clear(); return out;
+  }
+  if(hp.get('error_code') || hp.get('error')){
+    const out = { kind:'error', detail: hp.get('error_description') || hp.get('error') || '' };
+    clear(); return out;
+  }
+  return null;
+}
+
+/**
+ * Present the set-password card, worded for the reason the user is here:
+ * a new invitation, an existing account setting a first password, or a reset.
+ * The token and the call behind the button are the same in all three.
+ */
+function showSetPasswordPane(type, intent){
+  const invited = type === 'invite' || type === 'signup';
+  const firstTime = invited || intent === 'setup';
+  $('setPwTitle').textContent = firstTime ? 'Set your password' : 'Choose a new password';
+  $('setPwIntro').textContent = invited
+    ? "Welcome to ROXIUM. Choose a password for your portal account — you'll use it every time you sign in."
+    : firstTime
+      ? "Choose a password for your ROXIUM portal account — you'll use it every time you sign in from now on."
+      : 'Choose a new password for your ROXIUM portal account.';
+  $('newPwHint').textContent = `At least ${MIN_PASSWORD_LENGTH} characters.`;
+  $('setPwBackRow').classList.remove('hidden');
+  showAuthPane('setPasswordPane');
+  $('newPassword').focus();
+}
+
+/**
+ * Handle an inbound recovery/invite link.
+ * @returns true if it took over the screen (so init() must not continue).
+ */
+async function handleAuthCallback(){
+  const found = readAuthTokenFromUrl();
+  if(!found) return false;
+
+  if(found.kind === 'error'){
+    showAuthPane('login');
+    authMsg('loginMsg', /expire/i.test(found.detail)
+      ? 'That link has expired. Use "Forgot password?" to get a new one.'
+      : 'That link is no longer valid. Use "Forgot password?" to get a new one.', 'err');
+    return true;
+  }
+
+  if(found.kind === 'token_hash'){
+    // Exchanging the token here, in JavaScript, is the whole point: a mail
+    // scanner fetching the URL gets static HTML and never reaches this line.
+    const type = ['recovery','invite','signup','magiclink','email'].includes(found.type) ? found.type : 'recovery';
+    let { error } = await sb.auth.verifyOtp({ token_hash: found.token_hash, type });
+    if(error && type === 'recovery'){
+      const retry = await sb.auth.verifyOtp({ token_hash: found.token_hash, type: 'invite' });
+      if(!retry.error) error = null;
+    }
+    if(error){
+      showAuthPane('login');
+      authMsg('loginMsg', 'That link has expired or has already been used. Use "Forgot password?" to get a new one.', 'err');
+      return true;
+    }
+  }
+
+  passwordRecoveryMode = true;
+  showSetPasswordPane(found.type, found.intent);
+  return true;
+}
+
 $('btnLogout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 // Brand icon is "home": clients / client-preview → Overview; real team → Operations
 // with the client DESELECTED, so they fully leave the client portal.
@@ -752,8 +1096,7 @@ async function editMyName(){
 // for rejected accounts). No practice data is reachable in this state — RLS
 // denies everything without a membership; this pane is the honest UX for it.
 function showPendingPane(status, email){
-  $('login').classList.add('hidden');
-  $('app').classList.add('hidden');
+  showAuthPane('pendingPane');
   const pane = $('pendingPane'); if(!pane) return;
   const rejected = status === 'rejected';
   $('pendingTitle').textContent = rejected ? 'Access not approved' : 'Almost there';
@@ -761,7 +1104,6 @@ function showPendingPane(status, email){
     ? `This account (<b>${esc(email||'')}</b>) hasn't been approved for portal access. If you believe this is a mistake, contact your ROXIUM lead.`
     : `Your account (<b>${esc(email||'')}</b>) is created and <b>awaiting approval</b> by the ROXIUM team — we verify every practice before granting access. You'll be able to sign straight in once you're approved.<br><br>
        <span class="note">Were you invited by your practice? Sign out and use the <b>same email address</b> your invitation was sent to — invited emails are approved automatically.</span>`;
-  pane.classList.remove('hidden');
   $('btnPendingSignout').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
 }
 
@@ -787,8 +1129,8 @@ async function afterLogin(){
     try{ await sb.rpc('ensure_my_profile'); }catch(_){ /* pre-migration DB */ }
     ({ data: prof, error } = await sb.from('profiles').select('*').eq('id', uid).single());
     if(error || !prof){
-      $('login').classList.remove('hidden');
-      $('loginMsg').textContent = 'Account created, but setup failed. Contact ROXIUM support.';
+      showAuthPane('login');
+      authMsg('loginMsg', 'Your account exists, but portal setup did not complete. Contact ROXIUM support.', 'err');
       return;
     }
   } else if(claim?.claimed > 0){
@@ -814,7 +1156,7 @@ async function afterLogin(){
     if(!mems || !mems.length){ showPendingPane('pending', authEmail); return; }
     if(!me.practice_id) me.practice_id = mems[0].practice_id;   // heal a lagging pointer
   }
-  $('login').classList.add('hidden');
+  showAuthPane(null);
   $('app').classList.remove('hidden');
   renderWhoami();
   wireTopbar();
@@ -5694,12 +6036,12 @@ $('btnInvite').onclick = async ()=>{
     const pname = (practicesList||[]).find(p=> p.id===practice_id)?.name || 'the practice';
     $('accessEmail').value=''; $('accessName').value='';
     if(sendEmail && data?.emailed === false){
-      onbFlash(`${email} is set up and has access to ${pname} — but the invite email didn't send (${esc(data?.email_note||'email not configured yet')}). Finish email setup to deliver sign-in links.`, false);
+      onbFlash(`${email} is set up and has access to ${pname} — but the invite email didn't send (${esc(data?.email_note||'email not configured yet')}). Finish email setup to deliver invitations.`, false);
     } else {
       onbFlash(sendEmail
         ? (data?.invited===false
-            ? `✓ ${email} already had an account — linked to ${pname} and emailed a sign-in link.`
-            : `✓ Invite sent — ${email} was emailed a sign-in link and added to ${pname}. They now appear in the list below.`)
+            ? `✓ ${email} already had an account — linked to ${pname} and emailed a link to set their password.`
+            : `✓ Invite sent — ${email} was emailed a link to set their password and added to ${pname}. They now appear in the list below.`)
         : `✓ ${email} allowlisted for ${pname} — they can sign up with that email anytime.`, true);
     }
     loadAccessRoster(practice_id);

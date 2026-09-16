@@ -8,14 +8,21 @@
 // Flow:
 //   1. Verify caller may invite to this practice.
 //   2. Upsert practice_invites (allowlist) as pending → sent.
-//   3. Mint the sign-in link with admin.generateLink (invite for new users,
-//      magiclink for existing) and EMAIL IT VIA RESEND — the same proven path the
-//      portal's other notifications use. Supabase's built-in invite email
-//      (inviteUserByEmail) is the fallback only when RESEND_API_KEY is absent.
+//   3. Mint a SET-PASSWORD link with admin.generateLink (invite for brand-new
+//      users, recovery for existing ones) and EMAIL IT VIA RESEND — the same
+//      proven path the portal's other notifications use.
+//
+//      The link carries its token in the URL FRAGMENT and points at our own
+//      page, which redeems it with verifyOtp() in JavaScript. Corporate mail
+//      scanners pre-fetch links and would otherwise burn a one-time token
+//      before the human ever clicks; a fragment is never sent to a server and a
+//      scanner does not run our JS. See request-password-reset for the same
+//      reasoning in the recovery flow.
 //   4. Upsert profiles + memberships; mark invite accepted + approved.
 //
 // Deploy:  supabase functions deploy invite-user
-// Secrets: SITE_URL (portal origin for the invite redirect),
+// Secrets: SITE_URL (portal origin for the invite redirect; REQUIRED — the link
+//          is built from it),
 //          RESEND_API_KEY + EMAIL_FROM (to actually deliver the invite email).
 // ============================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -29,6 +36,15 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The invitation URL: hashed token in the FRAGMENT, redeemed client-side.
+ * Kept identical in shape to request-password-reset's link so the portal has one
+ * callback to parse.
+ */
+export function setPasswordLink(portal: string, hashedToken: string, type: string): string {
+  return `${portal.replace(/\/+$/, "")}/#auth=recovery&token=${encodeURIComponent(hashedToken)}&t=${encodeURIComponent(type)}`;
+}
 
 function escapeHtml(s: string) {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -45,10 +61,10 @@ const inviteHtml = (practiceName: string, actionLink: string) => `
         </td></tr>
         <tr><td align="center" style="padding:18px 44px 0;font-family:Georgia,'Times New Roman',serif;font-size:21px;line-height:1.35;color:#F2EDE3;">You're invited to your ROXIUM portal</td></tr>
         ${practiceName ? `<tr><td align="center" style="padding:6px 44px 0;font-family:Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:1.5px;color:#C9A84C;text-transform:uppercase;">${escapeHtml(practiceName)}</td></tr>` : ""}
-        <tr><td style="padding:20px 44px 2px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;color:#F2EDE3;">Your practice's growth dashboard is ready — marketing performance, deliverables, video and reporting, all in one place. Click below to sign in. No password needed.</td></tr>
+        <tr><td style="padding:20px 44px 2px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;color:#F2EDE3;">Your practice's growth dashboard is ready — marketing performance, deliverables, video and reporting, all in one place. Click below to choose a password and open your portal.</td></tr>
         <tr><td align="center" style="padding:24px 44px 6px;">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#C9A84C" style="border-radius:6px;">
-            <a href="${escapeHtml(actionLink)}" style="display:inline-block;padding:13px 30px;font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#0D0C10;text-decoration:none;">Open your portal</a>
+            <a href="${escapeHtml(actionLink)}" style="display:inline-block;padding:13px 30px;font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#0D0C10;text-decoration:none;">Set your password</a>
           </td></tr></table>
         </td></tr>
         <tr><td style="padding:6px 44px 2px;font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#9A948A;">If the button doesn't work, copy and paste this link:<br><span style="color:#C9A84C;word-break:break-all;">${escapeHtml(actionLink)}</span></td></tr>
@@ -165,16 +181,26 @@ Deno.serve(async (req) => {
   let emailed = false;
   let email_note = "";
   try {
-    const gen = await admin.auth.admin.generateLink({ type: "magiclink", email, options: { redirectTo: REDIRECT } });
-    const actionLink = (gen.data as { properties?: { action_link?: string } })?.properties?.action_link || "";
-    if (gen.error || !actionLink) throw new Error(gen.error?.message || "could not generate sign-in link");
+    // A brand-new account has no password yet, so it gets an `invite` token; an
+    // existing account keeps its identity and gets a `recovery` token, which is
+    // also how a legacy magic-link user establishes a password for the first
+    // time. Either way the user id, memberships and history are untouched.
+    // Without SITE_URL there is no origin to build the link from. Fail here
+    // rather than emailing a relative URL nobody can open — the account is
+    // already created, so this only sets emailed:false + a reason.
+    if (!REDIRECT) throw new Error("SITE_URL is not configured on this project, so no invitation link could be built");
+    const linkType = invited ? "invite" : "recovery";
+    const gen = await admin.auth.admin.generateLink({ type: linkType, email, options: { redirectTo: REDIRECT } });
+    const hashed = (gen.data as { properties?: { hashed_token?: string } })?.properties?.hashed_token || "";
+    if (gen.error || !hashed) throw new Error(gen.error?.message || "could not generate a set-password link");
+    const actionLink = setPasswordLink(REDIRECT, hashed, linkType);
     if (RESEND) {
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { "Authorization": `Bearer ${RESEND}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from: FROM, to: [email],
-          subject: "You're invited to your ROXIUM portal",
+          subject: "Set up your ROXIUM password",
           html: inviteHtml((practice as { name?: string }).name || "", actionLink),
         }),
       });

@@ -1,5 +1,10 @@
 # Deployment guide — Roxium Portal
 
+> **⚠ SUPERSEDED (2026-09-15).** The release process now runs through
+> `docs/RELEASE_RUNBOOK.md`, and the two environments are described in
+> `docs/ENVIRONMENTS.md`. Merging to `main` deploys **staging**, not production.
+> This file is kept for the Cloudflare split-brain history only.
+
 This document explains how production deploys work, why Cloudflare can report “success” while the live site looks stale, and how to verify you are on the correct environment.
 
 > **Production model (as of 2026-07-07):** production is **Cloudflare Pages**, deployed by the
@@ -29,23 +34,11 @@ The portal is a **static site** (no compile step). Production assets are:
 
 ---
 
-## Netlify (retained, non-production)
+## Netlify — removed
 
-Netlify config is kept but Netlify is **no longer the source of truth** (production is Cloudflare
-Pages — see below). `netlify.toml` configures:
-
-| Setting | Value |
-|---------|--------|
-| Build command | `bash scripts/prepare-pages.sh` |
-| Publish directory | `site` |
-
-After merging to `main`, Netlify rebuilds automatically if the site is connected to GitHub. If the live site still shows an old footer SHA:
-
-1. Netlify dashboard → **Deploys** → **Trigger deploy** → **Clear cache and deploy site**
-2. Hard refresh the browser (**Cmd+Shift+R** / **Ctrl+Shift+R**)
-3. Confirm footer `build <sha>` matches `main` and `/version.json`
-
----
+Netlify is **not** part of this stack. There is no `netlify.toml` in the working tree and
+none in git history. Earlier revisions of this document described it as a retained
+fallback; that was stale. See `docs/INFRASTRUCTURE_SIMPLIFICATION.md`.
 
 ## Cloudflare Pages (production)
 

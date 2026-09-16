@@ -1,3 +1,5 @@
+import { siteUrl } from "./env.ts";
+
 // Shared OAuth helpers for the self-service marketing connections.
 // State tokens are HMAC-SHA256 signed with SYNC_SECRET so the callback can
 // trust the practice/provider it carries without any session.
@@ -80,6 +82,6 @@ export function callbackUrl(): string {
 }
 
 export function portalUrl(qs: string): string {
-  const site = (Deno.env.get("SITE_URL") || "https://roxium.com").replace(/\/+$/, "");
-  return `${site}/portal/${qs ? "?" + qs : ""}`;
+  // siteUrl() fails closed on staging instead of defaulting to the live site.
+  return `${siteUrl()}/portal/${qs ? "?" + qs : ""}`;
 }

@@ -1,5 +1,11 @@
 site/
 
 # build/distribution artifacts — never commit
+build/
 roxium-portal.zip
 *.zip
+
+# Node
+node_modules/
+test-results/
+playwright-report/
