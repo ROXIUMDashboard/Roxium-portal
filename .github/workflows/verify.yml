@@ -121,3 +121,12 @@ jobs:
         env:
           ROXIUM_TEST_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: node --test tests/integration/staging-idempotency.test.mjs
+
+      # The seeder is the other half of "safe to re-run": the schema can be
+      # idempotent while the data load still cannot survive a second attempt.
+      # These tests fail hard rather than skip when Postgres is missing, so a
+      # broken service container cannot turn this into a green no-op.
+      - name: Seeder converges, recovers from a partial seed, and refuses real data
+        env:
+          ROXIUM_TEST_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: node --test tests/integration/staging-seed.test.mjs

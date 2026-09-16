@@ -42,6 +42,72 @@ Every row carries a **deterministic id** derived from a fixed namespace, so
 re-seeding updates the same rows and `--reset` deletes exactly what the seeder
 created — nothing else in the database is touched.
 
+### Optional: `STAGING_FIXTURE_PASSWORD`
+
+Set this secret in the **staging** GitHub environment and the synthetic accounts
+are given that password, so QA can sign in as them. Leave it unset and the
+accounts are still created; they simply have no password until someone sets one.
+It is never applied to an address outside `@roxium.test`, and never to a project
+the guard has not already cleared.
+
+---
+
+## What a finished seed looks like
+
+These counts are **derived from the fixtures**, not typed in: `expectedCounts()`
+in `scripts/lib/staging-fixtures.mjs` computes them from the same plan the seeder
+sends, and the seeder checks the database against them before reporting success.
+Edit a fixture and this table is what the tests will expect.
+
+| Table | Rows |
+|---|---|
+| `practices` | 4 |
+| `profiles` | 8 |
+| `auth_users` | 8 |
+| `memberships` | 5 |
+| `deliverables` | 21 |
+| `milestones` | 12 |
+| `video_pipeline` | 7 |
+| `kpi_monthly` | 18 |
+| `platform_connections` | 2 |
+| `activity` | 3 |
+| `practice_invites` | 1 |
+
+A seed that does not reach exactly this state exits non-zero and says which table
+is short. There is no "probably fine".
+
+---
+
+## Re-running it
+
+The seeder converges from any state staging can be in, and it is the tests in
+`tests/integration/staging-seed.test.mjs` that say so — against a real Postgres
+carrying the real schema, through a front end that reproduces PostgREST's and
+Supabase Auth's actual behaviour:
+
+| Starting state | What happens |
+|---|---|
+| Empty | Everything is created. |
+| Already seeded | Every row is updated in place. No duplicates, and the existing Auth identities — and so every membership — are reused. |
+| Half seeded | The missing rows are filled in; the present ones are updated. This is the state a failed run leaves behind. |
+| Some Auth users exist | They are reused by address, keeping their ids. The rest are created. No account is ever created twice. |
+| A leftover row from an older seeder | Swept, but only where it collides with a fixture under that table's own unique index and carries a different id. |
+| Holds a practice that is not a `(TEST)` fixture | **Refused.** Nothing is written and nothing is deleted. |
+| Holds a `(TEST)` practice this seeder did not create | **Refused**, unless `--reset` is passed explicitly. |
+
+Two details worth knowing, because both have bitten us:
+
+- **PostgREST requires every object in one bulk insert to carry an identical key
+  set** and answers `PGRST102 "All object keys must match"` otherwise — after
+  earlier batches have already been written. The fixtures are normalised to a
+  single key shape before anything is sent, and the payload is validated locally
+  first, so a malformed fixture set fails on a laptop rather than half-way
+  through staging.
+- **`on_conflict` only works against a real column index.** `practices` and
+  `practice_invites` are unique on `lower(btrim(…))`, an *expression* index, which
+  `ON CONFLICT (col, …)` can never match — Postgres answers `42P10`. Those two
+  tables upsert on their primary key after a narrowly-scoped sweep instead.
+
 ---
 
 ## It cannot run against production
