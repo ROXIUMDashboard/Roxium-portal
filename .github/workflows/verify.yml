@@ -84,3 +84,40 @@ jobs:
         run: |
           echo "::warning::Production schema may not match this repository."
           echo "Run scripts/verify-production-schema.sql in the Supabase SQL editor for the full picture."
+
+  # ---------------------------------------------------------------------------
+  # Initialize STAGING must survive being run twice.
+  #
+  # Initialize STAGING #2 died with "cannot change return type of existing
+  # function" on a healthy database: the bootstrap is schema.sql plus the whole
+  # migration history, and delete_practice(uuid) changes its return type partway
+  # through that history, so the older definition cannot be replayed over the
+  # newer one.
+  #
+  # Nothing short of a real Postgres catches that, so this job stands one up,
+  # applies the real generated bootstrap, and proves the first-run / second-run /
+  # partial-state behaviour. It touches no Supabase project and holds no secrets.
+  # ---------------------------------------------------------------------------
+  idempotency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: First run, second run, and partial-state refusal
+        env:
+          ROXIUM_TEST_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: node --test tests/integration/staging-idempotency.test.mjs

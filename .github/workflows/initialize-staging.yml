@@ -130,14 +130,22 @@ jobs:
 
       # ───────────────────────────────────────────────────────── guards 6, then apply
       - name: Bootstrap the staging database (schema + migrations, verified)
+        id: bootstrap
         env:
           STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
           CONFIRM: ${{ inputs.confirm }}
           BOOTSTRAP_OUT: ${{ github.workspace }}/build/staging-bootstrap.sql
         run: |
           # scripts/initialize-staging-db.sh re-runs guards 2-4 itself (it is also
-          # usable standalone), then applies guard 6 — the target must be empty or
-          # hold only "(TEST)" fixtures — before a single DDL statement runs.
+          # usable standalone), applies guard 6 — the target must hold only
+          # "(TEST)" fixtures — and then classifies the database:
+          #
+          #   NEW          -> apply the bootstrap once
+          #   INITIALIZED  -> SKIP it and verify instead. The migration history is
+          #                   not replayable (delete_practice changes its return
+          #                   type partway through), so replaying it over an
+          #                   initialized database fails.
+          #   PARTIAL      -> refuse, having written nothing.
           bash scripts/initialize-staging-db.sh
           echo "database=ok"   >> "$STAGE_FILE"
           echo "migrations=ok" >> "$STAGE_FILE"
@@ -146,7 +154,11 @@ jobs:
       - name: Verify the resulting schema
         env:
           STAGING_SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+          DB_STATE: ${{ steps.bootstrap.outputs.state }}
         run: |
+          # NEW = the bootstrap ran just now; INITIALIZED = it was skipped because
+          # the schema was already complete. Recorded so the summary can say which.
+          echo "db_state=${DB_STATE:-unknown}" >> "$STAGE_FILE"
           # Independent of the apply step: re-query the database from scratch.
           tables=$(psql "$STAGING_SUPABASE_DB_URL" -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE';")
@@ -222,11 +234,19 @@ jobs:
           tables=$(sed -n 's/^schema_tables=//p' "$STAGE_FILE" 2>/dev/null | tail -1)
           rls_label="RLS verification"
           [ -n "$tables" ] && rls_label="RLS verification (${tables} tables, RLS on all)"
+          # Say plainly whether the schema was created now or was already there.
+          db_state=$(sed -n 's/^db_state=//p' "$STAGE_FILE" 2>/dev/null | tail -1)
+          db_label="Database"
+          mig_label="Migrations"
+          if [ "$db_state" = "INITIALIZED" ]; then
+            db_label="Database (already initialized — bootstrap skipped)"
+            mig_label="Migrations (already applied — history not replayed)"
+          fi
           {
             echo "## STAGING INITIALIZATION"
             echo ""
-            mark database   "Database"              yes
-            mark migrations "Migrations"            yes
+            mark database   "$db_label"             yes
+            mark migrations "$mig_label"            yes
             mark rls        "$rls_label"            yes
             mark functions  "Edge Functions"        "$fn"
             mark seed       "Seed data"             "$sd"
