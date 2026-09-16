@@ -18,7 +18,7 @@ name: Reset STAGING Data
 #   6. scripts/seed-staging.mjs re-asserts the target before its first write
 #
 # --reset deletes only rows whose ids are derived from the fixed seed namespace
-# (see SEED_NAMESPACE in scripts/seed-staging.mjs), so it cannot delete a row it
+# (see SEED_NAMESPACE in scripts/lib/staging-fixtures.mjs), so it cannot delete a row it
 # did not create. Any ambiguous check FAILS CLOSED.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,6 +90,8 @@ jobs:
         env:
           STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
           STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          # Optional; see docs/STAGING_DATA.md. Applied only to @roxium.test accounts.
+          STAGING_FIXTURE_PASSWORD: ${{ secrets.STAGING_FIXTURE_PASSWORD }}
           DRY: ${{ inputs.dry_run }}
         run: |
           if [ "$DRY" = "true" ]; then

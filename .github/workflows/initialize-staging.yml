@@ -199,14 +199,23 @@ jobs:
         env:
           STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
           STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          # Optional. When set, the synthetic @roxium.test accounts get this
+          # password so QA can sign in as them. Unset is fine: the accounts are
+          # still created, they just have no password until one is set.
+          STAGING_FIXTURE_PASSWORD: ${{ secrets.STAGING_FIXTURE_PASSWORD }}
         run: |
           if [ -z "$STAGING_SUPABASE_SERVICE_ROLE_KEY" ]; then
             echo "::error::STAGING_SUPABASE_SERVICE_ROLE_KEY is not set in the staging environment."
             echo "Add it, or re-run with 'Also load synthetic staging test data' unchecked."
             exit 1
           fi
-          # Guard 7: seed-staging.mjs runs assertStagingTarget() before its first
-          # write, so the seeder refuses production even if invoked by hand.
+          if [ -z "$STAGING_FIXTURE_PASSWORD" ]; then
+            echo "::notice::STAGING_FIXTURE_PASSWORD is not set — fixture accounts will be created without a password."
+          fi
+          # Guard 7: seed-staging.mjs validates its whole payload locally, then
+          # runs assertStagingTarget() before its first write, so it refuses
+          # production even if invoked by hand. It verifies its own result
+          # afterwards and exits non-zero if the target did not converge.
           node scripts/seed-staging.mjs
           echo "seed=ok" >> "$STAGE_FILE"
 
