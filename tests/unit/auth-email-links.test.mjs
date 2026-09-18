@@ -144,6 +144,34 @@ describe('invite-user keeps identity stable', () => {
   test('it refuses to email a link it cannot build an origin for', () => {
     assert.match(invite, /if \(!REDIRECT\) throw new Error\(/);
   });
+  test('it resolves the portal origin through the shared helper, not the raw secret', () => {
+    // invite-user used to read SITE_URL directly. On production that secret had
+    // never been required — the live version passed redirectTo: undefined and let
+    // Supabase's own Site URL resolve it — so making the link depend on it meant
+    // the first invitation after a release would silently fail to send on a
+    // project that had always worked. _shared/env.ts already has the right
+    // answer: the live portal on production, a hard failure on staging.
+    assert.match(invite, /import \{[^}]*portalOrigin[^}]*\} from "\.\.\/_shared\/env\.ts"/,
+      'invite-user does not import the shared origin resolver');
+    assert.ok(!/Deno\.env\.get\("SITE_URL"\)/.test(invite),
+      'invite-user still reads the SITE_URL secret directly, bypassing the shared fallback');
+  });
+
+  test('every function that emails a link resolves its origin the same way', () => {
+    // Four functions build customer-facing links. If one of them resolves the
+    // origin differently, that is the one that sends a staging link to a client
+    // or a broken link to a surgeon.
+    for (const [label, src] of [
+      ['invite-user', invite],
+      ['request-password-reset', reset],
+      ['notify-client', read('notify-client/index.ts')],
+      ['weekly-digest', read('weekly-digest/index.ts')],
+    ]) {
+      assert.match(src, /from "\.\.\/_shared\/env\.ts"/, `${label} does not use the shared origin resolver`);
+      assert.ok(!/Deno\.env\.get\("SITE_URL"\)/.test(src), `${label} reads SITE_URL directly`);
+    }
+  });
+
   test('profiles and memberships are upserted, never deleted', () => {
     assert.ok(!/\.delete\(\)/.test(invite), 'invite-user must never delete a row');
     assert.match(invite, /from\("profiles"\)\.upsert/);
