@@ -21,11 +21,13 @@
 //   4. Upsert profiles + memberships; mark invite accepted + approved.
 //
 // Deploy:  supabase functions deploy invite-user
-// Secrets: SITE_URL (portal origin for the invite redirect; REQUIRED — the link
-//          is built from it),
+// Secrets: SITE_URL (portal origin for the invite link). Optional on production,
+//          which falls back to the live portal; REQUIRED on staging, where
+//          _shared/env.ts refuses to fall back to the customer site.
 //          RESEND_API_KEY + EMAIL_FROM (to actually deliver the invite email).
 // ============================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { portalOrigin } from "../_shared/env.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -104,8 +106,23 @@ Deno.serve(async (req) => {
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const SITE_URL = Deno.env.get("SITE_URL") ?? "";
-  const REDIRECT = SITE_URL ? SITE_URL.replace(/\/+$/, "") + "/portal/" : undefined;
+  // portalOrigin() resolves SITE_URL the same way request-password-reset,
+  // notify-client and weekly-digest do: the explicit secret when set, the live
+  // portal on production when it is not, and a hard failure on staging so an
+  // unconfigured staging project can never email a link to the customer site.
+  //
+  // Reading the raw secret here instead meant invitations silently stopped
+  // sending on a production project that had never needed SITE_URL before — the
+  // live version passed redirectTo: undefined and let Supabase's own Site URL
+  // setting resolve it, so nothing had ever required the secret to exist.
+  let resolvedOrigin: string | undefined;
+  let REDIRECT_ERROR = "";
+  try {
+    resolvedOrigin = portalOrigin();
+  } catch (e) {
+    REDIRECT_ERROR = String((e as Error)?.message || e);
+  }
+  const REDIRECT = resolvedOrigin;
   const RESEND = Deno.env.get("RESEND_API_KEY");
   const FROM = Deno.env.get("EMAIL_FROM") || "ROXIUM <updates@roxium.com>";
   const admin = makeAdminClient(SUPABASE_URL, SERVICE_ROLE);
@@ -202,10 +219,10 @@ Deno.serve(async (req) => {
     // existing account keeps its identity and gets a `recovery` token, which is
     // also how a legacy magic-link user establishes a password for the first
     // time. Either way the user id, memberships and history are untouched.
-    // Without SITE_URL there is no origin to build the link from. Fail here
-    // rather than emailing a relative URL nobody can open — the account is
-    // already created, so this only sets emailed:false + a reason.
-    if (!REDIRECT) throw new Error("SITE_URL is not configured on this project, so no invitation link could be built");
+    // Still fail closed if the origin could not be resolved at all (staging with
+    // no SITE_URL). The account is already created, so this only sets
+    // emailed:false plus the reason, rather than emailing a link nobody can open.
+    if (!REDIRECT) throw new Error(REDIRECT_ERROR || "no portal origin could be resolved, so no invitation link could be built");
     const linkType = invited ? "invite" : "recovery";
     const gen = await admin.auth.admin.generateLink({ type: linkType, email, options: { redirectTo: REDIRECT } });
     const hashed = (gen.data as { properties?: { hashed_token?: string } })?.properties?.hashed_token || "";

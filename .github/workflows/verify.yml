@@ -130,3 +130,13 @@ jobs:
         env:
           ROXIUM_TEST_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: node --test tests/integration/staging-seed.test.mjs
+
+      # The client-isolation gate. A surgeon's practice data is separated from
+      # every other practice's by RLS alone — the UI filters for convenience, but
+      # a client holds their own access token and can call PostgREST directly.
+      # This runs the real policies against a real Postgres as the `authenticated`
+      # role, and fails hard rather than skipping when the database is missing.
+      - name: A client cannot reach another practice's data
+        env:
+          ROXIUM_TEST_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: node --test tests/integration/rls-isolation.test.mjs
