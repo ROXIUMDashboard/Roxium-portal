@@ -23,12 +23,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const WORKFLOW = new URL('../../.github/workflows/initialize-staging.yml', import.meta.url);
+const PROD_WORKFLOW = new URL('../../.github/workflows/deploy-production.yml', import.meta.url);
 const SCRIPT_DIR = new URL('../../scripts/', import.meta.url);
 const yaml = readFileSync(WORKFLOW, 'utf8');
+const prodYaml = readFileSync(PROD_WORKFLOW, 'utf8');
 
 /** Lift a step's `run:` block out of the workflow, dedented. */
-function runBodyOf(stepName) {
-  const lines = yaml.split('\n');
+function runBodyOf(stepName, source = yaml) {
+  const lines = source.split('\n');
   const at = lines.findIndex((l) => l.trim() === `- name: ${stepName}`);
   assert.ok(at > -1, `step not found: ${stepName}`);
   const runAt = lines.findIndex((l, i) => i > at && /^\s*run:\s*\|\s*$/.test(l));
@@ -160,5 +162,53 @@ describe('the broken idiom is not reintroduced', () => {
     // unanswered query fails closed. They must keep their defaults.
     assert.match(VERIFY, /\$\{rlsoff:-1\}"\s*=\s*"0"/);
     assert.match(VERIFY, /\$\{tables:-0\}"\s+-ge\s+20/);
+  });
+});
+
+/**
+ * The production release deploys the portal and the Edge Functions together.
+ * This step used to warn and `exit 0` when its credentials were absent, so a
+ * release could report success having deployed only half of itself — the new
+ * sign-in page against the previous invite-user, which emails a magic link
+ * saying "no password needed" to a client who lands on a password form.
+ */
+describe('Release to PRODUCTION: Edge Function deploy', () => {
+  const STEP = runBodyOf('Deploy Edge Functions to the PRODUCTION Supabase project', prodYaml);
+
+  function run(env) {
+    // A stub on PATH so a successful path does not shell out to the real script.
+    const dir = mkdtempSync(join(tmpdir(), 'roxium-fn-'));
+    writeFileSync(join(dir, 'deploy-functions.sh'), '#!/usr/bin/env bash\necho DEPLOYED\n');
+    chmodSync(join(dir, 'deploy-functions.sh'), 0o755);
+    return spawnSync('bash', ['-e', '-c', STEP.replace('bash scripts/deploy-functions.sh', `bash ${dir}/deploy-functions.sh`)], {
+      encoding: 'utf8',
+      env: { ...process.env, SUPABASE_ACCESS_TOKEN: '', PROJECT_REF: '', ...env },
+    });
+  }
+
+  test('refuses the release when BOTH credentials are missing', () => {
+    const r = run({});
+    assert.notEqual(r.status, 0, 'a half-deployed release was allowed');
+    assert.match(r.stdout + r.stderr, /::error::Cannot deploy Edge Functions/);
+  });
+
+  test('refuses when only the access token is missing, and names it', () => {
+    const r = run({ PROJECT_REF: 'abc123' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /SUPABASE_ACCESS_TOKEN/);
+    assert.doesNotMatch(r.stdout, /SUPABASE_PROJECT_REF/, 'named a secret that was actually present');
+  });
+
+  test('refuses when only the project ref is missing, and names it', () => {
+    const r = run({ SUPABASE_ACCESS_TOKEN: 'tok' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /SUPABASE_PROJECT_REF/);
+    assert.doesNotMatch(r.stdout, /SUPABASE_ACCESS_TOKEN/, 'named a secret that was actually present');
+  });
+
+  test('deploys when both are present', () => {
+    const r = run({ SUPABASE_ACCESS_TOKEN: 'tok', PROJECT_REF: 'abc123' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /DEPLOYED/, 'the deploy script was not reached');
   });
 });
