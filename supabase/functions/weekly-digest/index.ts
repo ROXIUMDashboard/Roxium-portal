@@ -20,6 +20,7 @@
 // ============================================================
 
 import { serviceClient, requireTeamUser, json } from "../_shared/auth.ts";
+import { portalOrigin } from "../_shared/env.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -113,7 +114,7 @@ Deno.serve(async (req) => {
       return { name: String(p.name || ""), deliveredWk, overdue, postedWk, stuckVids, syncErr, syncStale, accessPending, cur, prev };
     });
 
-    const SITE = (Deno.env.get("SITE_URL") || "https://roxium.com").replace(/\/+$/, "") + "/portal/";
+    const SITE = portalOrigin();
     const cell = (v: number, bad = false) =>
       `<td style="padding:8px 10px;font-family:Helvetica,Arial,sans-serif;font-size:13px;color:${v && bad ? "#C66A58" : "#F2EDE3"};text-align:center;">${v || "—"}</td>`;
     const tableRows = rows.map((r) => `
