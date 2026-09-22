@@ -90,6 +90,11 @@
   display: flex;
   align-items: center;
   gap: 14px;
+  /* Never let this row set the page width — it is the one thing between the
+     masthead and a horizontally scrolling document on a phone. */
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .status,
@@ -476,6 +481,19 @@
   background: var(--acid-tint);
   border-color: var(--acid);
   color: var(--olive-deep);
+}
+
+/* On a phone the label is the first thing that can afford to shrink. */
+@media (max-width: 780px) {
+  .headerActions {
+    gap: 8px;
+  }
+
+  .editToggle {
+    padding: 0 11px;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
