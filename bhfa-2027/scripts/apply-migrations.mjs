@@ -23,7 +23,20 @@ if (!url) {
   process.exit(0);
 }
 
-const { default: pg } = await import('pg');
+/**
+ * `pg` is deliberately not a package.json dependency: this environment has no
+ * npm registry access, so it cannot regenerate package-lock.json, and `npm ci`
+ * refuses to run when the two disagree. Railway's pre-deploy step installs it
+ * with --no-save only when there is a database URL to use it with.
+ */
+let pg;
+try {
+  ({ default: pg } = await import('pg'));
+} catch {
+  console.error('migrations  SUPABASE_DB_URL is set but `pg` is not installed.');
+  console.error('migrations  The pre-deploy step installs it; run `npm install pg@8 --no-save` first.');
+  process.exit(1);
+}
 
 const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../supabase/migrations');
 const files = readdirSync(dir)
