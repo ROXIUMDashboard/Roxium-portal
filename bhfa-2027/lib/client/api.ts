@@ -8,7 +8,7 @@
  * Transient failures (offline, 5xx) are surfaced as `retryable` so the caller
  * can keep the surgeon's change on screen and try again rather than dropping it.
  */
-import type { Faculty, HistoryEntry, ProgramSnapshot, Session } from '../domain/types';
+import type { Day, Faculty, HistoryEntry, ProgramSnapshot, Session } from '../domain/types';
 
 /** Reported when a save landed on top of a version another collaborator wrote. */
 export interface EditConflict {
@@ -37,6 +37,8 @@ export interface MutationResponse {
   conflict?: EditConflict | null;
   /** Present when the change may have added a name to the faculty roster. */
   faculty?: Faculty[];
+  /** Present when a day heading may have changed. */
+  days?: Day[];
 }
 
 export interface ApiIdentity {
@@ -96,6 +98,9 @@ export function createApi(token: string, getIdentity: () => ApiIdentity) {
         method: 'PATCH',
         body: JSON.stringify(baseUpdatedAt ? { ...patch, baseUpdatedAt } : patch),
       }),
+
+    updateDay: (dayId: string, patch: Record<string, unknown>) =>
+      call<MutationResponse>(`/days/${dayId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
     deleteSession: (sessionId: string) =>
       call<MutationResponse>(`/sessions/${sessionId}`, { method: 'DELETE' }),

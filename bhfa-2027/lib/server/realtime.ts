@@ -15,7 +15,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { Faculty, PresenceEntry, Session } from '../domain/types';
+import type { Day, Faculty, PresenceEntry, Session } from '../domain/types';
 import { getRepositoryHandle } from '../data';
 import { SupabaseRepository } from '../data/supabase';
 
@@ -31,6 +31,8 @@ export interface MutationEvent {
   deleted: string[];
   /** Roster as of this change, so a newly typed speaker name resolves at once. */
   faculty?: Faculty[];
+  /** Days as of this change, so an edited day header reaches every browser. */
+  days?: Day[];
 }
 
 export interface PresenceEvent {

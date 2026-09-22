@@ -140,6 +140,7 @@ export type HistoryAction =
   | 'description_changed'
   | 'sponsor_changed'
   | 'details_changed'
+  | 'day_changed'
   | 'bulk_time_shift'
   | 'restored'
   | 'undone';

@@ -20,6 +20,7 @@ import { formatRange } from '../domain/time';
 import { sessionsForDay, sortSessions, computeShift } from '../domain/schedule';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
 import type {
+  DayPatch,
   OrderAssignment,
   ProgramRepository,
   SessionInput,
@@ -59,6 +60,7 @@ export async function resolveWorkspace(token: string): Promise<WorkspaceRecord |
 
 export type HistoryPayload =
   | { kind: 'session'; session: Session }
+  | { kind: 'day'; day: Day }
   | { kind: 'fields'; sessionId: string; fields: Partial<Session> }
   | { kind: 'order'; assignments: OrderAssignment[] }
   | { kind: 'times'; assignments: TimeAssignment[] }
@@ -100,7 +102,7 @@ async function announce(
   summary: string,
   upserted: Session[],
   deleted: string[] = [],
-): Promise<{ revision: number; faculty: Faculty[] }> {
+): Promise<{ revision: number; faculty: Faculty[]; days: Day[] }> {
   const snapshot = await context.repository.getSnapshot(context.workspace.programId);
   publish(context.workspace.programId, {
     type: 'mutation',
@@ -112,8 +114,9 @@ async function announce(
     upserted,
     deleted,
     faculty: snapshot.faculty,
+    days: snapshot.days,
   });
-  return { revision: snapshot.revision, faculty: snapshot.faculty };
+  return { revision: snapshot.revision, faculty: snapshot.faculty, days: snapshot.days };
 }
 
 export async function getSnapshot(context: ProgramContext): Promise<ProgramSnapshot> {
@@ -244,6 +247,8 @@ export interface MutationResult {
    * has to travel back with the change that created it.
    */
   faculty?: Faculty[];
+  /** Days as of this change, so an edited day header reaches every browser. */
+  days?: Day[];
 }
 
 export async function createSession(
@@ -282,8 +287,8 @@ export async function createSession(
   });
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
-  const { revision, faculty } = await announce(context, history.summary, sessionsForDay(after.sessions, fresh.dayId));
-  return { session: fresh, revision, history, faculty };
+  const { revision, faculty, days } = await announce(context, history.summary, sessionsForDay(after.sessions, fresh.dayId));
+  return { session: fresh, revision, history, faculty, days };
 }
 
 function describeChange(before: Session, patch: SessionPatch): { action: HistoryAction; summary: string } {
@@ -369,8 +374,67 @@ export async function updateSession(
 
   const conflict = stale ? await describeConflict(context, before, updated, touched as string[]) : null;
 
-  const { revision, faculty } = await announce(context, summary, [updated]);
-  return { session: updated, revision, history, conflict, faculty };
+  const { revision, faculty, days } = await announce(context, summary, [updated]);
+  return { session: updated, revision, history, conflict, faculty, days };
+}
+
+/** Which day fields actually changed, phrased for the change history. */
+const DAY_FIELD_LABELS: Record<keyof DayPatch, string> = {
+  shortLabel: 'navigation label',
+  title: 'title',
+  subtitle: 'focus',
+  weekdayLabel: 'weekday',
+  date: 'date',
+  hoursLabel: 'hours',
+};
+
+/**
+ * Edit a day's own heading. These are the values the agenda prints above the
+ * sessions and in the day selector; they live in bhfa_days, not in the code, so
+ * a planner can correct them without a deploy.
+ *
+ * Reordering days is deliberately not part of this: sort order and calendar
+ * date are separate concerns, and changing one must never silently change the
+ * other.
+ */
+export async function updateDay(
+  context: ProgramContext,
+  dayId: string,
+  patch: DayPatch,
+): Promise<MutationResult> {
+  const before = await context.repository.getDay(dayId);
+  if (!before) throw new NotFoundError('That day no longer exists.');
+  if (before.programId !== context.workspace.programId) {
+    throw new NotFoundError('That day belongs to another programme.');
+  }
+
+  const changed = (Object.keys(patch) as (keyof DayPatch)[]).filter(
+    (field) => patch[field] !== undefined && patch[field] !== before[field],
+  );
+  if (!changed.length) {
+    const snapshot = await context.repository.getSnapshot(context.workspace.programId);
+    return { revision: snapshot.revision, history: null, days: snapshot.days };
+  }
+
+  const after = await context.repository.updateDay(dayId, patch);
+
+  const summary =
+    `Day ${String(before.dayNumber).padStart(2, '0')}: ` +
+    `${changed.map((field) => DAY_FIELD_LABELS[field]).join(', ')} changed`;
+
+  const history = await context.repository.addHistory({
+    programId: context.workspace.programId,
+    dayId,
+    actorName: context.actor.name,
+    action: 'day_changed',
+    summary,
+    before: { kind: 'day', day: before } satisfies HistoryPayload,
+    after: { kind: 'day', day: after } satisfies HistoryPayload,
+  });
+
+  // No session changed, but every browser needs the new heading.
+  const { revision, faculty, days } = await announce(context, summary, []);
+  return { revision, history, faculty, days };
 }
 
 export async function deleteSession(context: ProgramContext, sessionId: string): Promise<MutationResult> {
@@ -394,8 +458,8 @@ export async function deleteSession(context: ProgramContext, sessionId: string):
   });
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
-  const { revision, faculty } = await announce(context, history.summary, sessionsForDay(after.sessions, before.dayId), [sessionId]);
-  return { deleted: [sessionId], revision, history, faculty };
+  const { revision, faculty, days } = await announce(context, history.summary, sessionsForDay(after.sessions, before.dayId), [sessionId]);
+  return { deleted: [sessionId], revision, history, faculty, days };
 }
 
 export interface ReorderRequest {
@@ -448,8 +512,8 @@ export async function reorderSession(context: ProgramContext, request: ReorderRe
 
   const after = await context.repository.getSnapshot(context.workspace.programId);
   const upserted = after.sessions.filter((s) => affectedIds.has(s.id));
-  const { revision, faculty } = await announce(context, summary, upserted);
-  return { sessions: upserted, revision, history, faculty };
+  const { revision, faculty, days } = await announce(context, summary, upserted);
+  return { sessions: upserted, revision, history, faculty, days };
 }
 
 export interface ShiftRequest {
@@ -497,8 +561,8 @@ export async function shiftFollowingSessions(context: ProgramContext, request: S
   const after = await context.repository.getSnapshot(context.workspace.programId);
   const changed = new Set(targets.map((t) => t.id));
   const upserted = after.sessions.filter((s) => changed.has(s.id));
-  const { revision, faculty } = await announce(context, summary, upserted);
-  return { sessions: upserted, revision, history, faculty };
+  const { revision, faculty, days } = await announce(context, summary, upserted);
+  return { sessions: upserted, revision, history, faculty, days };
 }
 
 /** Apply a stored history payload as the current state. Used by undo and restore. */
@@ -618,8 +682,8 @@ export async function revertHistoryEntry(
     after: entry.before,
   });
 
-  const { revision, faculty } = await announce(context, summary, applied.upserted, [...deleted, ...applied.deleted]);
-  return { sessions: applied.upserted, deleted: [...deleted, ...applied.deleted], revision, history, faculty };
+  const { revision, faculty, days } = await announce(context, summary, applied.upserted, [...deleted, ...applied.deleted]);
+  return { sessions: applied.upserted, deleted: [...deleted, ...applied.deleted], revision, history, faculty, days };
 }
 
 export async function listHistory(context: ProgramContext, limit = 120): Promise<HistoryEntry[]> {

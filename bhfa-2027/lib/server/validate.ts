@@ -14,6 +14,7 @@ import {
 } from '../domain/types';
 import { MAX_END_MINUTE } from '../domain/time';
 import type { SessionInput, SessionPatch, SpeakerInput } from '../data/repository';
+import type { DayPatch } from '../data/repository';
 
 export class ValidationError extends Error {
   readonly status = 400;
@@ -173,4 +174,49 @@ export function parseNewSession(body: unknown): SessionInput & { afterSessionId:
     speakers: shared.speakers ?? [],
     afterSessionId: record.afterSessionId ? requireId(record.afterSessionId, 'afterSessionId') : null,
   };
+}
+
+/**
+ * A day-header edit. Only the fields the editor actually sends are returned, so
+ * an absent key leaves that column alone rather than blanking it.
+ *
+ * Title and navigation label are required to be non-empty when present — a day
+ * with no name is not a state the agenda can render sensibly. Subtitle and hours
+ * are optional and may be cleared.
+ */
+export function parseDayPatch(body: Record<string, unknown>): DayPatch {
+  const patch: DayPatch = {};
+
+  if ('shortLabel' in body) {
+    const value = cleanText(body.shortLabel, 40);
+    if (!value) throw new ValidationError('A day needs a short navigation label.');
+    patch.shortLabel = value;
+  }
+  if ('title' in body) {
+    const value = cleanText(body.title, 160);
+    if (!value) throw new ValidationError('A day needs a title.');
+    patch.title = value;
+  }
+  if ('weekdayLabel' in body) {
+    const value = cleanText(body.weekdayLabel, 40);
+    if (!value) throw new ValidationError('A day needs a weekday.');
+    patch.weekdayLabel = value;
+  }
+  if ('subtitle' in body) patch.subtitle = cleanText(body.subtitle, 200);
+  if ('hoursLabel' in body) patch.hoursLabel = cleanText(body.hoursLabel, 80);
+
+  if ('date' in body) {
+    const value = cleanText(body.date, 10);
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new ValidationError('Enter the date as YYYY-MM-DD.');
+    }
+    // Reject 2027-02-31 and friends, which pass the shape test.
+    const parsed = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+      throw new ValidationError('That date does not exist.');
+    }
+    patch.date = value;
+  }
+
+  return patch;
 }

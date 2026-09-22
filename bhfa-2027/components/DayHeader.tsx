@@ -2,17 +2,23 @@
 
 import type { Day, Session } from '@/lib/domain/types';
 import type { IssueMap } from '@/lib/domain/schedule';
+import type { ProgramRoomState } from '@/lib/client/useProgramRoom';
 import { formatIsoDate } from '@/lib/domain/time';
+import DayHeaderFields from './DayHeaderFields';
 import styles from '@/styles/room.module.css';
 
 export default function DayHeader({
+  room,
   day,
   sessions,
   issues,
+  editMode,
 }: {
+  room: ProgramRoomState;
   day: Day;
   sessions: Session[];
   issues: IssueMap;
+  editMode: boolean;
 }) {
   const issueList = Object.values(issues).flat();
   const conflicts = issueList.filter((issue) => issue.kind === 'conflict' || issue.kind === 'invalid').length;
@@ -25,8 +31,14 @@ export default function DayHeader({
         <p className={styles.dayNumeral}>{String(day.dayNumber).padStart(2, '0')}</p>
       </div>
 
-      <h2 className={styles.dayTitle}>{day.title}</h2>
-      {day.subtitle ? <p className={styles.daySubtitle}>{day.subtitle}</p> : null}
+      {editMode ? (
+        <DayHeaderFields room={room} day={day} />
+      ) : (
+        <>
+          <h2 className={styles.dayTitle}>{day.title}</h2>
+          {day.subtitle ? <p className={styles.daySubtitle}>{day.subtitle}</p> : null}
+        </>
+      )}
 
       <p className={styles.dayMeta}>
         <span>{formatIsoDate(day.date)}</span>

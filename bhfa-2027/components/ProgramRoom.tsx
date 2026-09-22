@@ -173,7 +173,7 @@ export default function ProgramRoom({
         <main className={styles.main}>
           {activeDay ? (
             <>
-              <DayHeader day={activeDay} sessions={daySessions} issues={issues} />
+              <DayHeader room={room} day={activeDay} sessions={daySessions} issues={issues} editMode={editMode} />
               <Agenda room={room} day={activeDay} sessions={daySessions} issues={issues} editMode={editMode} />
             </>
           ) : null}

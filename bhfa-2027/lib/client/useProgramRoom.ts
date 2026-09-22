@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Faculty, HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
+import type { Day, Faculty, HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
 import { sessionsForDay } from '../domain/schedule';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
 import { ApiError, createApi, type EditConflict, type MutationResponse } from './api';
@@ -91,6 +91,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
         ...current,
         sessions: upsertSessions(current.sessions, incoming, response.deleted ?? []),
         faculty: response.faculty ?? current.faculty,
+        days: response.days ?? current.days,
         revision: Math.max(current.revision, response.revision),
       };
     });
@@ -169,12 +170,17 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
           upserted: Session[];
           deleted: string[];
           faculty?: Faculty[];
+          days?: Day[];
         };
         // Our own change has already been applied optimistically — but the
         // roster still has to land, or a name we just typed reads as unassigned.
         if (payload.actorClientId && payload.actorClientId === identityRef.current.clientId) {
-          if (payload.faculty) {
-            setSnapshot((current) => ({ ...current, faculty: payload.faculty as Faculty[] }));
+          if (payload.faculty || payload.days) {
+            setSnapshot((current) => ({
+              ...current,
+              faculty: payload.faculty ?? current.faculty,
+              days: payload.days ?? current.days,
+            }));
           }
           return;
         }
@@ -182,6 +188,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
           ...current,
           sessions: upsertSessions(current.sessions, payload.upserted ?? [], payload.deleted ?? []),
           faculty: payload.faculty ?? current.faculty,
+          days: payload.days ?? current.days,
           revision: Math.max(current.revision, payload.revision),
         }));
       } catch {
@@ -265,6 +272,18 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
           setConflicts((current) => ({ ...current, [sessionId]: response.conflict as EditConflict }));
         },
       });
+    },
+    [api, run],
+  );
+
+  /** Edit a day's heading. Optimistic: the header changes as you type. */
+  const updateDay = useCallback(
+    async (dayId: string, patch: Record<string, unknown>) => {
+      setSnapshot((current) => ({
+        ...current,
+        days: current.days.map((day) => (day.id === dayId ? { ...day, ...(patch as Partial<Day>) } : day)),
+      }));
+      return run(null, () => api.updateDay(dayId, patch));
     },
     [api, run],
   );
@@ -445,6 +464,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
     conflicts,
     dismissConflict,
     updateSession,
+    updateDay,
     createSession,
     deleteSession,
     duplicateSession,
