@@ -6,6 +6,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Day, Faculty, HistoryEntry, ProgramSnapshot, Session, SessionSpeaker } from '../domain/types';
 import type {
+  DayPatch,
   HistoryInput,
   OrderAssignment,
   ProgramRepository,
@@ -307,6 +308,30 @@ export class SupabaseRepository implements ProgramRepository {
         .eq('id', assignment.id);
       if (error) this.fail('Failed to save the new times', error);
     }
+  }
+
+  async getDay(dayId: string): Promise<Day | null> {
+    const { data, error } = await this.client.from('bhfa_days').select('*').eq('id', dayId).maybeSingle();
+    if (error) this.fail('Failed to load day', error);
+    return data ? mapDay(data) : null;
+  }
+
+  async updateDay(dayId: string, patch: DayPatch): Promise<Day> {
+    const columns: Record<string, unknown> = {};
+    if (patch.shortLabel !== undefined) columns.short_label = patch.shortLabel;
+    if (patch.title !== undefined) columns.title = patch.title;
+    if (patch.subtitle !== undefined) columns.subtitle = patch.subtitle;
+    if (patch.weekdayLabel !== undefined) columns.weekday_label = patch.weekdayLabel;
+    if (patch.date !== undefined) columns.date = patch.date;
+    if (patch.hoursLabel !== undefined) columns.hours_label = patch.hoursLabel;
+
+    if (Object.keys(columns).length) {
+      const { error } = await this.client.from('bhfa_days').update(columns).eq('id', dayId);
+      if (error) this.fail('Failed to save day', error);
+    }
+    const updated = await this.getDay(dayId);
+    if (!updated) throw new Error('Day not found');
+    return updated;
   }
 
   async listFaculty(programId: string): Promise<Faculty[]> {

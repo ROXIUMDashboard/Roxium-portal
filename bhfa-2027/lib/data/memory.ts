@@ -9,6 +9,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import type { Day, Faculty, HistoryEntry, Program, ProgramSnapshot, Session, SessionSpeaker } from '../domain/types';
 import { SEED_DAYS, SEED_FACULTY, SEED_PROGRAM } from '../seed/program-2027';
 import type {
+  DayPatch,
   HistoryInput,
   OrderAssignment,
   ProgramRepository,
@@ -275,6 +276,23 @@ export class MemoryRepository implements ProgramRepository {
       session.updatedBy = updatedBy;
     }
     if (assignments.length) this.bump();
+  }
+
+  async getDay(dayId: string): Promise<Day | null> {
+    const day = this.state.days.find((d) => d.id === dayId);
+    return day ? this.clone(day) : null;
+  }
+
+  async updateDay(dayId: string, patch: DayPatch): Promise<Day> {
+    const day = this.state.days.find((d) => d.id === dayId);
+    if (!day) throw new Error('Day not found');
+    if (patch.shortLabel !== undefined) day.shortLabel = patch.shortLabel;
+    if (patch.title !== undefined) day.title = patch.title;
+    if (patch.subtitle !== undefined) day.subtitle = patch.subtitle;
+    if (patch.weekdayLabel !== undefined) day.weekdayLabel = patch.weekdayLabel;
+    if (patch.date !== undefined) day.date = patch.date;
+    if (patch.hoursLabel !== undefined) day.hoursLabel = patch.hoursLabel;
+    return this.clone(day);
   }
 
   async listFaculty(programId: string): Promise<Faculty[]> {

@@ -9,6 +9,7 @@
  * exercised in tests without a live database.
  */
 import type {
+  Day,
   Faculty,
   HistoryAction,
   HistoryEntry,
@@ -81,6 +82,16 @@ export interface HistoryInput {
   after?: unknown;
 }
 
+/** The editable presentation fields of a programme day. */
+export interface DayPatch {
+  shortLabel?: string;
+  title?: string;
+  subtitle?: string | null;
+  weekdayLabel?: string;
+  date?: string;
+  hoursLabel?: string | null;
+}
+
 export interface ProgramRepository {
   /** Constant-time-ish token lookup by hash. Returns null for unknown/revoked. */
   findWorkspaceByTokenHash(tokenHash: string): Promise<WorkspaceRecord | null>;
@@ -95,6 +106,9 @@ export interface ProgramRepository {
 
   applyOrder(assignments: OrderAssignment[], updatedBy: string): Promise<void>;
   applyTimes(assignments: TimeAssignment[], updatedBy: string): Promise<void>;
+
+  getDay(dayId: string): Promise<Day | null>;
+  updateDay(dayId: string, patch: DayPatch): Promise<Day>;
 
   listFaculty(programId: string): Promise<Faculty[]>;
   upsertFacultyByName(programId: string, name: string): Promise<Faculty>;
