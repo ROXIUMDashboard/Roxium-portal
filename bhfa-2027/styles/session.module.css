@@ -756,3 +756,35 @@
     justify-content: space-between;
   }
 }
+
+/* ---------------------------------------------------------- narrow screens */
+
+/*
+ * On a phone the editor sits in a gutter, so its content box is narrower than
+ * the viewport. Anything inside it with a fixed minimum — the move-to-day
+ * select in particular — pushed the whole document sideways once an editor was
+ * open, and Edit Program opens every row of the day at once.
+ */
+@media (max-width: 780px) {
+  .editor,
+  .editorField,
+  .speakerRow {
+    min-width: 0;
+  }
+
+  .moveControls {
+    flex-wrap: wrap;
+  }
+
+  .moveControls select,
+  .moveControls .field {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .editor .btn,
+  .editorField .field {
+    max-width: 100%;
+  }
+}
