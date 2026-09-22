@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:apply": "node scripts/apply-migrations.mjs",
+    "db:copy": "node scripts/copy-program.mjs",
     "db:seed": "tsx scripts/seed.ts",
     "token:issue": "tsx scripts/issue-token.ts",
     "db:verify": "tsx scripts/verify-seed.ts"

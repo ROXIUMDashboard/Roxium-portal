@@ -5,7 +5,7 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "preDeployCommand": "if [ -n \"$SUPABASE_DB_URL\" ]; then npm install pg@8 --no-save --no-audit --no-fund --silent; fi; npm run db:apply",
+    "preDeployCommand": "if [ -n \"$SUPABASE_DB_URL\" ]; then npm install pg@8 --no-save --no-audit --no-fund --silent; fi; npm run db:apply && npm run db:copy",
     "startCommand": "npm start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 60,

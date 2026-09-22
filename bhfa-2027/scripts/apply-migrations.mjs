@@ -16,12 +16,17 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertBhfaTarget } from './db-target.mjs';
 
 const url = process.env.SUPABASE_DB_URL?.trim();
 if (!url) {
   console.log('migrations  SUPABASE_DB_URL is not set — skipping (nothing is applied)');
   process.exit(0);
 }
+
+// Refuses a ROXIUM/ELIXIR ref, and refuses any ref the caller did not name.
+const targetRef = assertBhfaTarget(url, process.env.BHFA_DB_TARGET_REF);
+console.log(`migrations  target project ${targetRef}`);
 
 /**
  * `pg` is deliberately not a package.json dependency: this environment has no
