@@ -92,6 +92,7 @@ export default function SessionRow({
   daySessions,
   index,
   issues,
+  editMode,
 }: {
   room: ProgramRoomState;
   day: Day;
@@ -99,13 +100,15 @@ export default function SessionRow({
   daySessions: Session[];
   index: number;
   issues: SessionIssue[];
+  editMode: boolean;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
   });
   const rowRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLDivElement>(null);
-  const open = room.openSessionId === session.id;
+  // Global edit mode opens the whole day at once; otherwise one row at a time.
+  const open = editMode || room.openSessionId === session.id;
   const editors = room.editorsOf(session.id);
   const conflict = issues.find((issue) => issue.kind === 'conflict' || issue.kind === 'invalid');
   const pendingShift = room.pendingShift?.sessionId === session.id ? room.pendingShift : null;
@@ -113,7 +116,7 @@ export default function SessionRow({
   // Clicking elsewhere closes the editor. The autosave flush runs on unmount,
   // so nothing typed is lost on the way out.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || editMode) return undefined;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (rowRef.current?.contains(target)) return;
@@ -123,7 +126,7 @@ export default function SessionRow({
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [open, room]);
+  }, [editMode, open, room]);
 
   // The prompt is a decision the planner has to see, so bring it into view.
   useEffect(() => {
@@ -161,7 +164,10 @@ export default function SessionRow({
           day={day}
           daySessions={daySessions}
           index={index}
-          onClose={() => room.setOpenSessionId(null)}
+          onClose={() => {
+            // In global edit mode the row stays open — leaving is the toggle's job.
+            if (!editMode) room.setOpenSessionId(null);
+          }}
         />
       ) : (
         <div

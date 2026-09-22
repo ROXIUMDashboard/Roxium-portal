@@ -53,11 +53,13 @@ export default function Agenda({
   day,
   sessions,
   issues,
+  editMode,
 }: {
   room: ProgramRoomState;
   day: Day;
   sessions: Session[];
   issues: IssueMap;
+  editMode: boolean;
 }) {
   return (
     <section className={styles.agenda} aria-label={`${day.title} agenda`}>
@@ -71,6 +73,7 @@ export default function Agenda({
               daySessions={sessions}
               index={index}
               issues={issues[session.id] ?? []}
+              editMode={editMode}
             />
             <AddSlot room={room} day={day} after={session} always={index === sessions.length - 1} />
           </div>

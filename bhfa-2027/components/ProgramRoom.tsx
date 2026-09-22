@@ -50,6 +50,8 @@ export default function ProgramRoom({
   const room = useProgramRoom(token, initialSnapshot);
   const [dragging, setDragging] = useState<Session | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Local UI only: turning it on here never puts another collaborator into it.
+  const [editMode, setEditMode] = useState(false);
 
   const sensors = useSensors(
     // A short travel threshold keeps a tap on a row an "open the editor" tap.
@@ -139,6 +141,15 @@ export default function ProgramRoom({
             lastSavedAt={room.lastSavedAt}
             collaborators={room.collaborators}
             name={room.name}
+            editMode={editMode}
+            onToggleEditMode={() => {
+              setEditMode((on) => {
+                // Leaving the single-row editor open under a whole open day
+                // would double-render it; close it as edit mode takes over.
+                if (!on) room.setOpenSessionId(null);
+                return !on;
+              });
+            }}
             onOpenHistory={() => {
               setHistoryOpen(true);
               void room.loadHistory();
@@ -163,7 +174,7 @@ export default function ProgramRoom({
           {activeDay ? (
             <>
               <DayHeader day={activeDay} sessions={daySessions} issues={issues} />
-              <Agenda room={room} day={activeDay} sessions={daySessions} issues={issues} />
+              <Agenda room={room} day={activeDay} sessions={daySessions} issues={issues} editMode={editMode} />
             </>
           ) : null}
         </main>

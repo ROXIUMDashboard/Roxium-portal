@@ -445,3 +445,41 @@
     gap: 6px;
   }
 }
+
+/* ------------------------------------------------------------ edit program */
+
+/*
+ * The one control that switches the day between reading and working. It stays
+ * a quiet rule-bordered chip until it is active, then takes the acid accent so
+ * it is obvious the whole day is live.
+ */
+.editToggle {
+  height: var(--tap);
+  padding: 0 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.editToggle:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+
+.editToggle[data-active] {
+  background: var(--acid-tint);
+  border-color: var(--acid);
+  color: var(--olive-deep);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editToggle {
+    transition: none;
+  }
+}

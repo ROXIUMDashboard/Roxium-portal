@@ -33,6 +33,8 @@ export default function ProgramHeader({
   lastSavedAt,
   collaborators,
   name,
+  editMode,
+  onToggleEditMode,
   onOpenHistory,
   onRotateLink,
 }: {
@@ -41,6 +43,8 @@ export default function ProgramHeader({
   lastSavedAt: number | null;
   collaborators: PresenceEntry[];
   name: string;
+  editMode: boolean;
+  onToggleEditMode: () => void;
   onOpenHistory: () => void;
   onRotateLink: () => Promise<{ token: string; path: string } | null>;
 }) {
@@ -80,6 +84,16 @@ export default function ProgramHeader({
 
         <div className={styles.headerActions}>
           <SaveIndicator state={saveState} lastSavedAt={lastSavedAt} />
+
+          <button
+            type="button"
+            className={styles.editToggle}
+            data-active={editMode || undefined}
+            aria-pressed={editMode}
+            onClick={onToggleEditMode}
+          >
+            {editMode ? 'Done editing' : 'Edit program'}
+          </button>
 
           {others.length > 0 ? (
             <span className={styles.presence} title={others.map((entry) => entry.name).join(', ')}>
