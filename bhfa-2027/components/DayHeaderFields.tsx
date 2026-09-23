@@ -8,7 +8,18 @@ import styles from '@/styles/room.module.css';
 /** Matches the session editor, so the whole page saves on one rhythm. */
 const AUTOSAVE_MS = 650;
 
-type Editable = Pick<Day, 'shortLabel' | 'title' | 'subtitle' | 'weekdayLabel' | 'date' | 'hoursLabel'>;
+/**
+ * The draft is all-strings: an input cannot hold null, so a cleared optional
+ * field is '' here and the server turns it back into null on save.
+ */
+interface Editable {
+  shortLabel: string;
+  title: string;
+  subtitle: string;
+  weekdayLabel: string;
+  date: string;
+  hoursLabel: string;
+}
 
 const FIELDS: { key: keyof Editable; label: string; placeholder: string; wide?: boolean }[] = [
   { key: 'shortLabel', label: 'Navigation label', placeholder: 'Endoscopic' },
