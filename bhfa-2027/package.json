@@ -20,7 +20,8 @@
     "db:copy": "node scripts/copy-program.mjs",
     "db:seed": "tsx scripts/seed.ts",
     "token:issue": "tsx scripts/issue-token.ts",
-    "db:verify": "tsx scripts/verify-seed.ts"
+    "db:verify": "tsx scripts/verify-seed.ts",
+    "db:tls": "node scripts/inspect-db-tls.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
