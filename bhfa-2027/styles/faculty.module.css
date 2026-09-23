@@ -544,7 +544,15 @@
 .field {
   display: flex;
   flex-direction: column;
+  /* Inputs line up along a row even if a label is cut short. */
+  justify-content: flex-end;
   min-width: 0;
+}
+
+.field :global(.fieldLabel) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .field[data-span='name'] {
@@ -732,6 +740,10 @@
 
   .fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .field :global(.fieldLabel) {
+    letter-spacing: 0.12em;
   }
 
   .field[data-span='name'],

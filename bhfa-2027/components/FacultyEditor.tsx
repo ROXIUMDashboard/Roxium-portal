@@ -19,9 +19,9 @@ const FIELDS = [
   { key: 'credentials', label: 'Credentials', placeholder: 'MD, FACS', span: 'credentials' },
   { key: 'specialty', label: 'Specialty / expertise', placeholder: 'Facial plastic surgery', span: 'half' },
   { key: 'proposedRole', label: 'Proposed BHFA role', placeholder: 'Panelist, moderator…', span: 'half' },
-  { key: 'city', label: 'City', placeholder: 'Beverly Hills', span: 'third' },
-  { key: 'stateProvince', label: 'State / province', placeholder: 'CA', span: 'third' },
-  { key: 'country', label: 'Country', placeholder: 'United States', span: 'third' },
+  { key: 'city', label: 'City', span: 'third' },
+  { key: 'stateProvince', label: 'State / province', span: 'third' },
+  { key: 'country', label: 'Country', span: 'third' },
 ] as const;
 
 type TextField = (typeof FIELDS)[number]['key'];
@@ -181,7 +181,7 @@ export default function FacultyEditor({
               className="field"
               data-name={field.key === 'name' || undefined}
               value={draft[field.key]}
-              placeholder={field.placeholder}
+              placeholder={'placeholder' in field ? field.placeholder : undefined}
               onChange={(event) => edit(field.key, event.target.value)}
             />
           </label>
