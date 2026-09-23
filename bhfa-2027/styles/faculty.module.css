@@ -183,6 +183,11 @@
   min-width: 0;
 }
 
+.addRow button {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* ------------------------------------------------------------------- lists */
 
 .listHead {
@@ -251,6 +256,7 @@
 
 .inactiveToggle {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   align-items: baseline;
   gap: 14px;
@@ -261,6 +267,10 @@
   background: none;
   text-align: left;
   color: inherit;
+}
+
+.inactiveToggle > .listTitle {
+  white-space: nowrap;
 }
 
 .toggleCaret {
@@ -637,12 +647,21 @@
   .countGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     border-left: 0;
-    row-gap: 12px;
+    gap: 14px 12px;
   }
 
+  /* Numbers sit on one line even if a label has to wrap. */
   .countGrid > div {
-    padding: 0 10px 0 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0;
     border-right: 0;
+  }
+
+  .countGrid dt {
+    letter-spacing: 0.08em;
+    white-space: normal;
   }
 
   .countGrid dd {
@@ -676,6 +695,16 @@
 
   .addRow {
     flex-direction: column;
+  }
+
+  /* Title and caret on one line, the tally beneath. */
+  .inactiveToggle > .listMeta {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .inactiveToggle > .toggleCaret {
+    order: 2;
   }
 }
 
