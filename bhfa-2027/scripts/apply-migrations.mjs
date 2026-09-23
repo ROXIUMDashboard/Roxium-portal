@@ -70,6 +70,9 @@ async function main() {
       filename   text primary key,
       applied_at timestamptz not null default now()
     )`);
+  // Every bhfa_* table is server-key only. Without this the public key could
+  // read the ledger and rewrite it — replaying or skipping migrations.
+  await client.query('alter table bhfa_migrations enable row level security');
 
   // 0001 created the tables that are already live. If they are there, record it
   // as applied rather than replaying it.
