@@ -22,7 +22,7 @@ const person = (name: string, status: FacultyStatus | null, region: FacultyRegio
 const roster = () => [
   person('Dr. Marc Mani', 'confirmed', 'local'),
   person('Dr. Ashkan Ghavami', 'confirmed', 'local'),
-  person('Dr. Ana Silva', 'maybe', 'international', { specialty: 'Rhinoplasty', country: 'Brazil' }),
+  person('Dr. Ana Silva', 'maybe', 'international', { specialty: 'Rhinoplasty', country: 'Brazil', proposedRole: 'Panelist' }),
   person('Dr. Ben Cole', 'maybe', 'united_states'),
   person('Dr. Cara Lin', 'confirmed', null),
   person('Dr. Dana Roe', 'declined', 'united_states'),
@@ -89,10 +89,12 @@ describe('the active list', () => {
     expect(names).toEqual([...names].sort((a, b) => sortKey(a).localeCompare(sortKey(b))));
   });
 
-  it('lifts priority faculty to the top', () => {
+  it('ignores the retired priority flag — nothing hidden reorders the list', () => {
     const list = roster();
     list[3] = { ...list[3], priority: true };
-    expect(activeList(list, EMPTY_FILTER)[0].name).toBe('Dr. Ben Cole');
+    expect(activeList(list, EMPTY_FILTER).map((f) => f.name)).toEqual(
+      activeList(roster(), EMPTY_FILTER).map((f) => f.name),
+    );
   });
 
   it('filters by status', () => {
@@ -120,9 +122,16 @@ describe('the active list', () => {
     ]);
   });
 
-  it('searches specialty and country too', () => {
+  it('searches specialty, proposed role and location too', () => {
     expect(activeList(roster(), { ...EMPTY_FILTER, query: 'rhino' })).toHaveLength(1);
     expect(activeList(roster(), { ...EMPTY_FILTER, query: 'brazil' })).toHaveLength(1);
+    expect(activeList(roster(), { ...EMPTY_FILTER, query: 'panel' })).toHaveLength(1);
+  });
+
+  it('never matches on a field nobody can see', () => {
+    const list = roster();
+    list[0] = { ...list[0], institution: 'Hidden Clinic', internalNotes: 'hidden note' };
+    expect(activeList(list, { ...EMPTY_FILTER, query: 'hidden' })).toHaveLength(0);
   });
 });
 

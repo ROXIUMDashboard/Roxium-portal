@@ -109,24 +109,21 @@ export const sortKey = (name: string) => name.trim().replace(HONORIFIC, '').toLo
 const matchesQuery = (f: Faculty, query: string) => {
   const q = query.trim().toLocaleLowerCase();
   if (!q) return true;
-  return [f.name, f.specialty, f.institution, f.city, f.country]
+  return [f.name, f.credentials, f.specialty, f.proposedRole, f.city, f.stateProvince, f.country]
     .filter(Boolean)
     .some((field) => String(field).toLocaleLowerCase().includes(q));
 };
 
 const byName = (a: Faculty, b: Faculty) => sortKey(a.name).localeCompare(sortKey(b.name));
 
-/**
- * The active list: Confirmed and Maybe together, ordered by name, with the
- * priority flag lifting someone to the top of their place.
- */
+/** The active list: Confirmed and Maybe together, ordered by name. */
 export function activeList(faculty: Faculty[], filter: FacultyFilter): Faculty[] {
   return faculty
     .filter(isActive)
     .filter((f) => filter.status === 'all_active' || f.status === filter.status)
     .filter((f) => filter.region === 'all' || f.region === filter.region)
     .filter((f) => matchesQuery(f, filter.query))
-    .sort((a, b) => Number(b.priority) - Number(a.priority) || byName(a, b));
+    .sort(byName);
 }
 
 /** Declined and Not Pursuing. Region and search apply; the status filter does not. */

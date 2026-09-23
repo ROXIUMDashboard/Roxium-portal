@@ -10,90 +10,98 @@ import styles from '@/styles/faculty.module.css';
 /** The same rhythm as the agenda editors, so the whole room saves alike. */
 const AUTOSAVE_MS = 650;
 
-/** Free-text fields the editor owns. Status, region and priority are one-click, saved at once. */
-const TEXT_FIELDS = [
-  'name',
-  'credentials',
-  'specialty',
-  'institution',
-  'city',
-  'stateProvince',
-  'country',
-  'proposedRole',
-  'invitationStatus',
-  'invitationDate',
-  'lastContactDate',
-  'owner',
-  'internalNotes',
-  'email',
-  'phone',
-  'website',
-  'headshotUrl',
+/**
+ * Who they are, what they do, where they are, and what BHFA has in mind for
+ * them. Status and region are not here: they sit on the row, one click each.
+ */
+const FIELDS = [
+  { key: 'name', label: 'Full name', placeholder: 'Dr. First Last', span: 'name' },
+  { key: 'credentials', label: 'Credentials', placeholder: 'MD, FACS', span: 'credentials' },
+  { key: 'specialty', label: 'Specialty / expertise', placeholder: 'Facial plastic surgery', span: 'half' },
+  { key: 'proposedRole', label: 'Proposed BHFA role', placeholder: 'Panelist, moderator…', span: 'half' },
+  { key: 'city', label: 'City', placeholder: 'Beverly Hills', span: 'third' },
+  { key: 'stateProvince', label: 'State / province', placeholder: 'CA', span: 'third' },
+  { key: 'country', label: 'Country', placeholder: 'United States', span: 'third' },
 ] as const;
-type TextField = (typeof TEXT_FIELDS)[number];
+
+type TextField = (typeof FIELDS)[number]['key'];
 type Draft = Record<TextField, string>;
 
 const toDraft = (f: Faculty): Draft =>
-  Object.fromEntries(TEXT_FIELDS.map((key) => [key, (f[key] as string | null) ?? ''])) as Draft;
-
-interface FieldSpec {
-  key: TextField;
-  label: string;
-  placeholder?: string;
-  type?: 'text' | 'date' | 'email' | 'tel' | 'url';
-  wide?: boolean;
-  multiline?: boolean;
-}
-
-const GROUPS: { title: string; fields: FieldSpec[] }[] = [
-  {
-    title: 'Faculty',
-    fields: [
-      { key: 'name', label: 'Full name', placeholder: 'Dr. First Last', wide: true },
-      { key: 'credentials', label: 'Credentials', placeholder: 'MD, FACS' },
-      { key: 'specialty', label: 'Specialty / expertise', placeholder: 'Facial plastic surgery' },
-      { key: 'institution', label: 'Institution / practice', wide: true },
-    ],
-  },
-  {
-    title: 'Location',
-    fields: [
-      { key: 'city', label: 'City', placeholder: 'Beverly Hills' },
-      { key: 'stateProvince', label: 'State / province', placeholder: 'CA' },
-      { key: 'country', label: 'Country', placeholder: 'United States' },
-    ],
-  },
-  {
-    title: 'Planning',
-    fields: [
-      { key: 'proposedRole', label: 'Proposed BHFA role', placeholder: 'Panelist, moderator…' },
-      { key: 'invitationStatus', label: 'Invitation status', placeholder: 'Invited, awaiting reply…' },
-      { key: 'invitationDate', label: 'Invitation date', type: 'date' },
-      { key: 'lastContactDate', label: 'Last contact', type: 'date' },
-      { key: 'owner', label: 'Owner', placeholder: 'Who is handling this' },
-      { key: 'internalNotes', label: 'Internal notes', wide: true, multiline: true },
-    ],
-  },
-  {
-    title: 'Contact · optional',
-    fields: [
-      { key: 'email', label: 'Email', type: 'email' },
-      { key: 'phone', label: 'Phone', type: 'tel' },
-      { key: 'website', label: 'Website', type: 'url', placeholder: 'practice.com' },
-      { key: 'headshotUrl', label: 'Headshot URL', type: 'url' },
-    ],
-  },
-];
+  Object.fromEntries(FIELDS.map(({ key }) => [key, f[key] ?? ''])) as Draft;
 
 /**
- * A faculty member's full record, edited in place.
+ * Removal is rare and final, so it lives behind a quiet "•••" rather than
+ * sitting in every open record. Not Pursuing is the everyday way out.
+ */
+function MoreActions({ name, onRemove }: { name: string; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', escape);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
+  return (
+    <div className={styles.moreWrap} ref={wrap}>
+      <button
+        type="button"
+        className={styles.more}
+        aria-expanded={open}
+        aria-label={`More actions for ${name}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">•••</span>
+      </button>
+      {open ? (
+        <div className={styles.moreMenu}>
+          <button
+            type="button"
+            className={styles.moreItem}
+            onClick={() => {
+              setOpen(false);
+              onRemove();
+            }}
+          >
+            Remove from register…
+          </button>
+          <p className={styles.moreHint}>To stop pursuing someone, change their status instead.</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A faculty member's record, edited in place.
  *
  * Like the agenda editors: nothing to press. Each field autosaves on a short
  * debounce, and only the fields this collaborator actually typed in are written
- * — so a colleague changing the same person's notes at the same time is not
+ * — so a colleague changing the same person at the same time is not
  * overwritten by a stale copy of everything else.
  */
-export default function FacultyEditor({ room, member }: { room: ProgramRoomState; member: Faculty }) {
+export default function FacultyEditor({
+  room,
+  member,
+  fresh = false,
+}: {
+  room: ProgramRoomState;
+  member: Faculty;
+  /** Just added: the name is in, so the caret goes straight to the next field. */
+  fresh?: boolean;
+}) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(member));
   const [error, setError] = useState<string | null>(null);
   const draftRef = useRef(draft);
@@ -101,11 +109,11 @@ export default function FacultyEditor({ room, member }: { room: ProgramRoomState
   const memberRef = useRef(member);
   memberRef.current = member;
   const touched = useRef(new Set<TextField>());
-  const firstField = useRef<HTMLInputElement>(null);
+  const credentialsField = useRef<HTMLInputElement>(null);
 
   const save = useCallback(async () => {
     const saved = toDraft(memberRef.current);
-    const patch: Record<string, unknown> = {};
+    const patch: Partial<Record<TextField, string | null>> = {};
     for (const key of touched.current) {
       if (draftRef.current[key] !== saved[key]) patch[key] = draftRef.current[key].trim() || null;
     }
@@ -140,7 +148,7 @@ export default function FacultyEditor({ room, member }: { room: ProgramRoomState
     const incoming = toDraft(member);
     setDraft((current) => {
       let next = current;
-      for (const key of TEXT_FIELDS) {
+      for (const { key } of FIELDS) {
         if (touched.current.has(key) || incoming[key] === current[key]) continue;
         if (next === current) next = { ...current };
         next[key] = incoming[key];
@@ -150,8 +158,8 @@ export default function FacultyEditor({ room, member }: { room: ProgramRoomState
   }, [member]);
 
   useEffect(() => {
-    firstField.current?.focus({ preventScroll: true });
-  }, []);
+    if (fresh) credentialsField.current?.focus({ preventScroll: true });
+  }, [fresh]);
 
   const edit = (key: TextField, value: string) => {
     touched.current.add(key);
@@ -164,69 +172,45 @@ export default function FacultyEditor({ room, member }: { room: ProgramRoomState
 
   return (
     <div className={styles.editor} data-keeps-editor-open>
-      {GROUPS.map((group) => (
-        <fieldset key={group.title} className={styles.group}>
-          <legend className={styles.groupTitle}>{group.title}</legend>
-          <div className={styles.groupFields}>
-            {group.fields.map((field, index) => (
-              <label key={field.key} className={field.wide ? `${styles.field} ${styles.fieldWide}` : styles.field}>
-                <span className="fieldLabel">{field.label}</span>
-                {field.multiline ? (
-                  <textarea
-                    className="field"
-                    rows={3}
-                    value={draft[field.key]}
-                    placeholder={field.placeholder}
-                    onChange={(event) => edit(field.key, event.target.value)}
-                  />
-                ) : (
-                  <input
-                    ref={group.title === 'Faculty' && index === 0 ? firstField : undefined}
-                    className="field"
-                    type={field.type ?? 'text'}
-                    value={draft[field.key]}
-                    placeholder={field.placeholder}
-                    onChange={(event) => edit(field.key, event.target.value)}
-                  />
-                )}
-              </label>
-            ))}
-          </div>
-          {group.title === 'Location' && suggestion ? (
-            <p className={styles.suggestion}>
-              Region not set. From this location:{' '}
-              <button
-                type="button"
-                className={styles.suggestionApply}
-                onClick={() => void room.updateFaculty(member.id, { region: suggestion })}
-              >
-                Set {FACULTY_REGION_LABELS[suggestion]}
-              </button>
-            </p>
-          ) : null}
-        </fieldset>
-      ))}
+      <div className={styles.fields}>
+        {FIELDS.map((field) => (
+          <label key={field.key} className={styles.field} data-span={field.span}>
+            <span className="fieldLabel">{field.label}</span>
+            <input
+              ref={field.key === 'credentials' ? credentialsField : undefined}
+              className="field"
+              data-name={field.key === 'name' || undefined}
+              value={draft[field.key]}
+              placeholder={field.placeholder}
+              onChange={(event) => edit(field.key, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
 
       {error ? <p className={styles.error}>{error}</p> : null}
 
       <div className={styles.editorFooter}>
-        <label className={styles.priority}>
-          <input
-            type="checkbox"
-            checked={member.priority}
-            onChange={(event) => void room.updateFaculty(member.id, { priority: event.target.checked })}
-          />
-          <span>Priority</span>
-        </label>
-        <button
-          type="button"
-          className={styles.remove}
-          onClick={() => {
+        {suggestion ? (
+          <p className={styles.suggestion}>
+            No region yet —{' '}
+            <button
+              type="button"
+              className={styles.suggestionApply}
+              onClick={() => void room.updateFaculty(member.id, { region: suggestion })}
+            >
+              Set {FACULTY_REGION_LABELS[suggestion]}
+            </button>
+          </p>
+        ) : (
+          <span />
+        )}
+        <MoreActions
+          name={member.name}
+          onRemove={() => {
             if (window.confirm(`Remove ${member.name} from the faculty register?`)) void room.deleteFaculty(member);
           }}
-        >
-          Remove from register
-        </button>
+        />
       </div>
     </div>
   );

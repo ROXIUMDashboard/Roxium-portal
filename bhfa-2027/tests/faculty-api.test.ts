@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Faculty, HistoryEntry, ProgramSnapshot } from '@/lib/domain/types';
 import { countFaculty } from '@/lib/domain/faculty';
-import { resetRepositoryForTests } from '@/lib/data';
+import { getRepositoryHandle, resetRepositoryForTests } from '@/lib/data';
 import { resetRateLimits } from '@/lib/server/rate-limit';
 import { subscribe, type ProgramEvent } from '@/lib/server/realtime';
 
@@ -104,29 +104,29 @@ describe('adding faculty', () => {
     expect((await member('Dr. Test Faculty')).id).toBe(id);
   });
 
-  it('stores the full record in one go', async () => {
+  it('stores the whole record in one go', async () => {
     const response = await add({
       name: 'Dr. Test International',
+      credentials: 'MD',
       status: 'confirmed',
       region: 'international',
-      city: 'São Paulo',
-      country: 'Brazil',
       specialty: 'Rhinoplasty',
-      website: 'clinic.example.com',
-      invitationDate: '2026-10-01',
-      priority: true,
+      proposedRole: 'Panelist',
+      city: 'São Paulo',
+      stateProvince: 'SP',
+      country: 'Brazil',
     });
     expect(response.status).toBe(201);
     const saved = await member('Dr. Test International');
     expect(saved).toMatchObject({
+      credentials: 'MD',
       status: 'confirmed',
       region: 'international',
-      city: 'São Paulo',
-      country: 'Brazil',
       specialty: 'Rhinoplasty',
-      website: 'https://clinic.example.com/',
-      invitationDate: '2026-10-01',
-      priority: true,
+      proposedRole: 'Panelist',
+      city: 'São Paulo',
+      stateProvince: 'SP',
+      country: 'Brazil',
       updatedBy: 'Max',
     });
   });
@@ -211,11 +211,11 @@ describe('moving faculty between statuses', () => {
 
   it('keeps every detail through the round trip', async () => {
     const f = await maybe();
-    await edit(f.id, { internalNotes: 'Met at ASPS', specialty: 'Facelift' });
+    await edit(f.id, { proposedRole: 'Moderator', specialty: 'Facelift' });
     await edit(f.id, { status: 'not_pursuing' });
     await edit(f.id, { status: 'confirmed' });
     expect(await member('Dr. Test Mover')).toMatchObject({
-      internalNotes: 'Met at ASPS',
+      proposedRole: 'Moderator',
       specialty: 'Facelift',
       region: 'united_states',
       status: 'confirmed',
@@ -256,16 +256,65 @@ describe('editing a faculty record', () => {
 
   it('names the fields that changed', async () => {
     const f = await member('Dr. Marc Mani');
-    await edit(f.id, { owner: 'Kelsey', internalNotes: 'Confirmed by phone' });
-    expect((await history())[0].summary).toBe('Dr. Marc Mani: owner, notes updated');
+    await edit(f.id, { specialty: 'Endoscopic facial rejuvenation', proposedRole: 'Live surgery' });
+    expect((await history())[0].summary).toBe('Dr. Marc Mani: specialty, proposed role updated');
   });
 
-  it('validates dates, email and web addresses', async () => {
+  it('refuses a region that does not exist', async () => {
     const f = await member('Dr. Marc Mani');
-    expect((await edit(f.id, { invitationDate: '2026-02-30' })).status).toBe(400);
-    expect((await edit(f.id, { email: 'not an email' })).status).toBe(400);
-    expect((await edit(f.id, { website: 'javascript:alert(1)' })).status).toBe(400);
-    expect((await edit(f.id, { priority: 'yes' })).status).toBe(400);
+    expect((await edit(f.id, { region: 'europe' })).status).toBe(400);
+  });
+});
+
+/* ------------------------------------------------ the retired CRM fields */
+
+describe('the retired CRM fields', () => {
+  const RETIRED = {
+    invitationStatus: 'Invited',
+    invitationDate: '2026-10-01',
+    lastContactDate: '2026-10-02',
+    owner: 'Kelsey',
+    internalNotes: 'Confidential',
+    email: 'someone@example.com',
+    phone: '555-0100',
+    website: 'https://example.com/',
+    headshotUrl: 'https://example.com/a.jpg',
+    priority: true,
+  };
+
+  it('cannot be written through the product any more — they are ignored', async () => {
+    const response = await add({ name: 'Dr. Test Retired', status: 'maybe', ...RETIRED });
+    expect(response.status).toBe(201);
+    expect(await member('Dr. Test Retired')).toMatchObject({
+      status: 'maybe',
+      invitationStatus: null,
+      internalNotes: null,
+      email: null,
+      priority: false,
+    });
+
+    const f = await member('Dr. Test Retired');
+    const before = (await history()).length;
+    expect((await edit(f.id, RETIRED)).status).toBe(200);
+    expect((await history()).length).toBe(before);
+    expect((await member('Dr. Test Retired')).owner).toBeNull();
+  });
+
+  it('keeps anything already recorded in them — through edits, status moves and undo', async () => {
+    const f = await member('Dr. Marc Mani');
+    // As if written before the fields were retired.
+    await getRepositoryHandle().repository.updateFaculty(f.id, RETIRED, 'earlier');
+
+    await edit(f.id, { specialty: 'Endoscopic facial rejuvenation' });
+    await edit(f.id, { status: 'declined' });
+    const [move] = await history();
+    await undo(move.id);
+
+    expect(await member('Dr. Marc Mani')).toMatchObject({
+      status: 'confirmed',
+      specialty: 'Endoscopic facial rejuvenation',
+      ...RETIRED,
+    });
   });
 
   it('renames, and the agenda resolves the new name through the same link', async () => {
@@ -331,7 +380,7 @@ describe('undoing faculty changes', () => {
 
   it('undoes a removal by putting the whole record back', async () => {
     const f = (
-      await (await add({ name: 'Dr. Test Undo', status: 'maybe', region: 'international', internalNotes: 'Keep' })).json()
+      await (await add({ name: 'Dr. Test Undo', status: 'maybe', region: 'international', proposedRole: 'Keynote' })).json()
     ).facultyMember as Faculty;
     await remove(f.id);
     const [entry] = await history();
@@ -340,7 +389,7 @@ describe('undoing faculty changes', () => {
       id: f.id,
       status: 'maybe',
       region: 'international',
-      internalNotes: 'Keep',
+      proposedRole: 'Keynote',
     });
   });
 

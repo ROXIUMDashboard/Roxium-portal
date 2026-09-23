@@ -83,6 +83,8 @@ class StubEventSource {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // The room opens on Faculty unless the link names a workspace; these tests work the agenda.
+  window.history.replaceState(null, '', '/#agenda');
   vi.stubGlobal('EventSource', StubEventSource);
   vi.stubGlobal(
     'fetch',

@@ -233,47 +233,22 @@ export function parseDayPatch(body: Record<string, unknown>): DayPatch {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Length limits for the free-text faculty fields. */
-const FACULTY_TEXT: Partial<Record<keyof FacultyPatch, number>> = {
+/**
+ * The faculty fields the product edits, with their length limits.
+ *
+ * The register once carried CRM-style columns too (invitation dates, owner,
+ * notes, contact details, priority). They stay in the database untouched, so
+ * nothing already recorded is lost, but they are no longer part of the product
+ * and cannot be written through it: a request naming them is simply ignored.
+ */
+const FACULTY_TEXT = {
   credentials: 120,
+  specialty: 160,
+  proposedRole: 120,
   city: 80,
   stateProvince: 80,
   country: 80,
-  specialty: 160,
-  proposedRole: 120,
-  invitationStatus: 80,
-  owner: 80,
-  internalNotes: 4000,
-  phone: 40,
-  institution: 160,
-};
-
-function cleanDate(value: unknown, label: string): string | null {
-  const text = cleanText(value, 10);
-  if (!text) return null;
-  const parsed = new Date(`${text}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
-    throw new ValidationError(`${label} must be a real date, written YYYY-MM-DD.`);
-  }
-  return text;
-}
-
-/** http(s) only; a bare domain gets https:// so "clinic.com" is accepted. */
-function cleanWebAddress(value: unknown, label: string): string | null {
-  const text = cleanText(value, 500);
-  if (!text) return null;
-  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`;
-  let url: URL;
-  try {
-    url = new URL(withScheme);
-  } catch {
-    throw new ValidationError(`${label} is not a valid web address.`);
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new ValidationError(`${label} must be a web address.`);
-  }
-  return url.toString();
-}
+} satisfies Partial<Record<keyof FacultyPatch, number>>;
 
 /**
  * A faculty edit. Only keys present in the body are returned, so an absent key
@@ -287,8 +262,8 @@ export function parseFacultyPatch(body: Record<string, unknown>): FacultyPatch {
     if (!name) throw new ValidationError('A faculty member needs a name.');
     patch.name = name;
   }
-  for (const [key, max] of Object.entries(FACULTY_TEXT) as [keyof FacultyPatch, number][]) {
-    if (key in body) (patch as Record<string, unknown>)[key] = cleanText(body[key], max);
+  for (const [key, max] of Object.entries(FACULTY_TEXT) as [keyof typeof FACULTY_TEXT, number][]) {
+    if (key in body) patch[key] = cleanText(body[key], max);
   }
   if ('status' in body) {
     if (body.status !== null && !(FACULTY_STATUSES as readonly unknown[]).includes(body.status)) {
@@ -301,21 +276,6 @@ export function parseFacultyPatch(body: Record<string, unknown>): FacultyPatch {
       throw new ValidationError('Unknown region.');
     }
     patch.region = (body.region ?? null) as FacultyPatch['region'];
-  }
-  if ('priority' in body) {
-    if (typeof body.priority !== 'boolean') throw new ValidationError('Priority is yes or no.');
-    patch.priority = body.priority;
-  }
-  if ('invitationDate' in body) patch.invitationDate = cleanDate(body.invitationDate, 'Invitation date');
-  if ('lastContactDate' in body) patch.lastContactDate = cleanDate(body.lastContactDate, 'Last contact');
-  if ('website' in body) patch.website = cleanWebAddress(body.website, 'Website');
-  if ('headshotUrl' in body) patch.headshotUrl = cleanWebAddress(body.headshotUrl, 'Headshot');
-  if ('email' in body) {
-    const email = cleanText(body.email, 200);
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new ValidationError('That email address does not look right.');
-    }
-    patch.email = email;
   }
   return patch;
 }

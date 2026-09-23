@@ -145,7 +145,6 @@ export interface Faculty {
   programId: string;
   name: string;
   credentials: string | null;
-  headshotUrl: string | null;
   /**
    * Null means the person is known to the agenda — a name typed into a session
    * — but has not been placed in the faculty register. Appearing on the agenda
@@ -158,6 +157,17 @@ export interface Faculty {
   country: string | null;
   specialty: string | null;
   proposedRole: string | null;
+  sortOrder: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+
+  /*
+   * Retired from the product. The columns stay in the database so nothing
+   * already recorded is lost, and they travel with the record so undo and
+   * restore put it back exactly — but nothing shows or edits them any more.
+   */
+  headshotUrl: string | null;
+  institution: string | null;
   invitationStatus: string | null;
   invitationDate: string | null;
   lastContactDate: string | null;
@@ -166,11 +176,7 @@ export interface Faculty {
   internalNotes: string | null;
   email: string | null;
   phone: string | null;
-  institution: string | null;
   website: string | null;
-  sortOrder: number;
-  updatedAt: string | null;
-  updatedBy: string | null;
 }
 
 export interface Program {

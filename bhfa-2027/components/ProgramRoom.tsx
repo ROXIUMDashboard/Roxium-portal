@@ -55,15 +55,23 @@ export default function ProgramRoom({
   const [historyOpen, setHistoryOpen] = useState(false);
   // Local UI only: turning it on here never puts another collaborator into it.
   const [editMode, setEditMode] = useState(false);
-  // Agenda by default. The hash keeps a refresh — or a shared #faculty link — in place.
-  const [workspace, setWorkspace] = useState<Workspace>('agenda');
+  // Faculty is the planning home: a fresh link lands there. A link that names a
+  // workspace (#agenda or #faculty) opens that one, and choosing a tab writes the
+  // hash, so a refresh keeps you where you were.
+  const [workspace, setWorkspace] = useState<Workspace>('faculty');
   useEffect(() => {
-    if (window.location.hash === '#faculty') setWorkspace('faculty');
+    const fromHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash === 'agenda' || hash === 'faculty') setWorkspace(hash);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
   }, []);
   const selectWorkspace = useCallback((next: Workspace) => {
     setWorkspace(next);
     try {
-      window.history.replaceState(null, '', next === 'faculty' ? '#faculty' : window.location.pathname);
+      window.history.replaceState(null, '', `#${next}`);
     } catch {
       /* the hash is a convenience */
     }

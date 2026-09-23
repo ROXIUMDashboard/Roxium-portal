@@ -105,14 +105,16 @@ function FacultyRow({
   room,
   member,
   open,
+  fresh = false,
   onToggle,
 }: {
   room: ProgramRoomState;
   member: Faculty;
   open: boolean;
+  fresh?: boolean;
   onToggle: (id: string) => void;
 }) {
-  const detail = [member.specialty, member.institution, locationLine(member)].filter(Boolean).join(' · ');
+  const detail = [member.specialty, member.proposedRole, locationLine(member)].filter(Boolean).join(' · ');
 
   return (
     <article className={styles.row} data-status={member.status ?? 'unsorted'} data-open={open || undefined}>
@@ -125,7 +127,6 @@ function FacultyRow({
           onClick={() => onToggle(member.id)}
         >
           <span className={styles.name}>
-            {member.priority ? <span className={styles.star} aria-label="Priority">★</span> : null}
             {member.name}
             {member.credentials ? <span className={styles.credentials}>, {member.credentials}</span> : null}
           </span>
@@ -161,12 +162,13 @@ function FacultyRow({
         </div>
       </div>
 
-      {open ? <FacultyEditor room={room} member={member} /> : null}
+      {open ? <FacultyEditor room={room} member={member} fresh={fresh} /> : null}
     </article>
   );
 }
 
 export default memo(
   FacultyRow,
-  (prev, next) => prev.member === next.member && prev.open === next.open && prev.onToggle === next.onToggle,
+  (prev, next) =>
+    prev.member === next.member && prev.open === next.open && prev.fresh === next.fresh && prev.onToggle === next.onToggle,
 );

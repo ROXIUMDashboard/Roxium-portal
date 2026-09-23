@@ -91,26 +91,72 @@ async function enterFaculty() {
 const counter = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling?.textContent;
 
 describe('the workspace switch', () => {
-  it('opens on the agenda, with Faculty one click away', async () => {
+  async function enter(hash: string) {
+    window.history.replaceState(null, '', `/${hash}`);
     const user = userEvent.setup();
     render(<ProgramRoom token={TOKEN} initialSnapshot={buildSnapshot()} />);
     await user.type(screen.getByLabelText(/your name/i), 'Max');
     await user.click(screen.getByRole('button', { name: /enter program/i }));
+    return user;
+  }
 
-    const agenda = await screen.findByRole('tab', { name: /^agenda/i });
-    expect(agenda).toHaveAttribute('aria-selected', 'true');
+  it('lands a fresh link on Faculty, with the Agenda one click away', async () => {
+    const user = await enter('');
+    expect(await screen.findByText('Active faculty')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^faculty/i })).toHaveAttribute('aria-selected', 'true');
+    // Edit Program belongs to the agenda.
+    expect(screen.queryByRole('button', { name: /edit program/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /^agenda/i }));
+    expect(screen.getByRole('tab', { name: /^agenda/i })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText('Active faculty')).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('#agenda');
 
     await user.click(screen.getByRole('tab', { name: /^faculty/i }));
     expect(await screen.findByText('Active faculty')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /^faculty/i })).toHaveAttribute('aria-selected', 'true');
     expect(window.location.hash).toBe('#faculty');
-    // Edit Program belongs to the agenda.
-    expect(screen.queryByRole('button', { name: /edit program/i })).not.toBeInTheDocument();
+  });
+
+  it('respects a link that names the agenda', async () => {
+    await enter('#agenda');
+    expect(await screen.findByRole('tab', { name: /^agenda/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByText('Active faculty')).not.toBeInTheDocument();
+  });
+
+  it('respects a link that names faculty', async () => {
+    await enter('#faculty');
+    expect(await screen.findByText('Active faculty')).toBeInTheDocument();
   });
 });
 
 describe('the faculty register', () => {
+  it('opens a record with only the essentials — no CRM fields, no loud delete', async () => {
+    const user = await enterFaculty();
+    await user.click(screen.getByRole('button', { name: 'Edit Dr. Ana Silva' }));
+
+    for (const label of [
+      'Full name',
+      'Credentials',
+      'Specialty / expertise',
+      'Proposed BHFA role',
+      'City',
+      'State / province',
+      'Country',
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+    // Seven fields, plus the add-faculty box (search is a searchbox, not a textbox).
+    expect(screen.getAllByRole('textbox')).toHaveLength(8);
+    for (const retired of [/invitation/i, /last contact/i, /owner/i, /internal notes/i, /email/i, /phone/i, /website/i, /headshot/i, /priority/i]) {
+      expect(screen.queryByLabelText(retired)).not.toBeInTheDocument();
+    }
+
+    // Removal is behind the quiet "•••".
+    expect(screen.queryByRole('button', { name: /remove from register/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'More actions for Dr. Ana Silva' }));
+    expect(screen.getByRole('button', { name: /remove from register/i })).toBeInTheDocument();
+  });
+
   it('derives every counter from the records', async () => {
     await enterFaculty();
     expect(counter('Confirmed')).toBe('1');
@@ -185,6 +231,8 @@ describe('the faculty register', () => {
 
     expect(await screen.findByText('Dr. Test Added')).toBeInTheDocument();
     expect(counter('Maybe')).toBe('2');
+    // The name is in; the caret waits in the next field.
+    expect(screen.getByLabelText('Credentials')).toHaveFocus();
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(

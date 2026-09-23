@@ -9,7 +9,8 @@
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { E2E_TOKEN } from '../playwright.config';
 
-const LINK = `/program/${E2E_TOKEN}`;
+// The collaboration link opens on Faculty; these tests work the agenda, so name it.
+const LINK = `/program/${E2E_TOKEN}#agenda`;
 
 async function enter(context: BrowserContext, name: string): Promise<Page> {
   const page = await context.newPage();

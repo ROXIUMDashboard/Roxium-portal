@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import type { ProgramRoomState } from '@/lib/client/useProgramRoom';
-import { FACULTY_REGIONS, FACULTY_REGION_SHORT } from '@/lib/domain/types';
+import { FACULTY_REGIONS, FACULTY_REGION_SHORT, type Faculty } from '@/lib/domain/types';
 import {
   EMPTY_FILTER,
   activeList,
@@ -44,6 +44,8 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
   const faculty = room.snapshot.faculty;
   const [filter, setFilter] = useState<FacultyFilter>(EMPTY_FILTER);
   const [openId, setOpenId] = useState<string | null>(null);
+  // The person just added, whose record opens ready for the next detail.
+  const [freshId, setFreshId] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [adding, setAdding] = useState('');
   const addInput = useRef<HTMLInputElement>(null);
@@ -62,7 +64,21 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
   const filtered = filter.region !== 'all' || filter.status !== 'all_active' || query.trim() !== '';
 
   // Stable, so memoised rows are not re-rendered by a parent render.
-  const toggle = useCallback((id: string) => setOpenId((current) => (current === id ? null : id)), []);
+  const toggle = useCallback((id: string) => {
+    setFreshId(null);
+    setOpenId((current) => (current === id ? null : id));
+  }, []);
+
+  const row = (member: Faculty) => (
+    <FacultyRow
+      key={member.id}
+      room={room}
+      member={member}
+      open={openId === member.id}
+      fresh={freshId === member.id}
+      onToggle={toggle}
+    />
+  );
 
   const add = async () => {
     const name = adding.trim();
@@ -73,7 +89,10 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
     setAdding('');
     // New people start in the active pipeline as Maybe; the pill moves them on.
     const id = await room.createFaculty({ name, status: 'maybe' });
-    if (id) setOpenId(id);
+    if (id) {
+      setFreshId(id);
+      setOpenId(id);
+    }
   };
 
   return (
@@ -194,9 +213,7 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
       </div>
       {active.length ? (
         <div className={styles.list}>
-          {active.map((member) => (
-            <FacultyRow key={member.id} room={room} member={member} open={openId === member.id} onToggle={toggle} />
-          ))}
+          {active.map(row)}
         </div>
       ) : (
         <p className={styles.empty}>
@@ -214,9 +231,7 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
             <p className={styles.listMeta}>Named on a session, not yet in the faculty register.</p>
           </div>
           <div className={styles.list}>
-            {unsorted.map((member) => (
-              <FacultyRow key={member.id} room={room} member={member} open={openId === member.id} onToggle={toggle} />
-            ))}
+            {unsorted.map(row)}
           </div>
         </section>
       ) : null}
@@ -244,9 +259,7 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
                 <div className={styles.subgroup}>
                   <h3 className={styles.subTitle}>Declined — said no</h3>
                   <div className={styles.list}>
-                    {declined.map((member) => (
-                      <FacultyRow key={member.id} room={room} member={member} open={openId === member.id} onToggle={toggle} />
-                    ))}
+                    {declined.map(row)}
                   </div>
                 </div>
               ) : null}
@@ -254,9 +267,7 @@ export default function FacultyWorkspace({ room }: { room: ProgramRoomState }) {
                 <div className={styles.subgroup}>
                   <h3 className={styles.subTitle}>Not Pursuing — BHFA's decision</h3>
                   <div className={styles.list}>
-                    {notPursuing.map((member) => (
-                      <FacultyRow key={member.id} room={room} member={member} open={openId === member.id} onToggle={toggle} />
-                    ))}
+                    {notPursuing.map(row)}
                   </div>
                 </div>
               ) : null}
