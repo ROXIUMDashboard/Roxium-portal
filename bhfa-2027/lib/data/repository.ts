@@ -11,6 +11,8 @@
 import type {
   Day,
   Faculty,
+  FacultyRegion,
+  FacultyStatus,
   HistoryAction,
   HistoryEntry,
   ProgramSnapshot,
@@ -75,6 +77,7 @@ export interface HistoryInput {
   programId: string;
   sessionId?: string | null;
   dayId?: string | null;
+  facultyId?: string | null;
   actorName: string;
   action: HistoryAction;
   summary: string;
@@ -90,6 +93,36 @@ export interface DayPatch {
   weekdayLabel?: string;
   date?: string;
   hoursLabel?: string | null;
+}
+
+/** Every editable faculty field. Absent keys are left as they are. */
+export interface FacultyPatch {
+  name?: string;
+  credentials?: string | null;
+  headshotUrl?: string | null;
+  status?: FacultyStatus | null;
+  region?: FacultyRegion | null;
+  city?: string | null;
+  stateProvince?: string | null;
+  country?: string | null;
+  specialty?: string | null;
+  proposedRole?: string | null;
+  invitationStatus?: string | null;
+  invitationDate?: string | null;
+  lastContactDate?: string | null;
+  owner?: string | null;
+  priority?: boolean;
+  internalNotes?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  institution?: string | null;
+  website?: string | null;
+}
+
+export interface FacultyInput extends FacultyPatch {
+  /** Supplied only when restoring a deleted record from history. */
+  id?: string;
+  name: string;
 }
 
 export interface ProgramRepository {
@@ -112,6 +145,12 @@ export interface ProgramRepository {
 
   listFaculty(programId: string): Promise<Faculty[]>;
   upsertFacultyByName(programId: string, name: string): Promise<Faculty>;
+  getFaculty(facultyId: string): Promise<Faculty | null>;
+  createFaculty(programId: string, input: FacultyInput, updatedBy: string): Promise<Faculty>;
+  updateFaculty(facultyId: string, patch: FacultyPatch, updatedBy: string): Promise<Faculty>;
+  deleteFaculty(facultyId: string): Promise<Faculty | null>;
+  /** Session-speaker rows pointing at this person — deleting them would orphan these. */
+  countFacultyAssignments(facultyId: string): Promise<number>;
 
   addHistory(entry: HistoryInput): Promise<HistoryEntry>;
   listHistory(programId: string, limit: number): Promise<HistoryEntry[]>;

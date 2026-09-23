@@ -7,6 +7,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Day, Faculty, HistoryEntry, ProgramSnapshot, Session, SessionSpeaker } from '../domain/types';
 import type {
   DayPatch,
+  FacultyInput,
+  FacultyPatch,
   HistoryInput,
   OrderAssignment,
   ProgramRepository,
@@ -72,12 +74,75 @@ function mapSession(row: Row): Session {
   };
 }
 
+function mapFaculty(row: Row): Faculty {
+  return {
+    id: row.id,
+    programId: row.program_id,
+    name: row.name,
+    credentials: row.credentials ?? null,
+    headshotUrl: row.headshot_url ?? null,
+    status: row.status ?? null,
+    region: row.region ?? null,
+    city: row.city ?? null,
+    stateProvince: row.state_province ?? null,
+    country: row.country ?? null,
+    specialty: row.specialty ?? null,
+    proposedRole: row.proposed_role ?? null,
+    invitationStatus: row.invitation_status ?? null,
+    invitationDate: row.invitation_date ? String(row.invitation_date).slice(0, 10) : null,
+    lastContactDate: row.last_contact_date ? String(row.last_contact_date).slice(0, 10) : null,
+    owner: row.owner ?? null,
+    priority: Boolean(row.priority),
+    internalNotes: row.internal_notes ?? null,
+    email: row.email ?? null,
+    phone: row.phone ?? null,
+    institution: row.institution ?? null,
+    website: row.website ?? null,
+    sortOrder: row.sort_order ?? 0,
+    updatedAt: row.updated_at ?? null,
+    updatedBy: row.updated_by ?? null,
+  };
+}
+
+/** camelCase patch -> snake_case columns, only for keys actually present. */
+const FACULTY_COLUMNS: Record<keyof FacultyPatch, string> = {
+  name: 'name',
+  credentials: 'credentials',
+  headshotUrl: 'headshot_url',
+  status: 'status',
+  region: 'region',
+  city: 'city',
+  stateProvince: 'state_province',
+  country: 'country',
+  specialty: 'specialty',
+  proposedRole: 'proposed_role',
+  invitationStatus: 'invitation_status',
+  invitationDate: 'invitation_date',
+  lastContactDate: 'last_contact_date',
+  owner: 'owner',
+  priority: 'priority',
+  internalNotes: 'internal_notes',
+  email: 'email',
+  phone: 'phone',
+  institution: 'institution',
+  website: 'website',
+};
+
+function facultyColumns(patch: FacultyPatch): Row {
+  const row: Row = {};
+  for (const [key, column] of Object.entries(FACULTY_COLUMNS) as [keyof FacultyPatch, string][]) {
+    if (patch[key] !== undefined) row[column] = patch[key];
+  }
+  return row;
+}
+
 function mapHistory(row: Row): HistoryEntry {
   return {
     id: row.id,
     programId: row.program_id,
     sessionId: row.session_id ?? null,
     dayId: row.day_id ?? null,
+    facultyId: row.faculty_id ?? null,
     actorName: row.actor_name ?? 'Someone',
     action: row.action,
     summary: row.summary ?? '',
@@ -204,13 +269,7 @@ export class SupabaseRepository implements ProgramRepository {
       },
       days,
       sessions,
-      faculty: (facultyResult.data ?? []).map((f: Row) => ({
-        id: f.id,
-        programId: f.program_id,
-        name: f.name,
-        credentials: f.credentials ?? null,
-        headshotUrl: f.headshot_url ?? null,
-      })),
+      faculty: (facultyResult.data ?? []).map(mapFaculty),
       revision: Number(row.revision ?? 1),
     };
   }
@@ -337,13 +396,7 @@ export class SupabaseRepository implements ProgramRepository {
   async listFaculty(programId: string): Promise<Faculty[]> {
     const { data, error } = await this.client.from('bhfa_faculty').select('*').eq('program_id', programId).order('name');
     if (error) this.fail('Failed to load faculty', error);
-    return (data ?? []).map((f: Row) => ({
-      id: f.id,
-      programId: f.program_id,
-      name: f.name,
-      credentials: f.credentials ?? null,
-      headshotUrl: f.headshot_url ?? null,
-    }));
+    return (data ?? []).map(mapFaculty);
   }
 
   async upsertFacultyByName(programId: string, name: string): Promise<Faculty> {
@@ -354,28 +407,61 @@ export class SupabaseRepository implements ProgramRepository {
       .ilike('name', name)
       .maybeSingle();
     if (findError) this.fail('Failed to look up faculty', findError);
-    if (existing) {
-      return {
-        id: existing.id,
-        programId: existing.program_id,
-        name: existing.name,
-        credentials: existing.credentials ?? null,
-        headshotUrl: existing.headshot_url ?? null,
-      };
-    }
+    if (existing) return mapFaculty(existing);
+    // Status stays null: typing a name into a session does not put someone in
+    // the faculty pipeline.
     const { data, error } = await this.client
       .from('bhfa_faculty')
       .insert({ program_id: programId, name })
       .select('*')
       .single();
     if (error || !data) this.fail('Failed to add faculty', error);
-    return {
-      id: data.id,
-      programId: data.program_id,
-      name: data.name,
-      credentials: data.credentials ?? null,
-      headshotUrl: data.headshot_url ?? null,
-    };
+    return mapFaculty(data);
+  }
+
+  async getFaculty(facultyId: string): Promise<Faculty | null> {
+    const { data, error } = await this.client.from('bhfa_faculty').select('*').eq('id', facultyId).maybeSingle();
+    if (error) this.fail('Failed to load faculty member', error);
+    return data ? mapFaculty(data) : null;
+  }
+
+  async createFaculty(programId: string, input: FacultyInput, updatedBy: string): Promise<Faculty> {
+    const row: Row = { program_id: programId, ...facultyColumns(input), updated_by: updatedBy };
+    if (input.id) row.id = input.id;
+    const { data, error } = await this.client.from('bhfa_faculty').insert(row).select('*').single();
+    if (error || !data) this.fail('Failed to add faculty member', error);
+    return mapFaculty(data);
+  }
+
+  async updateFaculty(facultyId: string, patch: FacultyPatch, updatedBy: string): Promise<Faculty> {
+    const columns = facultyColumns(patch);
+    if (Object.keys(columns).length) {
+      const { error } = await this.client
+        .from('bhfa_faculty')
+        .update({ ...columns, updated_by: updatedBy, updated_at: new Date().toISOString() })
+        .eq('id', facultyId);
+      if (error) this.fail('Failed to save faculty member', error);
+    }
+    const updated = await this.getFaculty(facultyId);
+    if (!updated) throw new Error('Faculty member not found');
+    return updated;
+  }
+
+  async deleteFaculty(facultyId: string): Promise<Faculty | null> {
+    const existing = await this.getFaculty(facultyId);
+    if (!existing) return null;
+    const { error } = await this.client.from('bhfa_faculty').delete().eq('id', facultyId);
+    if (error) this.fail('Failed to remove faculty member', error);
+    return existing;
+  }
+
+  async countFacultyAssignments(facultyId: string): Promise<number> {
+    const { count, error } = await this.client
+      .from('bhfa_session_speakers')
+      .select('id', { count: 'exact', head: true })
+      .eq('faculty_id', facultyId);
+    if (error) this.fail('Failed to check faculty assignments', error);
+    return count ?? 0;
   }
 
   async addHistory(entry: HistoryInput): Promise<HistoryEntry> {
@@ -385,6 +471,7 @@ export class SupabaseRepository implements ProgramRepository {
         program_id: entry.programId,
         session_id: entry.sessionId ?? null,
         day_id: entry.dayId ?? null,
+        faculty_id: entry.facultyId ?? null,
         actor_name: entry.actorName,
         action: entry.action,
         summary: entry.summary,

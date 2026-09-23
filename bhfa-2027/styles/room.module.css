@@ -536,3 +536,58 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --------------------------------------------------- agenda | faculty */
+
+.workspaceNav {
+  position: relative;
+  z-index: 1;
+  border-bottom: 1px solid var(--rule);
+}
+
+.workspaceNavInner {
+  display: flex;
+  gap: 26px;
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.workspaceTab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 12px 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.workspaceTab:hover {
+  color: var(--ink);
+}
+
+.workspaceTab[data-active] {
+  color: var(--ink);
+  border-bottom-color: var(--acid);
+}
+
+.workspaceCount {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspaceTab {
+    transition: none;
+  }
+}

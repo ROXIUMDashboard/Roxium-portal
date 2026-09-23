@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Day, Faculty, HistoryEntry, PresenceEntry, ProgramSnapshot, Session } from '../domain/types';
 import { sessionsForDay } from '../domain/schedule';
+import { facultyRecord } from '../domain/faculty';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
 import { ApiError, createApi, type EditConflict, type MutationResponse } from './api';
+import { PendingFaculty } from './pending-faculty';
 import { readClientId, readCollaboratorName, writeCollaboratorName } from './identity';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'reconnecting';
@@ -53,6 +55,8 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
   const [conflicts, setConflicts] = useState<Record<string, EditConflict>>({});
 
   const inFlight = useRef(0);
+  // Faculty edits still on their way to the server; see PendingFaculty.
+  const pendingFaculty = useRef(new PendingFaculty());
   const identityRef = useRef({ name: 'Someone', clientId: '' });
 
   identityRef.current = { name: name ?? 'Someone', clientId };
@@ -90,7 +94,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
       return {
         ...current,
         sessions: upsertSessions(current.sessions, incoming, response.deleted ?? []),
-        faculty: response.faculty ?? current.faculty,
+        faculty: response.faculty ? pendingFaculty.current.overlay(response.faculty) : current.faculty,
         days: response.days ?? current.days,
         revision: Math.max(current.revision, response.revision),
       };
@@ -178,7 +182,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
           if (payload.faculty || payload.days) {
             setSnapshot((current) => ({
               ...current,
-              faculty: payload.faculty ?? current.faculty,
+              faculty: payload.faculty ? pendingFaculty.current.overlay(payload.faculty) : current.faculty,
               days: payload.days ?? current.days,
             }));
           }
@@ -187,7 +191,7 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
         setSnapshot((current) => ({
           ...current,
           sessions: upsertSessions(current.sessions, payload.upserted ?? [], payload.deleted ?? []),
-          faculty: payload.faculty ?? current.faculty,
+          faculty: payload.faculty ? pendingFaculty.current.overlay(payload.faculty) : current.faculty,
           days: payload.days ?? current.days,
           revision: Math.max(current.revision, payload.revision),
         }));
@@ -286,6 +290,74 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
       return run(null, () => api.updateDay(dayId, patch));
     },
     [api, run],
+  );
+
+  /* ------------------------------------------------------------ faculty */
+
+  /** Patch one faculty record on screen immediately. */
+  const patchFacultyLocally = useCallback((facultyId: string, patch: Partial<Faculty>) => {
+    setSnapshot((current) => ({
+      ...current,
+      faculty: current.faculty.map((f) => (f.id === facultyId ? { ...f, ...patch } : f)),
+    }));
+  }, []);
+
+  /**
+   * Add someone. The id is minted here so the row that appears instantly is the
+   * row the server saves; a rejected create is rolled back by `run`'s resync.
+   */
+  const createFaculty = useCallback(
+    async (fields: Partial<Faculty> & { name: string }) => {
+      const id =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `${Date.now().toString(16)}-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`;
+      const created = facultyRecord({ ...fields, id, programId: snapshot.program.id });
+      const settle = pendingFaculty.current.create(created);
+      setSnapshot((current) => ({ ...current, faculty: [...current.faculty, created] }));
+      const { id: _ignored, programId: _program, ...body } = fields as Partial<Faculty>;
+      try {
+        const response = await run(null, () => api.createFaculty({ ...body, id }));
+        return response ? id : null;
+      } finally {
+        settle();
+      }
+    },
+    [api, run, snapshot.program.id],
+  );
+
+  /** Edit someone. Status and region moves land on screen before the request. */
+  const updateFaculty = useCallback(
+    async (facultyId: string, patch: Partial<Faculty>) => {
+      const settle = pendingFaculty.current.patch(facultyId, patch);
+      patchFacultyLocally(facultyId, patch);
+      try {
+        return await run(null, () => api.updateFaculty(facultyId, patch));
+      } finally {
+        settle();
+      }
+    },
+    [api, patchFacultyLocally, run],
+  );
+
+  /**
+   * Remove someone. If the server refuses — they are on the agenda — `run`
+   * resyncs, which puts them back, and the toast says why.
+   */
+  const deleteFaculty = useCallback(
+    async (member: Faculty) => {
+      const settle = pendingFaculty.current.remove(member.id);
+      setSnapshot((current) => ({ ...current, faculty: current.faculty.filter((f) => f.id !== member.id) }));
+      try {
+        return await run(null, () => api.deleteFaculty(member.id), {
+          onSuccess: (response) =>
+            pushToast({ tone: 'neutral', message: `Removed ${member.name}`, action: undoAction(response.history) }),
+        });
+      } finally {
+        settle();
+      }
+    },
+    [api, pushToast, run, undoAction],
   );
 
   const dismissConflict = useCallback((sessionId: string) => {
@@ -465,6 +537,9 @@ export function useProgramRoom(token: string, initialSnapshot: ProgramSnapshot) 
     dismissConflict,
     updateSession,
     updateDay,
+    createFaculty,
+    updateFaculty,
+    deleteFaculty,
     createSession,
     deleteSession,
     duplicateSession,

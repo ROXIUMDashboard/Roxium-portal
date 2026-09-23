@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event';
 import type { ProgramSnapshot, Session } from '@/lib/domain/types';
 import { SEED_DAYS, SEED_PROGRAM } from '@/lib/seed/program-2027';
 import ProgramRoom from '@/components/ProgramRoom';
+import { facultyRecord } from '@/lib/domain/faculty';
 import SessionCard from '@/components/SessionCard';
 
 function buildSnapshot(): ProgramSnapshot {
@@ -68,7 +69,7 @@ function buildSnapshot(): ProgramSnapshot {
     },
     days,
     sessions,
-    faculty: [{ id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani', credentials: null, headshotUrl: null }],
+    faculty: [facultyRecord({ id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani' })],
     revision: 1,
   };
 }

@@ -13,6 +13,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ProgramSnapshot } from '@/lib/domain/types';
 import ProgramRoom from '@/components/ProgramRoom';
+import { facultyRecord } from '@/lib/domain/faculty';
 
 const TOKEN = 'test_token_test_token_test_token_test_token';
 /** Comfortably longer than the editor's autosave debounce. */
@@ -64,7 +65,7 @@ function snapshot(): ProgramSnapshot {
       },
     ],
     faculty: [
-      { id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani', credentials: null, headshotUrl: null },
+      facultyRecord({ id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani' }),
     ],
     revision: 1,
   };
@@ -204,8 +205,8 @@ describe('adding a speaker', () => {
               updatedAt: '2027-01-02T00:00:00.000Z',
             },
             faculty: [
-              { id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani', credentials: null, headshotUrl: null },
-              { id: 'f-new', programId: 'program-1', name: 'Dr. New Name', credentials: null, headshotUrl: null },
+              facultyRecord({ id: 'f-mani', programId: 'program-1', name: 'Dr. Marc Mani' }),
+              facultyRecord({ id: 'f-new', programId: 'program-1', name: 'Dr. New Name' }),
             ],
             history: null,
           }),

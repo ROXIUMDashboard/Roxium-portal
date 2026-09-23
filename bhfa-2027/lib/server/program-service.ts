@@ -15,12 +15,15 @@ import type {
   ProgramSnapshot,
   Session,
 } from '../domain/types';
-import { SESSION_TYPE_LABELS } from '../domain/types';
+import { FACULTY_REGION_LABELS, FACULTY_STATUS_LABELS, SESSION_TYPE_LABELS } from '../domain/types';
+import { isActive, isInactive } from '../domain/faculty';
 import { formatRange } from '../domain/time';
 import { sessionsForDay, sortSessions, computeShift } from '../domain/schedule';
 import { moveAcrossDays, moveWithinDay } from '../domain/ordering';
 import type {
   DayPatch,
+  FacultyInput,
+  FacultyPatch,
   OrderAssignment,
   ProgramRepository,
   SessionInput,
@@ -61,6 +64,7 @@ export async function resolveWorkspace(token: string): Promise<WorkspaceRecord |
 export type HistoryPayload =
   | { kind: 'session'; session: Session }
   | { kind: 'day'; day: Day }
+  | { kind: 'faculty'; faculty: Faculty }
   | { kind: 'fields'; sessionId: string; fields: Partial<Session> }
   | { kind: 'order'; assignments: OrderAssignment[] }
   | { kind: 'times'; assignments: TimeAssignment[] }
@@ -249,6 +253,8 @@ export interface MutationResult {
   faculty?: Faculty[];
   /** Days as of this change, so an edited day header reaches every browser. */
   days?: Day[];
+  /** The faculty member a faculty mutation created, changed or removed. */
+  facultyMember?: Faculty;
 }
 
 export async function createSession(
@@ -632,6 +638,24 @@ async function applyPayload(context: ProgramContext, payload: HistoryPayload): P
       return { upserted: snapshot.sessions.filter((s) => ids.has(s.id)), deleted: [] };
     }
 
+    case 'day': {
+      const { shortLabel, title, subtitle, weekdayLabel, date, hoursLabel } = payload.day;
+      await context.repository.updateDay(payload.day.id, { shortLabel, title, subtitle, weekdayLabel, date, hoursLabel });
+      return { upserted: [], deleted: [] };
+    }
+
+    case 'faculty': {
+      const input = facultyRestoreInput(payload.faculty);
+      const existing = await context.repository.getFaculty(payload.faculty.id);
+      if (existing) {
+        const { id: _id, ...patch } = input;
+        await context.repository.updateFaculty(payload.faculty.id, patch, context.actor.name);
+      } else {
+        await context.repository.createFaculty(context.workspace.programId, input, context.actor.name);
+      }
+      return { upserted: [], deleted: [] };
+    }
+
     default:
       return { upserted: [], deleted: [] };
   }
@@ -666,6 +690,20 @@ export async function revertHistoryEntry(
     }
   }
 
+  if (entry.action === 'faculty_created' && payload.kind === 'none') {
+    const after = entry.after as HistoryPayload;
+    if (after?.kind === 'faculty') {
+      const assignments = await context.repository.countFacultyAssignments(after.faculty.id);
+      if (assignments > 0) {
+        throw new ValidationError(
+          `${after.faculty.name} is now on the agenda, so adding them can no longer be undone. ` +
+            'Mark them Not Pursuing instead.',
+        );
+      }
+      await context.repository.deleteFaculty(after.faculty.id);
+    }
+  }
+
   const applied = await applyPayload(context, payload);
   await context.repository.markHistoryUndone(entry.id);
 
@@ -675,6 +713,7 @@ export async function revertHistoryEntry(
     programId: context.workspace.programId,
     sessionId: entry.sessionId,
     dayId: entry.dayId,
+    facultyId: entry.facultyId ?? null,
     actorName: context.actor.name,
     action: mode === 'undo' ? 'undone' : 'restored',
     summary,
@@ -684,6 +723,195 @@ export async function revertHistoryEntry(
 
   const { revision, faculty, days } = await announce(context, summary, applied.upserted, [...deleted, ...applied.deleted]);
   return { sessions: applied.upserted, deleted: [...deleted, ...applied.deleted], revision, history, faculty, days };
+}
+
+/* ------------------------------------------------------------------- faculty */
+
+/** Everything a faculty history entry needs to put the record back verbatim. */
+function facultyRestoreInput(f: Faculty): FacultyInput {
+  return {
+    id: f.id,
+    name: f.name,
+    credentials: f.credentials,
+    headshotUrl: f.headshotUrl,
+    status: f.status,
+    region: f.region,
+    city: f.city,
+    stateProvince: f.stateProvince,
+    country: f.country,
+    specialty: f.specialty,
+    proposedRole: f.proposedRole,
+    invitationStatus: f.invitationStatus,
+    invitationDate: f.invitationDate,
+    lastContactDate: f.lastContactDate,
+    owner: f.owner,
+    priority: f.priority,
+    internalNotes: f.internalNotes,
+    email: f.email,
+    phone: f.phone,
+    institution: f.institution,
+    website: f.website,
+  };
+}
+
+async function requireFaculty(context: ProgramContext, facultyId: string): Promise<Faculty> {
+  const member = await context.repository.getFaculty(facultyId);
+  if (!member || member.programId !== context.workspace.programId) {
+    throw new NotFoundError('That faculty member has already been removed by another collaborator.');
+  }
+  return member;
+}
+
+/** Names are unique per programme (case-insensitive), as the database enforces. */
+async function assertNameFree(context: ProgramContext, name: string, exceptId?: string): Promise<void> {
+  const roster = await context.repository.listFaculty(context.workspace.programId);
+  const clash = roster.find((f) => f.id !== exceptId && f.name.toLowerCase() === name.trim().toLowerCase());
+  if (clash) throw new ValidationError(`${clash.name} is already in the faculty register.`);
+}
+
+/**
+ * The sentence the change history shows. Status moves are the ones a planner
+ * scans for, so they read as movements between the active list and the
+ * inactive section rather than as a field edit.
+ */
+function facultyChangeSummary(before: Faculty, after: Faculty, fields: string[]): string {
+  const name = after.name || before.name;
+  if (before.status !== after.status) {
+    const to = after.status ? FACULTY_STATUS_LABELS[after.status] : 'unsorted';
+    if (!isInactive(before) && isInactive(after)) return `${name} moved to ${to} (inactive)`;
+    if (isInactive(before) && isActive(after)) return `${name} restored to ${to}`;
+    if (!before.status && after.status) return `${name} added to the register as ${to}`;
+    return `${name} marked ${to}`;
+  }
+  if (before.region !== after.region) {
+    return `${name}: region set to ${after.region ? FACULTY_REGION_LABELS[after.region] : 'not set'}`;
+  }
+  if (before.name !== after.name) return `${before.name} renamed to ${after.name}`;
+  return `${name}: ${fields.join(', ')} updated`;
+}
+
+const FACULTY_FIELD_LABELS: Record<keyof FacultyPatch, string> = {
+  name: 'name',
+  credentials: 'credentials',
+  headshotUrl: 'headshot',
+  status: 'status',
+  region: 'region',
+  city: 'city',
+  stateProvince: 'state',
+  country: 'country',
+  specialty: 'specialty',
+  proposedRole: 'proposed role',
+  invitationStatus: 'invitation status',
+  invitationDate: 'invitation date',
+  lastContactDate: 'last contact',
+  owner: 'owner',
+  priority: 'priority',
+  internalNotes: 'notes',
+  email: 'email',
+  phone: 'phone',
+  institution: 'institution',
+  website: 'website',
+};
+
+/**
+ * Add someone to the faculty register. The browser supplies the id, so the row
+ * it shows optimistically is the row that gets saved — nothing to reconcile.
+ */
+export async function createFaculty(context: ProgramContext, input: FacultyInput): Promise<MutationResult> {
+  const name = input.name.trim();
+  if (!name) throw new ValidationError('A faculty member needs a name.');
+  await assertNameFree(context, name);
+  if (input.id && (await context.repository.getFaculty(input.id))) {
+    throw new ValidationError('That faculty member already exists.');
+  }
+
+  const created = await context.repository.createFaculty(
+    context.workspace.programId,
+    { ...input, name },
+    context.actor.name,
+  );
+  const summary = `Added ${created.name} to the faculty register` +
+    (created.status ? ` as ${FACULTY_STATUS_LABELS[created.status]}` : '');
+  const history = await context.repository.addHistory({
+    programId: context.workspace.programId,
+    facultyId: created.id,
+    actorName: context.actor.name,
+    action: 'faculty_created',
+    summary,
+    before: { kind: 'none' } satisfies HistoryPayload,
+    after: { kind: 'faculty', faculty: created } satisfies HistoryPayload,
+  });
+  const { revision, faculty, days } = await announce(context, summary, []);
+  return { revision, history, faculty, days, facultyMember: created };
+}
+
+export async function updateFaculty(
+  context: ProgramContext,
+  facultyId: string,
+  patch: FacultyPatch,
+): Promise<MutationResult> {
+  const before = await requireFaculty(context, facultyId);
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new ValidationError('A faculty member needs a name.');
+    if (name.toLowerCase() !== before.name.toLowerCase()) await assertNameFree(context, name, facultyId);
+    patch = { ...patch, name };
+  }
+
+  const changed = (Object.keys(patch) as (keyof FacultyPatch)[]).filter(
+    (key) => patch[key] !== undefined && patch[key] !== before[key],
+  );
+  if (!changed.length) {
+    const snapshot = await context.repository.getSnapshot(context.workspace.programId);
+    return { revision: snapshot.revision, history: null, faculty: snapshot.faculty, facultyMember: before };
+  }
+
+  const after = await context.repository.updateFaculty(facultyId, patch, context.actor.name);
+  const summary = facultyChangeSummary(before, after, changed.map((key) => FACULTY_FIELD_LABELS[key]));
+  const history = await context.repository.addHistory({
+    programId: context.workspace.programId,
+    facultyId,
+    actorName: context.actor.name,
+    action: 'faculty_updated',
+    summary,
+    before: { kind: 'faculty', faculty: before } satisfies HistoryPayload,
+    after: { kind: 'faculty', faculty: after } satisfies HistoryPayload,
+  });
+  // A rename changes how every session speaker linked to them resolves; the
+  // roster carried by announce is what every browser resolves names through.
+  const { revision, faculty, days } = await announce(context, summary, []);
+  return { revision, history, faculty, days, facultyMember: after };
+}
+
+/**
+ * Remove someone from the register entirely.
+ *
+ * Refused while they are on the agenda: the speaker link is `on delete set
+ * null`, so their sessions would silently read "To be confirmed". Not Pursuing
+ * is the way to take someone out of consideration without losing anything.
+ */
+export async function deleteFaculty(context: ProgramContext, facultyId: string): Promise<MutationResult> {
+  const before = await requireFaculty(context, facultyId);
+  const assignments = await context.repository.countFacultyAssignments(facultyId);
+  if (assignments > 0) {
+    throw new ValidationError(
+      `${before.name} is on ${assignments} agenda session${assignments === 1 ? '' : 's'}. ` +
+        'Mark them Not Pursuing, or take them off those sessions first.',
+    );
+  }
+  await context.repository.deleteFaculty(facultyId);
+  const summary = `Removed ${before.name} from the faculty register`;
+  const history = await context.repository.addHistory({
+    programId: context.workspace.programId,
+    facultyId,
+    actorName: context.actor.name,
+    action: 'faculty_deleted',
+    summary,
+    before: { kind: 'faculty', faculty: before } satisfies HistoryPayload,
+    after: { kind: 'none' } satisfies HistoryPayload,
+  });
+  const { revision, faculty, days } = await announce(context, summary, []);
+  return { revision, history, faculty, days, facultyMember: before };
 }
 
 export async function listHistory(context: ProgramContext, limit = 120): Promise<HistoryEntry[]> {

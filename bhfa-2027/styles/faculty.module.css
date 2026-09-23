@@ -1,0 +1,694 @@
+/*
+ * The faculty register. A planning document, not a CRM: rules and type do the
+ * work, colour is reserved for the one thing a planner scans for — who is
+ * confirmed and who is still a maybe.
+ */
+
+.workspace {
+  /* Status tones, drawn from the programme's own olive and a warm champagne. */
+  --confirmed: #4e5b1c;
+  --confirmed-tint: rgba(94, 110, 38, 0.1);
+  --confirmed-rule: rgba(94, 110, 38, 0.42);
+  --maybe: #7a5516;
+  --maybe-tint: rgba(196, 150, 60, 0.13);
+  --maybe-rule: rgba(176, 128, 40, 0.45);
+  --declined: #8e2b1e;
+  --declined-tint: rgba(142, 43, 30, 0.07);
+  --pursuing: var(--muted);
+  --pursuing-tint: var(--tint);
+
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  padding: 28px var(--gutter) 64px;
+  min-width: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- counters */
+
+.summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: end;
+  gap: 12px 40px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.summaryLead {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.bigCount {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(56px, 9vw, 88px);
+  line-height: 0.9;
+  color: var(--ink);
+}
+
+.bigLabel {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.countGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 0;
+  border-left: 1px solid var(--rule);
+}
+
+.countGrid > div {
+  padding: 2px 14px;
+  border-right: 1px solid var(--rule);
+}
+
+.countGrid dt {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.countGrid dd {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.countGrid [data-tone='confirmed'] dd {
+  color: var(--confirmed);
+}
+
+.countGrid [data-tone='maybe'] dd {
+  color: var(--maybe);
+}
+
+.countGrid [data-tone='muted'] dd {
+  color: var(--muted);
+}
+
+.summaryNote {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------- toolbar */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  padding: 18px 0 14px;
+}
+
+.search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.search input {
+  width: 100%;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.chip:hover {
+  background: var(--tint);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.chip[data-tone='confirmed'][aria-pressed='true'] {
+  background: var(--confirmed);
+  border-color: var(--confirmed);
+}
+
+.chip[data-tone='maybe'][aria-pressed='true'] {
+  background: var(--maybe);
+  border-color: var(--maybe);
+}
+
+/* ----------------------------------------------------------------- add row */
+
+.addRow {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0 22px;
+}
+
+.addRow input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------- lists */
+
+.listHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.listTitle {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.listMeta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.clear {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.empty {
+  margin: 0;
+  padding: 22px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.section {
+  margin-top: 34px;
+}
+
+.subgroup {
+  margin-top: 14px;
+}
+
+.subTitle {
+  margin: 0;
+  padding: 6px 0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.inactiveToggle {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 14px;
+  min-height: var(--tap);
+  padding: 10px 0 8px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  text-align: left;
+  color: inherit;
+}
+
+.toggleCaret {
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.toggleCaret[data-open] {
+  transform: rotate(180deg);
+}
+
+/* ------------------------------------------------------------------- a row */
+
+.row {
+  position: relative;
+  border-bottom: 1px solid var(--rule);
+  /* A thin status rule on the leading edge — the colour is the signal. */
+  box-shadow: inset 3px 0 0 transparent;
+  transition: background 140ms ease;
+}
+
+.row[data-status='confirmed'] {
+  box-shadow: inset 3px 0 0 var(--confirmed-rule);
+}
+
+.row[data-status='maybe'] {
+  box-shadow: inset 3px 0 0 var(--maybe-rule);
+}
+
+.row[data-status='declined'],
+.row[data-status='not_pursuing'] {
+  color: var(--muted);
+}
+
+.row[data-open] {
+  background: var(--paper-raised);
+}
+
+.rowLine {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.rowName {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 12px 0 12px 16px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.rowName:hover .name {
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 4px;
+}
+
+.name {
+  font-family: var(--font-display);
+  font-size: 1.08rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.credentials {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.star {
+  margin-right: 6px;
+  color: var(--acid);
+}
+
+.detail {
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.rowControls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.region {
+  min-height: 36px;
+  max-width: 150px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.region[data-empty] {
+  color: var(--muted-soft);
+  border-style: dashed;
+}
+
+/* -------------------------------------------------------------- the pill */
+
+.pillWrap {
+  position: relative;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  min-width: 118px;
+  justify-content: space-between;
+  padding: 0 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--paper-raised);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.pill[data-status='confirmed'] {
+  background: var(--confirmed-tint);
+  border-color: var(--confirmed-rule);
+  color: var(--confirmed);
+}
+
+.pill[data-status='maybe'] {
+  background: var(--maybe-tint);
+  border-color: var(--maybe-rule);
+  color: var(--maybe);
+}
+
+.pill[data-status='declined'] {
+  background: var(--declined-tint);
+  border-color: rgba(142, 43, 30, 0.3);
+  color: var(--declined);
+}
+
+.pill[data-status='not_pursuing'] {
+  background: var(--pursuing-tint);
+  color: var(--pursuing);
+}
+
+.pill[data-status='unsorted'] {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.pillCaret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.pillMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(57, 63, 30, 0.14);
+  animation: menuIn 120ms ease-out;
+}
+
+.pillOption {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 0.86rem;
+  text-align: left;
+  color: var(--ink);
+}
+
+.pillOption:hover,
+.pillOption:focus-visible {
+  background: var(--tint);
+  outline: none;
+}
+
+.pillOption[aria-checked='true'] {
+  font-weight: 600;
+}
+
+/* Declined and Not Pursuing sit below a rule: they leave the active list. */
+.pillOption[data-divider] {
+  margin-top: 5px;
+  border-top: 1px solid var(--rule);
+  border-radius: 0 0 6px 6px;
+  padding-top: 5px;
+}
+
+.pillDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted-soft);
+}
+
+.pillDot[data-status='confirmed'] {
+  background: var(--confirmed);
+}
+
+.pillDot[data-status='maybe'] {
+  background: #c2913c;
+}
+
+.pillDot[data-status='declined'] {
+  background: var(--declined);
+}
+
+@keyframes menuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- editor */
+
+.editor {
+  padding: 4px 16px 18px;
+  animation: editorIn 160ms ease-out;
+}
+
+@keyframes editorIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.group {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.groupTitle {
+  padding: 0;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.groupFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.suggestion {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.suggestionApply {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.error {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: var(--alert);
+}
+
+.editorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap);
+  font-size: 0.86rem;
+}
+
+.priority input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--olive);
+}
+
+.remove {
+  min-height: var(--tap);
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--alert);
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ------------------------------------------------------------- the phone */
+
+@media (max-width: 780px) {
+  .workspace {
+    padding-top: 18px;
+  }
+
+  .summary {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .countGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-left: 0;
+    row-gap: 12px;
+  }
+
+  .countGrid > div {
+    padding: 0 10px 0 0;
+    border-right: 0;
+  }
+
+  .countGrid dd {
+    font-size: 24px;
+  }
+
+  /* On a phone the name gets its own line, controls sit beneath it. */
+  .rowLine {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+
+  .rowName {
+    flex-basis: 100%;
+    padding-bottom: 6px;
+  }
+
+  .rowControls {
+    width: 100%;
+    padding: 0 0 12px 16px;
+  }
+
+  .region {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .pill {
+    min-width: 0;
+  }
+
+  .addRow {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pillMenu,
+  .editor {
+    animation: none;
+  }
+
+  .chip,
+  .pill,
+  .row,
+  .toggleCaret {
+    transition: none;
+  }
+}

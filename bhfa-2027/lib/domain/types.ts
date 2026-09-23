@@ -103,12 +103,74 @@ export interface Day {
   sortOrder: number;
 }
 
+/**
+ * Faculty planning has two independent dimensions. Status says where someone is
+ * in the invitation pipeline; region says where they come from. Neither implies
+ * the other, and geography is never encoded into status.
+ */
+export const FACULTY_STATUSES = ['confirmed', 'maybe', 'declined', 'not_pursuing'] as const;
+export type FacultyStatus = (typeof FACULTY_STATUSES)[number];
+
+/** Confirmed and Maybe are the active pipeline; the other two are inactive. */
+export const ACTIVE_FACULTY_STATUSES: readonly FacultyStatus[] = ['confirmed', 'maybe'];
+export const INACTIVE_FACULTY_STATUSES: readonly FacultyStatus[] = ['declined', 'not_pursuing'];
+
+export const FACULTY_STATUS_LABELS: Record<FacultyStatus, string> = {
+  confirmed: 'Confirmed',
+  maybe: 'Maybe',
+  // The faculty member said no.
+  declined: 'Declined',
+  // BHFA decided not to pursue them further.
+  not_pursuing: 'Not Pursuing',
+};
+
+export const FACULTY_REGIONS = ['local', 'united_states', 'international'] as const;
+export type FacultyRegion = (typeof FACULTY_REGIONS)[number];
+
+export const FACULTY_REGION_LABELS: Record<FacultyRegion, string> = {
+  local: 'Beverly Hills / Local',
+  united_states: 'United States',
+  international: 'International',
+};
+
+/** Short forms for counters and filter chips. */
+export const FACULTY_REGION_SHORT: Record<FacultyRegion, string> = {
+  local: 'Local',
+  united_states: 'United States',
+  international: 'International',
+};
+
 export interface Faculty {
   id: string;
   programId: string;
   name: string;
   credentials: string | null;
   headshotUrl: string | null;
+  /**
+   * Null means the person is known to the agenda — a name typed into a session
+   * — but has not been placed in the faculty register. Appearing on the agenda
+   * does not make someone Confirmed or Maybe.
+   */
+  status: FacultyStatus | null;
+  region: FacultyRegion | null;
+  city: string | null;
+  stateProvince: string | null;
+  country: string | null;
+  specialty: string | null;
+  proposedRole: string | null;
+  invitationStatus: string | null;
+  invitationDate: string | null;
+  lastContactDate: string | null;
+  owner: string | null;
+  priority: boolean;
+  internalNotes: string | null;
+  email: string | null;
+  phone: string | null;
+  institution: string | null;
+  website: string | null;
+  sortOrder: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface Program {
@@ -141,6 +203,9 @@ export type HistoryAction =
   | 'sponsor_changed'
   | 'details_changed'
   | 'day_changed'
+  | 'faculty_created'
+  | 'faculty_updated'
+  | 'faculty_deleted'
   | 'bulk_time_shift'
   | 'restored'
   | 'undone';
@@ -150,6 +215,7 @@ export interface HistoryEntry {
   programId: string;
   sessionId: string | null;
   dayId: string | null;
+  facultyId?: string | null;
   actorName: string;
   action: HistoryAction;
   summary: string;

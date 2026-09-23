@@ -33,6 +33,7 @@ export default function ProgramHeader({
   lastSavedAt,
   collaborators,
   name,
+  showEditToggle,
   editMode,
   onToggleEditMode,
   onOpenHistory,
@@ -43,6 +44,8 @@ export default function ProgramHeader({
   lastSavedAt: number | null;
   collaborators: PresenceEntry[];
   name: string;
+  /** Edit Program belongs to the agenda; the faculty register edits in place. */
+  showEditToggle: boolean;
   editMode: boolean;
   onToggleEditMode: () => void;
   onOpenHistory: () => void;
@@ -85,15 +88,17 @@ export default function ProgramHeader({
         <div className={styles.headerActions}>
           <SaveIndicator state={saveState} lastSavedAt={lastSavedAt} />
 
-          <button
-            type="button"
-            className={styles.editToggle}
-            data-active={editMode || undefined}
-            aria-pressed={editMode}
-            onClick={onToggleEditMode}
-          >
-            {editMode ? 'Done editing' : 'Edit program'}
-          </button>
+          {showEditToggle ? (
+            <button
+              type="button"
+              className={styles.editToggle}
+              data-active={editMode || undefined}
+              aria-pressed={editMode}
+              onClick={onToggleEditMode}
+            >
+              {editMode ? 'Done editing' : 'Edit program'}
+            </button>
+          ) : null}
 
           {others.length > 0 ? (
             <span className={styles.presence} title={others.map((entry) => entry.name).join(', ')}>

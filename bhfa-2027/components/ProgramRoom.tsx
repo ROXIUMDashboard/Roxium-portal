@@ -27,6 +27,9 @@ import DayHeader from './DayHeader';
 import Agenda from './Agenda';
 import SessionCard from './SessionCard';
 import HistoryPanel from './HistoryPanel';
+import WorkspaceNav, { type Workspace } from './WorkspaceNav';
+import FacultyWorkspace from './FacultyWorkspace';
+import { countFaculty } from '@/lib/domain/faculty';
 import Toasts from './Toasts';
 import styles from '@/styles/room.module.css';
 
@@ -52,6 +55,21 @@ export default function ProgramRoom({
   const [historyOpen, setHistoryOpen] = useState(false);
   // Local UI only: turning it on here never puts another collaborator into it.
   const [editMode, setEditMode] = useState(false);
+  // Agenda by default. The hash keeps a refresh — or a shared #faculty link — in place.
+  const [workspace, setWorkspace] = useState<Workspace>('agenda');
+  useEffect(() => {
+    if (window.location.hash === '#faculty') setWorkspace('faculty');
+  }, []);
+  const selectWorkspace = useCallback((next: Workspace) => {
+    setWorkspace(next);
+    try {
+      window.history.replaceState(null, '', next === 'faculty' ? '#faculty' : window.location.pathname);
+    } catch {
+      /* the hash is a convenience */
+    }
+    window.scrollTo({ top: 0 });
+  }, []);
+  const activeFaculty = useMemo(() => countFaculty(room.snapshot.faculty).active, [room.snapshot.faculty]);
 
   const sensors = useSensors(
     // A short travel threshold keeps a tap on a row an "open the editor" tap.
@@ -141,6 +159,7 @@ export default function ProgramRoom({
             lastSavedAt={room.lastSavedAt}
             collaborators={room.collaborators}
             name={room.name}
+            showEditToggle={workspace === 'agenda'}
             editMode={editMode}
             onToggleEditMode={() => {
               setEditMode((on) => {
@@ -157,21 +176,27 @@ export default function ProgramRoom({
             onRotateLink={room.rotateLink}
           />
 
-          <DayNav
-            days={room.snapshot.days}
-            sessions={room.snapshot.sessions}
-            activeDayId={activeDay?.id ?? ''}
-            onSelect={(dayId) => {
-              room.setOpenSessionId(null);
-              room.setActiveDayId(dayId);
-            }}
-            dragging={Boolean(dragging)}
-            draggingFromDayId={dragging?.dayId ?? null}
-          />
+          <WorkspaceNav active={workspace} onSelect={selectWorkspace} facultyCount={activeFaculty} />
+
+          {workspace === 'agenda' ? (
+            <DayNav
+              days={room.snapshot.days}
+              sessions={room.snapshot.sessions}
+              activeDayId={activeDay?.id ?? ''}
+              onSelect={(dayId) => {
+                room.setOpenSessionId(null);
+                room.setActiveDayId(dayId);
+              }}
+              dragging={Boolean(dragging)}
+              draggingFromDayId={dragging?.dayId ?? null}
+            />
+          ) : null}
         </div>
 
         <main className={styles.main}>
-          {activeDay ? (
+          {workspace === 'faculty' ? (
+            <FacultyWorkspace room={room} />
+          ) : activeDay ? (
             <>
               <DayHeader room={room} day={activeDay} sessions={daySessions} issues={issues} editMode={editMode} />
               <Agenda room={room} day={activeDay} sessions={daySessions} issues={issues} editMode={editMode} />

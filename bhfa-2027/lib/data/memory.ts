@@ -8,8 +8,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { Day, Faculty, HistoryEntry, Program, ProgramSnapshot, Session, SessionSpeaker } from '../domain/types';
 import { SEED_DAYS, SEED_FACULTY, SEED_PROGRAM } from '../seed/program-2027';
+import { facultyRecord } from '../domain/faculty';
 import type {
   DayPatch,
+  FacultyInput,
+  FacultyPatch,
   HistoryInput,
   OrderAssignment,
   ProgramRepository,
@@ -53,12 +56,12 @@ function buildState(seedTokenHash: string, seedTokenPrefix: string): MemoryState
     sortOrder: index,
   }));
 
+  // The two named live-surgery leads are confirmed, as migration 0002 sets them.
   const faculty: Faculty[] = SEED_FACULTY.map((f) => ({
+    ...blankFaculty(programId, f.name),
     id: stableId('faculty', f.key),
-    programId,
-    name: f.name,
     credentials: f.credentials,
-    headshotUrl: null,
+    status: 'confirmed' as const,
   }));
 
   const sessions: Session[] = [];
@@ -122,6 +125,11 @@ function buildState(seedTokenHash: string, seedTokenPrefix: string): MemoryState
     sessions,
     history: [],
   };
+}
+
+/** A faculty record with every field present and nothing assumed. */
+export function blankFaculty(programId: string, name: string): Faculty {
+  return facultyRecord({ id: randomUUID(), programId, name });
 }
 
 export class MemoryRepository implements ProgramRepository {
@@ -304,9 +312,56 @@ export class MemoryRepository implements ProgramRepository {
       (f) => f.programId === programId && f.name.toLowerCase() === name.toLowerCase(),
     );
     if (existing) return this.clone(existing);
-    const created: Faculty = { id: randomUUID(), programId, name, credentials: null, headshotUrl: null };
+    const created = blankFaculty(programId, name);
     this.state.faculty.push(created);
     return this.clone(created);
+  }
+
+  async getFaculty(facultyId: string): Promise<Faculty | null> {
+    const found = this.state.faculty.find((f) => f.id === facultyId);
+    return found ? this.clone(found) : null;
+  }
+
+  async createFaculty(programId: string, input: FacultyInput, updatedBy: string): Promise<Faculty> {
+    const created: Faculty = {
+      ...blankFaculty(programId, input.name),
+      ...(Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) as Partial<Faculty>),
+      programId,
+      updatedAt: new Date().toISOString(),
+      updatedBy,
+    };
+    if (input.id) created.id = input.id;
+    this.state.faculty.push(created);
+    return this.clone(created);
+  }
+
+  async updateFaculty(facultyId: string, patch: FacultyPatch, updatedBy: string): Promise<Faculty> {
+    const found = this.state.faculty.find((f) => f.id === facultyId);
+    if (!found) throw new Error('Faculty member not found');
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) (found as unknown as Record<string, unknown>)[key] = value;
+    }
+    found.updatedAt = new Date().toISOString();
+    found.updatedBy = updatedBy;
+    return this.clone(found);
+  }
+
+  async deleteFaculty(facultyId: string): Promise<Faculty | null> {
+    const index = this.state.faculty.findIndex((f) => f.id === facultyId);
+    if (index === -1) return null;
+    const [removed] = this.state.faculty.splice(index, 1);
+    // Mirror the database: on delete set null.
+    for (const session of this.state.sessions) {
+      for (const speaker of session.speakers) if (speaker.facultyId === facultyId) speaker.facultyId = null;
+    }
+    return this.clone(removed);
+  }
+
+  async countFacultyAssignments(facultyId: string): Promise<number> {
+    return this.state.sessions.reduce(
+      (n, session) => n + session.speakers.filter((s) => s.facultyId === facultyId).length,
+      0,
+    );
   }
 
   async addHistory(entry: HistoryInput): Promise<HistoryEntry> {
@@ -315,6 +370,7 @@ export class MemoryRepository implements ProgramRepository {
       programId: entry.programId,
       sessionId: entry.sessionId ?? null,
       dayId: entry.dayId ?? null,
+      facultyId: entry.facultyId ?? null,
       actorName: entry.actorName,
       action: entry.action,
       summary: entry.summary,

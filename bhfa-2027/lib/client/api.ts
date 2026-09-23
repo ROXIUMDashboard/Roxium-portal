@@ -39,6 +39,8 @@ export interface MutationResponse {
   faculty?: Faculty[];
   /** Present when a day heading may have changed. */
   days?: Day[];
+  /** The faculty member a faculty mutation created, changed or removed. */
+  facultyMember?: Faculty;
 }
 
 export interface ApiIdentity {
@@ -101,6 +103,15 @@ export function createApi(token: string, getIdentity: () => ApiIdentity) {
 
     updateDay: (dayId: string, patch: Record<string, unknown>) =>
       call<MutationResponse>(`/days/${dayId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+    createFaculty: (input: Record<string, unknown>) =>
+      call<MutationResponse>('/faculty', { method: 'POST', body: JSON.stringify(input) }),
+
+    updateFaculty: (facultyId: string, patch: Record<string, unknown>) =>
+      call<MutationResponse>(`/faculty/${facultyId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+    deleteFaculty: (facultyId: string) =>
+      call<MutationResponse>(`/faculty/${facultyId}`, { method: 'DELETE' }),
 
     deleteSession: (sessionId: string) =>
       call<MutationResponse>(`/sessions/${sessionId}`, { method: 'DELETE' }),
